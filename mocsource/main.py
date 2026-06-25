@@ -1,9 +1,13 @@
+import pathlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from .routers import parts
+
+STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
 
 
 @asynccontextmanager
@@ -20,130 +24,15 @@ app = FastAPI(
 
 app.include_router(parts.router)
 
+# Static pages — add new HTML files to static/ and wire up a route below
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
 
 @app.get("/health", tags=["meta"])
 async def health():
     return {"status": "ok"}
 
 
-_PRIVACY_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Privacy Policy — MOC Source Extension</title>
-  <style>
-    body { font-family: system-ui, sans-serif; max-width: 720px; margin: 48px auto; padding: 0 24px; line-height: 1.6; color: #222; }
-    h1 { font-size: 1.5rem; }
-    h2 { font-size: 1.1rem; margin-top: 2rem; }
-    h3 { font-size: 1rem; margin-top: 1.5rem; }
-    p, li { font-size: 0.95rem; }
-    code { background: #f4f4f4; padding: 1px 4px; border-radius: 3px; font-size: 0.9em; }
-    a { color: #0066cc; }
-    footer { margin-top: 3rem; font-size: 0.85rem; color: #888; }
-  </style>
-</head>
-<body>
-  <h1>Privacy Policy — MOC Source Extension</h1>
-  <p><em>Last updated: June 2026</em></p>
-
-  <p>
-    MOC Source is a free, open source browser extension that overlays LEGO Pick a Brick
-    pricing on BrickLink pages. This policy explains what data the extension accesses and
-    how it is used.
-  </p>
-
-  <h2>Data collected</h2>
-  <p>
-    <strong>The MOC Source extension does not collect, store, or transmit any personal data.</strong>
-    No account is required. No analytics, crash reporting, or telemetry is included.
-  </p>
-
-  <h2>Permissions and why they are required</h2>
-
-  <h3>storage</h3>
-  <p>
-    Used exclusively to save your in-extension preferences — your chosen price region,
-    BrickLink store location filter, and buy-page filter toggles — using
-    <code>chrome.storage.sync</code>. These preferences are synced across your own
-    Chrome profiles via your Google account. No preference data is sent to MOC Source servers.
-  </p>
-  <p>
-    In a future version, the extension may store BrickLink authentication credentials
-    locally (in <code>chrome.storage.sync</code>) to enable features such as automatic
-    wanted list management. Any such credentials remain on your device and within your
-    own Google account sync. MOC Source does not collect, receive, log, or have any
-    access to your BrickLink credentials at any time.
-  </p>
-
-  <h3>Location / timezone</h3>
-  <p>
-    On first install, the extension reads your browser's timezone
-    (<code>Intl.DateTimeFormat().resolvedOptions().timeZone</code>) to pre-select a
-    sensible default price region — for example, defaulting to US pricing for a
-    US timezone. This value is used solely to set an initial preference and is never
-    transmitted to MOC Source or any third party. You can change or override the
-    selected region at any time in the extension popup.
-  </p>
-
-  <h3>Host access: <code>*.bricklink.com</code> and <code>store.bricklink.com</code></h3>
-  <p>
-    Required to inject price badge overlays and the "Set PAB" button onto BrickLink pages
-    (wanted lists, buy page, store listings, and cart). The extension reads part numbers
-    and colour IDs from the BrickLink page DOM to know which prices to look up.
-    No BrickLink page data is sent anywhere.
-  </p>
-
-  <h3>Host access: <code>api.moc-source.com</code></h3>
-  <p>
-    The extension fetches LEGO Pick a Brick and Bricks &amp; Pieces pricing from the
-    MOC Source API using the LEGO part number and colour ID of the part currently being
-    displayed. The request contains no user identifiers — only the part number, colour ID,
-    and locale code you have selected (e.g. <code>en-us</code>, <code>de-de</code>).
-  </p>
-
-  <h2>Our data collection policy (the short version)</h2>
-  <p>
-    MOC Source does not collect your data. We do not want your data. We have no
-    infrastructure to store your data, no business model that benefits from your data,
-    and no interest whatsoever in your data. We are LEGO enthusiasts who built a tool
-    to make buying plastic bricks slightly less painful — not a data company in disguise.
-  </p>
-  <p>
-    To be unambiguous for any jurisdiction that requires it: MOC Source, its operators,
-    and its contributors hereby irrevocably disclaim any intention to collect, process,
-    sell, share, rent, barter, trade, auction, gift, or otherwise make use of any
-    personally identifiable information belonging to users of this extension, now or
-    in the future, in this universe or any hypothetical parallel one.
-  </p>
-  <p>
-    If you somehow find evidence that we have collected your data, we would genuinely
-    like to know, because it means something has gone very wrong and we want to fix it.
-  </p>
-
-  <h2>Third-party services</h2>
-  <p>
-    Pricing data is sourced by scraping the public LEGO Pick a Brick catalogue on the
-    MOC Source server. The extension itself does not contact LEGO servers.
-  </p>
-
-  <h2>Open source</h2>
-  <p>
-    The full extension source code is publicly available at
-    <a href="https://github.com/vaultcrest/moc-source" target="_blank" rel="noopener">
-      github.com/vaultcrest/moc-source</a>.
-  </p>
-
-  <h2>Contact</h2>
-  <p>
-    Questions or concerns: <a href="mailto:excalibrax@gmail.com">excalibrax@gmail.com</a>
-  </p>
-
-  <footer>MOC Source — a community tool by AFOLs for AFOLs.</footer>
-</body>
-</html>"""
-
-
-@app.get("/privacy", tags=["meta"], response_class=HTMLResponse, include_in_schema=False)
+@app.get("/privacy", include_in_schema=False)
 async def privacy():
-    return HTMLResponse(content=_PRIVACY_HTML)
+    return FileResponse(STATIC_DIR / "privacy.html")
