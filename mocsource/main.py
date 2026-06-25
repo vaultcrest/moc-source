@@ -2,7 +2,7 @@ import pathlib
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from .routers import parts
@@ -31,6 +31,11 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 @app.get("/health", tags=["meta"])
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+async def favicon():
+    return RedirectResponse(url="/static/icon48.png")
 
 
 @app.get("/privacy", include_in_schema=False)
