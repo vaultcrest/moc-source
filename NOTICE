@@ -1,0 +1,23 @@
+MOC Source
+Copyright (C) 2026 Vaultcrest
+
+This program is free software licensed under the GNU Affero General Public
+License v3.0 (AGPL-3.0). See LICENSE for the full text.
+
+---
+
+BRAND ASSETS — NOT COVERED BY AGPL-3.0
+
+The following files are proprietary brand assets owned by Vaultcrest and are
+NOT licensed under the AGPL-3.0 or any other open source license. All rights
+reserved. You may not reproduce, distribute, or create derivative works from
+these files without explicit written permission from Vaultcrest.
+
+  - extension/icon16.png
+  - extension/icon48.png
+  - extension/icon128.png
+  - Any file named Vaultcrest*.png
+
+These assets are included solely for the purpose of running the MOC Source
+extension as distributed. Forks and derivative works must replace these assets
+with their own branding.
