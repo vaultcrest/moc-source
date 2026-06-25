@@ -7,8 +7,7 @@
   "host_permissions": [
     "https://*.bricklink.com/*",
     "https://store.bricklink.com/*",
-    "https://api.moc-source.com/*",
-    "http://10.242.42.20/*"
+    "https://api.moc-source.com/*"
   ],
   "background": {
     "service_worker": "background.js"

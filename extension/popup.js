@@ -2,10 +2,50 @@ const BL_COUNTRIES = ["Afghanistan","Albania","Algeria","Andorra","Angola","Angu
 
 const DEFAULTS = {
   storeLocation:      null, // null = auto-detect on first load
-  pabRegion:          "north_america",
+  pabRegion:          null, // null = auto-detect from timezone on first load
   filterLotsOverMax:  true,
   filterLotsBelowQty: false,
 };
+
+function guessPabLocale() {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const exact = {
+    "America/New_York":             "en-us",
+    "America/Chicago":              "en-us",
+    "America/Denver":               "en-us",
+    "America/Los_Angeles":          "en-us",
+    "America/Phoenix":              "en-us",
+    "America/Anchorage":            "en-us",
+    "Pacific/Honolulu":             "en-us",
+    "America/Indiana/Indianapolis": "en-us",
+    "America/Toronto":              "en-ca",
+    "America/Vancouver":            "en-ca",
+    "America/Halifax":              "en-ca",
+    "Europe/London":                "en-gb",
+    "Europe/Berlin":                "de-de",
+    "Europe/Paris":                 "fr-fr",
+    "Europe/Amsterdam":             "nl-nl",
+    "Europe/Stockholm":             "sv-se",
+    "Europe/Oslo":                  "nb-no",
+    "Europe/Copenhagen":            "da-dk",
+    "Europe/Helsinki":              "fi-fi",
+    "Europe/Warsaw":                "pl-pl",
+    "Europe/Prague":                "cs-cz",
+    "Europe/Madrid":                "es-es",
+    "Europe/Rome":                  "it-it",
+    "Europe/Lisbon":                "pt-pt",
+    "Australia/Sydney":             "en-au",
+    "Australia/Melbourne":          "en-au",
+    "Australia/Perth":              "en-au",
+    "Pacific/Auckland":             "en-nz",
+  }[tz];
+  if (exact) return exact;
+  if (tz.startsWith("America/"))   return "en-us";
+  if (tz.startsWith("Europe/"))    return "en-gb";
+  if (tz.startsWith("Australia/")) return "en-au";
+  if (tz.startsWith("Pacific/"))   return "en-nz";
+  return "en-us";
+}
 
 // Map Intl timezone → BrickLink store location value
 function guessLocation() {
@@ -71,17 +111,19 @@ async function load() {
   const sync = await chrome.storage.sync.get(DEFAULTS);
 
   let loc = sync.storeLocation ?? guessLocation();
+  let pabLocale = sync.pabRegion ?? guessPabLocale();
 
   buildCountryOptions(loc);
 
   document.getElementById("storeLocation").value = loc;
-  document.getElementById("pabRegion").value = sync.pabRegion ?? "north_america";
+  document.getElementById("pabRegion").value = pabLocale;
   document.getElementById("filterLotsOverMax").checked  = sync.filterLotsOverMax;
   document.getElementById("filterLotsBelowQty").checked = sync.filterLotsBelowQty;
 
-  if (sync.storeLocation === null) {
-    await chrome.storage.sync.set({ storeLocation: loc });
-  }
+  const saves = {};
+  if (sync.storeLocation === null) saves.storeLocation = loc;
+  if (sync.pabRegion === null) saves.pabRegion = pabLocale;
+  if (Object.keys(saves).length) await chrome.storage.sync.set(saves);
 }
 
 async function save() {

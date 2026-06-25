@@ -25,6 +25,20 @@ class StudioResolutionOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class LocalePriceResult(BaseModel):
+    element_id: int
+    design_id: str | None
+    lego_name: str | None
+    locale: str
+    channel: str | None
+    price_cents: int | None
+    price_formatted: str | None
+    currency_code: str | None
+    in_stock: bool | None
+
+    model_config = {"from_attributes": True}
+
+
 class PartSummary(BaseModel):
     element_id: int
     design_id: str | None

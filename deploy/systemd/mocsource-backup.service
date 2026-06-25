@@ -1,0 +1,9 @@
+[Unit]
+Description=MOC Source PostgreSQL backup to Backblaze B2
+After=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mocsource-backup
+StandardOutput=journal
+StandardError=journal

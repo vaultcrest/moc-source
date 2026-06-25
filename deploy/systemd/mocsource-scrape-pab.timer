@@ -1,0 +1,9 @@
+[Unit]
+Description=Run MOC Source PAB scraper hourly
+
+[Timer]
+OnCalendar=hourly
+Persistent=true
+
+[Install]
+WantedBy=timers.target

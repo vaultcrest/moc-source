@@ -8,6 +8,9 @@ dist/
 build/
 .alembic_version
 
+# Build artifacts
+extension/*.zip
+
 # Icon source files
 Vaultcrest*.png
 

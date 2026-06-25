@@ -5,7 +5,7 @@ from sqlalchemy.orm import selectinload
 
 from ..database import get_db
 from ..models import LegoElement, StudioResolution
-from ..schemas.parts import PartDetail, PartSummary, StudioResolutionOut
+from ..schemas.parts import LocalePriceResult, PartDetail, PartSummary, StudioResolutionOut
 
 router = APIRouter(prefix="/api/v1/parts", tags=["parts"])
 
@@ -34,16 +34,46 @@ async def get_part(element_id: int, db: AsyncSession = Depends(get_db)):
     return element
 
 
-@router.get("/pab/price/{part_no}/{color_id}", response_model=list[PartSummary], tags=["pab"])
-async def pab_price(part_no: str, color_id: int, db: AsyncSession = Depends(get_db)):
-    """Price lookup by BL part_no + color_id — for the browser extension."""
-    from ..models import BricklinkMapping
+@router.get("/pab/price/{part_no}/{color_id}", response_model=list[LocalePriceResult], tags=["pab"])
+async def pab_price(
+    part_no: str,
+    color_id: int,
+    locale: str = Query("en-us", description="BCP-47 locale code, e.g. en-us, de-de, en-gb"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Price lookup by BL part_no + color_id for the browser extension.
 
-    stmt = (
-        select(LegoElement)
-        .join(BricklinkMapping, BricklinkMapping.element_id == LegoElement.element_id)
-        .where(BricklinkMapping.part_no == part_no, BricklinkMapping.color_id == color_id)
-        .where(LegoElement.channel.in_(["pab", "bap"]))
-    )
-    result = await db.execute(stmt)
-    return result.scalars().all()
+    Queries lego_element_prices for the requested locale so the extension can
+    display region-correct pricing. Falls back to en-us if the locale has no data.
+    """
+    from ..models import BricklinkMapping, LegoElementPrice
+
+    def price_stmt(loc: str):
+        return (
+            select(
+                LegoElementPrice.element_id,
+                LegoElement.design_id,
+                LegoElement.lego_name,
+                LegoElementPrice.locale,
+                LegoElementPrice.channel,
+                LegoElementPrice.price_cents,
+                LegoElementPrice.price_formatted,
+                LegoElementPrice.currency_code,
+                LegoElementPrice.in_stock,
+            )
+            .join(BricklinkMapping, BricklinkMapping.element_id == LegoElementPrice.element_id)
+            .join(LegoElement, LegoElement.element_id == LegoElementPrice.element_id)
+            .where(BricklinkMapping.part_no == part_no, BricklinkMapping.color_id == color_id)
+            .where(LegoElementPrice.locale == loc)
+            .where(LegoElementPrice.channel.in_(["pab", "bap"]))
+        )
+
+    result = await db.execute(price_stmt(locale))
+    rows = result.mappings().all()
+
+    # Fall back to en-us if the requested locale returned nothing
+    if not rows and locale != "en-us":
+        result = await db.execute(price_stmt("en-us"))
+        rows = result.mappings().all()
+
+    return [LocalePriceResult(**dict(r)) for r in rows]

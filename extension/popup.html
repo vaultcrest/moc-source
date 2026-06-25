@@ -44,11 +44,30 @@
   <h3>PAB price region</h3>
   <label for="pabRegion">Show prices for</label>
   <select id="pabRegion">
-    <option value="north_america">North America</option>
-    <option value="europe">Europe</option>
-    <option value="global">Global (any)</option>
+    <optgroup label="North America">
+      <option value="en-us">United States</option>
+      <option value="en-ca">Canada</option>
+    </optgroup>
+    <optgroup label="Europe">
+      <option value="en-gb">United Kingdom</option>
+      <option value="de-de">Germany</option>
+      <option value="fr-fr">France</option>
+      <option value="nl-nl">Netherlands</option>
+      <option value="es-es">Spain</option>
+      <option value="it-it">Italy</option>
+      <option value="pt-pt">Portugal</option>
+      <option value="sv-se">Sweden</option>
+      <option value="nb-no">Norway</option>
+      <option value="da-dk">Denmark</option>
+      <option value="fi-fi">Finland</option>
+      <option value="pl-pl">Poland</option>
+      <option value="cs-cz">Czech Republic</option>
+    </optgroup>
+    <optgroup label="Oceania">
+      <option value="en-au">Australia</option>
+      <option value="en-nz">New Zealand</option>
+    </optgroup>
   </select>
-  <div class="note">Multi-region pricing coming soon.</div>
 
   <span class="saved" id="savedMsg">Saved</span>
 

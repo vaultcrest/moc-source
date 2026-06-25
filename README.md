@@ -60,11 +60,32 @@ Deploy: `rsync -av mocsource/ excalibrax@app.home.arpa:/tmp/mocsource_deploy/ &&
 
 PostgreSQL 18 on `app.home.arpa` / `10.242.42.20`.
 
-Current tables:
-- `lego_elements` — element_id, design_id, lego_name, channel, price_cents, price_formatted, last_seen, first_seen
-- `bricklink_mappings` — element_id → part_no + color_id mapping
+Tables:
+- `lego_elements` — element_id, design_id, lego_name, channel, price_cents, price_formatted, last_seen, first_seen _(en-us values, kept for API backwards compat)_
+- `lego_element_prices` — element_id + locale PK, channel, price_cents, price_formatted, currency_code, in_stock, updated_at _(multi-region pricing)_
+- `bricklink_mappings` — element_id → part_no + color_id
+- `bricklink_alternates`, `studio_resolutions`, `multipacks`, `multipack_components`, `failed_studio_mappings`
 
-**Planned migration:** Split `lego_elements` into `lego_elements` (static) + `lego_element_prices` (per-region pricing with `locale`, `price_cents`, `in_stock`, `last_seen`).
+**Availability vs price by region:**
+- US and EU stock differ independently — channel (PAB/BAP/OOS) tracked per locale
+- US only: PAB (Bestseller) = 5 day shipping; BAP (Standard) = 30–40 days
+- All other locales: ~18 days regardless of channel — no meaningful tier distinction
+- Prices vary by locale/currency across all regions
+
+**PAB Scraper (`scripts/scrape_pab.py`):**
+- Loops 18 confirmed locales, upserts into `lego_element_prices`
+- Also updates `lego_elements` from en-us to keep existing API current
+- Requires `curl_cffi` for Chrome impersonation (in requirements.txt)
+- Deployed as `mocsource-scrape-pab.timer` systemd service on app server
+- Uses fixed headers: `Origin: https://www.lego.com`, `x-locale: {locale}`
+- Uses fixed query: no `$sku` variable, `quantityInSet(sku: null)` hardcoded
+
+**Confirmed working locales (tested 2026-06-24):**
+`en-us`, `en-gb`, `en-au`, `de-de`, `fr-fr`, `nl-nl`, `en-ca`, `ko-kr`, `pl-pl`, `sv-se`, `en-nz`, `cs-cz`, `da-dk`, `fi-fi`, `nb-no`, `es-es`, `it-it`, `pt-pt`
+
+Not available: `ja-jp` (no results), `zh-cn` (invalid response)
+
+**Future schema cleanup:** drop channel/price_cents/price_formatted from `lego_elements` once API is updated to join `lego_element_prices` for en-us by default with `?locale=` param support.
 
 ## Infrastructure
 
@@ -85,22 +106,24 @@ Current tables:
 
 ## What's Next
 
-### Multi-region PAB pricing (biggest remaining piece)
+### Multi-region PAB pricing
 
-LEGO prices vary by region. 19 locales confirmed working via the PAB GraphQL API.
+`lego_element_prices` table and `scripts/scrape_pab.py` are deployed and running.
 
-**Required header fix for generator** (discovered 2026-06-24):
-- Add `Origin: https://www.lego.com` and `x-locale: {locale}` headers
-- Remove `$sku: String` variable from query declaration — now causes validation error
-- Use `quantityInSet(sku: null)` hardcoded instead
+**Required headers for LEGO GraphQL API** (discovered 2026-06-24 — already applied in scraper):
+- `Origin: https://www.lego.com` — required, was missing from original generator
+- `x-locale: {locale}` — required, was missing from original generator
 
-**Distinct price regions:** US, GB, CA, AU, NZ, EU, SE, NO, DK, PL, CZ, KR
+**Required query fix** (already applied in scraper):
+- Remove `$sku: String` from the operation declaration — now causes a validation error
+- Use `quantityInSet(sku: null)` hardcoded instead of `quantityInSet(sku: $sku)`
 
-**Plan:**
-1. Alembic migration: add `lego_element_prices` table with `locale` + `in_stock`
-2. Update generator to loop over locales, write directly to DB (no JSON intermediate)
-3. Update API to accept `?locale=en-us` param
-4. Extension popup region setting already wired up — just needs live data
+**Distinct price regions:** US, GB, CA, AU, NZ, EU (de/fr/nl/es/it/pt), SE, NO, DK, PL, CZ, KR
+
+**Remaining:**
+1. Update API price endpoint to accept `?locale=` param
+2. Wire extension `pabRegion` setting to API call in background.js
+3. Future: tiered scrape cadence — US+EU more frequently, other locales daily
 
 ### Chrome Web Store
 
