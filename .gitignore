@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+.alembic_version
+
+# Icon source files
+Vaultcrest*.png
+
+# OS
+.DS_Store
+Thumbs.db
