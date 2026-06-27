@@ -46,7 +46,7 @@ async def pab_price(
     Queries lego_element_prices for the requested locale so the extension can
     display region-correct pricing. Falls back to en-us if the locale has no data.
     """
-    from ..models import BricklinkMapping, LegoElementPrice
+    from ..models import BricklinkMapping, Color, LegoElementPrice
 
     def price_stmt(loc: str):
         return (
@@ -54,6 +54,11 @@ async def pab_price(
                 LegoElementPrice.element_id,
                 LegoElement.design_id,
                 LegoElement.lego_name,
+                BricklinkMapping.part_name.label("bl_part_name"),
+                BricklinkMapping.color_id.label("bl_color_id"),
+                Color.bl_name.label("bl_color_name"),
+                Color.lego_id.label("lego_color_id"),
+                Color.lego_name.label("lego_color_name"),
                 LegoElementPrice.locale,
                 LegoElementPrice.channel,
                 LegoElementPrice.price_cents,
@@ -63,6 +68,7 @@ async def pab_price(
             )
             .join(BricklinkMapping, BricklinkMapping.element_id == LegoElementPrice.element_id)
             .join(LegoElement, LegoElement.element_id == LegoElementPrice.element_id)
+            .outerjoin(Color, Color.bl_id == BricklinkMapping.color_id)
             .where(BricklinkMapping.part_no == part_no, BricklinkMapping.color_id == color_id)
             .where(LegoElementPrice.locale == loc)
             .where(LegoElementPrice.channel.in_(["pab", "bap"]))

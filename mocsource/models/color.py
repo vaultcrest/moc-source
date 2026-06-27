@@ -1,0 +1,13 @@
+from sqlalchemy import Integer, Text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from .base import Base
+
+
+class Color(Base):
+    __tablename__ = "colors"
+
+    bl_id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    bl_name: Mapped[str] = mapped_column(Text, nullable=False)
+    lego_id: Mapped[int | None] = mapped_column(Integer)
+    lego_name: Mapped[str | None] = mapped_column(Text)

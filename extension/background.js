@@ -1,5 +1,9 @@
 const API_BASE = "https://api.moc-source.com";
 
+chrome.action.onClicked.addListener(() => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("index.html") });
+});
+
 // Cache PAB prices per locale for the session
 const priceCache = new Map(); // key: `${locale}:${partNo}:${colorId}`
 
@@ -44,6 +48,11 @@ async function fetchPabPrice(partNo, colorId) {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "GET_PAB_PRICE") {
     fetchPabPrice(msg.partNo, msg.colorId).then(sendResponse);
-    return true; // keep channel open for async response
+    return true;
+  }
+  if (msg.type === "OPEN_MOC_SOURCE") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("index.html") });
+    sendResponse(true);
+    return true;
   }
 });

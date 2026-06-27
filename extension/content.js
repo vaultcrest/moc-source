@@ -2,6 +2,78 @@
 
 const rowPrices = new Map(); // row element → price in dollars (number)
 
+// ─── Import helpers ──────────────────────────────────────────────────────────
+
+function uid() {
+  return crypto.randomUUID ? crypto.randomUUID()
+       : Math.random().toString(36).slice(2) + Date.now().toString(36);
+}
+
+function getWantedListName() {
+  const h = document.querySelector("h2.tight, .wl-grid-name, .wl-page-title");
+  if (h?.textContent?.trim()) return h.textContent.trim();
+  const m = document.title.match(/Wanted List[:\s]*(.+)/i);
+  if (m?.[1]?.trim()) return m[1].trim();
+  return `Wanted List — ${new Date().toLocaleDateString()}`;
+}
+
+function getCartName() {
+  // a.js-store-link.link-white contains the store display name cleanly
+  const nameEl = document.querySelector("a.js-store-link.link-white, span.js-store-name");
+  const text = nameEl?.textContent?.trim();
+  if (text) return text;
+  // Fall back to URL username: store.bricklink.com/username#/cart
+  const username = location.pathname.replace(/^\/+/, "").split("/")[0];
+  if (username && username !== "cart") return username;
+  return `Cart — ${new Date().toLocaleDateString()}`;
+}
+
+function collectWantedListParts() {
+  const parts = [];
+  for (const img of document.querySelectorAll("img.wl-item-img")) {
+    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+    if (!match) continue;
+    const row = img.closest(".table-row");
+    if (!row) continue;
+    const colorId = parseInt(match[1], 10);
+    const partNo = match[2];
+    const qtyCell = row.querySelector(".wl-col-quantity");
+    const qtyText = qtyCell?.textContent || "";
+    const wantMatch = qtyText.match(/Want:\s*(\d+)/i);
+    const haveMatch = qtyText.match(/Have:\s*(\d+)/i);
+    const want = parseInt(wantMatch?.[1] || "1", 10) || 1;
+    const have = parseInt(haveMatch?.[1] || "0", 10) || 0;
+    const qty = Math.max(0, want - have);
+    const nameEl = row.querySelector(".wl-col-desc a");
+    const name = nameEl?.textContent?.trim() || "";
+    // Max price: .wl-hover-editable inside .wl-col-price, shows "-" when not set
+    const priceEditable = row.querySelector(".wl-col-price .wl-hover-editable");
+    const maxPriceText = priceEditable?.textContent?.trim() || "";
+    const maxPrice = maxPriceText && maxPriceText !== "-"
+      ? parseFloat(maxPriceText.replace(/[^0-9.]/g, "")) || null
+      : null;
+    parts.push({ partNo, colorId, want, have, qty, name, imageUrl: img.src, maxPrice });
+  }
+  return parts;
+}
+
+function collectCartParts() {
+  const parts = [];
+  for (const article of document.querySelectorAll("article.store-cart-item")) {
+    const img = article.querySelector("img[src*='ItemImage/PT/']");
+    if (!img) continue;
+    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+    if (!match) continue;
+    const colorId = parseInt(match[1], 10);
+    const partNo = match[2];
+    const qtyEl = article.querySelector("input[type='number']") ||
+                  article.querySelector("[class*='qty']");
+    const qty = Math.max(1, parseInt(qtyEl?.value || qtyEl?.textContent?.trim() || "1", 10) || 1);
+    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src });
+  }
+  return parts;
+}
+
 // ─── DOM helpers ────────────────────────────────────────────────────────────
 
 function extractRows() {
@@ -129,6 +201,78 @@ function fillMaxPrices() {
   }
 }
 
+function injectImportButton() {
+  if (!location.pathname.startsWith("/v2/wanted/search.page")) return;
+  if (document.querySelector(".moc-import-btn")) return;
+  // h2.tight is the wanted list name heading
+  const titleEl = document.querySelector("h2.tight, .wl-grid-name, .wl-page-title");
+  if (!titleEl) return;
+  // Capture name BEFORE appending button so textContent stays clean
+  const listName = titleEl.textContent.trim();
+  const btn = document.createElement("button");
+  btn.className = "moc-import-btn bl-btn";
+  btn.textContent = "Save to MOC Source";
+  btn.style.cssText = "margin-left:10px;vertical-align:middle;font-size:13px;";
+  btn.addEventListener("click", async () => {
+    const parts = collectWantedListParts();
+    if (!parts.length) return;
+    const { wantedLists = [] } = await chrome.storage.local.get("wantedLists");
+    const existingIdx = wantedLists.findIndex(l => l.name === listName);
+    const entry = {
+      id: existingIdx !== -1 ? wantedLists[existingIdx].id : uid(),
+      name: listName,
+      partsCount: parts.length,
+      importedAt: Date.now(),
+      parts,
+    };
+    if (existingIdx !== -1) {
+      wantedLists[existingIdx] = entry;
+    } else {
+      wantedLists.push(entry);
+    }
+    await chrome.storage.local.set({ wantedLists });
+    chrome.runtime.sendMessage({ type: "OPEN_MOC_SOURCE" });
+  });
+  titleEl.appendChild(btn);
+}
+
+function injectCartImportButton() {
+  if (location.hostname !== "store.bricklink.com") return;
+  if (!location.hash.includes("cart")) return;
+  if (document.querySelector(".moc-cart-import-btn")) return;
+  const firstItem = document.querySelector("article.store-cart-item");
+  if (!firstItem) return;
+  const container = firstItem.closest("section") || firstItem.parentElement;
+  if (!container) return;
+  const btn = document.createElement("button");
+  btn.className = "moc-cart-import-btn";
+  btn.textContent = "Save to MOC Source";
+  btn.style.cssText = "display:block;margin-bottom:12px;padding:6px 14px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;";
+  btn.addEventListener("click", async () => {
+    const parts = collectCartParts();
+    if (!parts.length) return;
+    const { carts = [] } = await chrome.storage.local.get("carts");
+    const name = getCartName();
+    const existingIdx = carts.findIndex(c => c.name === name);
+    const entry = {
+      id: existingIdx !== -1 ? carts[existingIdx].id : uid(),
+      name,
+      storeUrl: `${location.origin}${location.pathname}#/cart`,
+      partsCount: parts.length,
+      importedAt: Date.now(),
+      parts,
+    };
+    if (existingIdx !== -1) {
+      carts[existingIdx] = entry;
+    } else {
+      carts.push(entry);
+    }
+    await chrome.storage.local.set({ carts });
+    chrome.runtime.sendMessage({ type: "OPEN_MOC_SOURCE" });
+  });
+  container.insertAdjacentElement("beforebegin", btn);
+}
+
 // ─── Auto page-size ──────────────────────────────────────────────────────────
 
 function enforcePageSize() {
@@ -219,6 +363,9 @@ async function run() {
   if (rows.length === 0) return;
 
   console.log(`[MOC Source] Processing ${rows.length} new rows`);
+  injectImportButton();
+  injectCartImportButton();
+
   for (const { row, partNo, colorId } of rows) {
     const pabEntry = await chrome.runtime.sendMessage({
       type: "GET_PAB_PRICE",

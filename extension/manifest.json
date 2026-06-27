@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "MOC Source",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "PAB price comparison on BrickLink wanted lists and cart",
-  "permissions": ["storage"],
+  "permissions": ["storage", "tabs"],
   "host_permissions": [
     "https://*.bricklink.com/*",
     "https://store.bricklink.com/*",
@@ -29,7 +29,6 @@
     "128": "icon128.png"
   },
   "action": {
-    "default_popup": "popup.html",
     "default_title": "MOC Source",
     "default_icon": {
       "16": "icon16.png",
