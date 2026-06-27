@@ -113,13 +113,16 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Repo fully backed up, AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible via Cloudflare edge
+- [x] Chrome Web Store — submitted for review (unlisted/alpha, 2026-06-27)
 
 ## What's Next
 
-1. **Chrome Web Store** — paid, draft ready, privacy page live. Package: zip `extension/` folder, upload as unlisted.
-2. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
-3. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-4. **Icon** — diamond shape in toolbar, deferred
+1. **Chrome Web Store review** — waiting on Google, no action needed
+2. **Cart split** — split wanted list into PAB vs BrickLink buy recommendations (killer feature)
+3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once cart split routes users to lego.com (LEGO merchant ID: 50641)
+4. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
+5. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+6. **Icon** — diamond shape in toolbar, deferred
 
 ## Related Projects
 
