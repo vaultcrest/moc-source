@@ -112,14 +112,14 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Favicon on all web pages
 - [x] Repo fully backed up, AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
+- [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible via Cloudflare edge
 
 ## What's Next
 
-1. **Cloudflare tunnel** — tunnel created in CF dashboard (`Networks → Connectors`), public hostname `api.moc-source.com → HTTP → localhost:8000` set. Still needs: vault the tunnel token, run `ansible-playbook site.yml` to deploy cloudflared service. Then `api.moc-source.com` will be publicly accessible.
-2. **Chrome Web Store** — paid, draft ready, privacy page live. Package: zip `extension/` folder, upload as unlisted.
-3. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
-4. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-5. **Icon** — diamond shape in toolbar, deferred
+1. **Chrome Web Store** — paid, draft ready, privacy page live. Package: zip `extension/` folder, upload as unlisted.
+2. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
+3. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+4. **Icon** — diamond shape in toolbar, deferred
 
 ## Related Projects
 
