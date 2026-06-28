@@ -3,11 +3,12 @@
   "name": "MOC Source",
   "version": "0.2.0",
   "description": "PAB price comparison on BrickLink wanted lists and cart",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "cookies"],
   "host_permissions": [
     "https://*.bricklink.com/*",
     "https://store.bricklink.com/*",
-    "https://api.moc-source.com/*"
+    "https://api.moc-source.com/*",
+    "https://www.lego.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -20,6 +21,11 @@
         "https://store.bricklink.com/*"
       ],
       "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.lego.com/*"],
+      "js": ["content-lego.js"],
       "run_at": "document_idle"
     }
   ],

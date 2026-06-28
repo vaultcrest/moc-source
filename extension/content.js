@@ -28,6 +28,30 @@ function getCartName() {
   return `Cart — ${new Date().toLocaleDateString()}`;
 }
 
+function getOrderSummary() {
+  const summary = {};
+  const labels = { "Item Total": "itemTotal", "Shipping": "shipping", "Order Total": "orderTotal" };
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode: n => {
+      const t = n.textContent.trim();
+      return Object.keys(labels).some(k => t.startsWith(k)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+    }
+  });
+  let node;
+  while ((node = walker.nextNode())) {
+    const t = node.textContent.trim();
+    const key = Object.keys(labels).find(k => t.startsWith(k));
+    if (!key) continue;
+    let el = node.parentElement;
+    for (let i = 0; i < 4 && el; i++) {
+      const m = el.textContent.match(/(?:US )?\$([\d,]+\.?\d*)/);
+      if (m) { summary[labels[key]] = `$${m[1]}`; break; }
+      el = el.parentElement;
+    }
+  }
+  return summary;
+}
+
 function collectWantedListParts() {
   const parts = [];
   for (const img of document.querySelectorAll("img.wl-item-img")) {
@@ -69,7 +93,15 @@ function collectCartParts() {
     const qtyEl = article.querySelector("input[type='number']") ||
                   article.querySelector("[class*='qty']");
     const qty = Math.max(1, parseInt(qtyEl?.value || qtyEl?.textContent?.trim() || "1", 10) || 1);
-    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src });
+    const priceCell = article.querySelector("div.price-col");
+    let storePrice = null;
+    if (priceCell) {
+      const clone = priceCell.cloneNode(true);
+      clone.querySelectorAll(".moc-source-badge").forEach(el => el.remove());
+      const text = clone.textContent.trim();
+      if (text) storePrice = text;
+    }
+    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice });
   }
   return parts;
 }
@@ -240,14 +272,13 @@ function injectCartImportButton() {
   if (location.hostname !== "store.bricklink.com") return;
   if (!location.hash.includes("cart")) return;
   if (document.querySelector(".moc-cart-import-btn")) return;
-  const firstItem = document.querySelector("article.store-cart-item");
-  if (!firstItem) return;
-  const container = firstItem.closest("section") || firstItem.parentElement;
-  if (!container) return;
+  if (!document.querySelector("article.store-cart-item")) return;
+  const heading = [...document.querySelectorAll("h1,h2,h3")].find(el => /Shopping Cart/i.test(el.textContent));
+  if (!heading) return;
   const btn = document.createElement("button");
   btn.className = "moc-cart-import-btn";
   btn.textContent = "Save to MOC Source";
-  btn.style.cssText = "display:block;margin-bottom:12px;padding:6px 14px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;";
+  btn.style.cssText = "display:inline-block;vertical-align:middle;padding:6px 14px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;";
   btn.addEventListener("click", async () => {
     const parts = collectCartParts();
     if (!parts.length) return;
@@ -260,6 +291,7 @@ function injectCartImportButton() {
       storeUrl: `${location.origin}${location.pathname}#/cart`,
       partsCount: parts.length,
       importedAt: Date.now(),
+      orderSummary: getOrderSummary(),
       parts,
     };
     if (existingIdx !== -1) {
@@ -270,7 +302,8 @@ function injectCartImportButton() {
     await chrome.storage.local.set({ carts });
     chrome.runtime.sendMessage({ type: "OPEN_MOC_SOURCE" });
   });
-  container.insertAdjacentElement("beforebegin", btn);
+  heading.insertAdjacentHTML("beforeend", "&nbsp;&nbsp;");
+  heading.appendChild(btn);
 }
 
 // ─── Auto page-size ──────────────────────────────────────────────────────────
@@ -353,6 +386,195 @@ async function setupBuyPage() {
   }
 
 }
+
+// ─── BrickLink XML Upload ────────────────────────────────────────────────────
+
+function parseWlJson() {
+  for (const script of document.querySelectorAll("script:not([src])")) {
+    const m = script.textContent.match(/var wlJson = (\{.+\});/);
+    if (m) { try { return JSON.parse(m[1]); } catch {} }
+  }
+  return null;
+}
+
+function buildXmlUploadOverlay(xml, defaultName) {
+  document.getElementById("moc-bl-overlay")?.remove();
+
+  const wlData = parseWlJson();
+  const lists = wlData?.lists ?? [];
+
+  const el = document.createElement("div");
+  el.id = "moc-bl-overlay";
+  Object.assign(el.style, {
+    position: "fixed", top: "50%", left: "50%",
+    transform: "translate(-50%,-50%)",
+    zIndex: "999999",
+    background: "#1e2330", color: "#fff",
+    borderRadius: "16px",
+    padding: "36px 44px",
+    width: "min(660px,92vw)",
+    boxShadow: "0 16px 80px rgba(0,0,0,.75)",
+    fontFamily: "sans-serif",
+    fontSize: "18px", lineHeight: "1.6",
+    boxSizing: "border-box",
+  });
+
+  const safeDefault = defaultName.replace(/"/g, "&quot;");
+  const selectOptions = lists.length
+    ? lists.map(l => `<option value="${l.id}">${l.name} (${l.num})</option>`).join("")
+    : `<option value="0">Default Wanted List</option>`;
+
+  el.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:24px">
+      <span style="font-weight:700;font-size:22px">MOC Source → BrickLink WL</span>
+      <button id="moc-bl-x" style="background:none;border:none;color:#8b9ab0;font-size:24px;cursor:pointer;padding:0 0 0 16px">✕</button>
+    </div>
+    <div style="margin-bottom:16px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:10px">
+        <input type="radio" name="bl-wl-type" value="existing" id="bl-opt-existing" checked>
+        <span>Add to existing list</span>
+      </label>
+      <div style="padding-left:26px">
+        <select id="bl-wl-select" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #374151;background:#0f1624;color:#fff;font-size:16px">
+          ${selectOptions}
+        </select>
+      </div>
+    </div>
+    <div style="margin-bottom:28px">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer;margin-bottom:10px">
+        <input type="radio" name="bl-wl-type" value="new" id="bl-opt-new">
+        <span>Create new list</span>
+      </label>
+      <div style="padding-left:26px">
+        <input type="text" id="bl-wl-new-name" placeholder="New list name" value="${safeDefault}"
+          style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid #374151;background:#0f1624;color:#fff;font-size:16px;box-sizing:border-box">
+      </div>
+    </div>
+    <div id="moc-bl-status" style="min-height:22px;margin-bottom:16px;color:#f87171;font-size:15px"></div>
+    <div style="display:flex;gap:14px">
+      <button id="moc-bl-upload" style="background:#2563eb;border:none;color:#fff;font-size:17px;font-weight:600;border-radius:8px;padding:10px 24px;cursor:pointer">Upload to BrickLink</button>
+      <button id="moc-bl-cancel" style="background:#2d3547;border:none;color:#8b9ab0;font-size:17px;border-radius:8px;padding:10px 24px;cursor:pointer">Cancel</button>
+    </div>
+  `;
+
+  document.body.appendChild(el);
+
+  const selEl  = el.querySelector("#bl-wl-select");
+  const newEl  = el.querySelector("#bl-wl-new-name");
+  const optEx  = el.querySelector("#bl-opt-existing");
+  const optNew = el.querySelector("#bl-opt-new");
+  const status = el.querySelector("#moc-bl-status");
+
+  function syncToggle() {
+    const isNew = optNew.checked;
+    selEl.disabled  = isNew;  selEl.style.opacity  = isNew ? "0.35" : "1";
+    newEl.disabled  = !isNew; newEl.style.opacity  = isNew ? "1" : "0.35";
+  }
+  syncToggle();
+  el.querySelectorAll("input[name=bl-wl-type]").forEach(r => r.addEventListener("change", syncToggle));
+
+  const close = () => el.remove();
+  el.querySelector("#moc-bl-x").addEventListener("click", close);
+  el.querySelector("#moc-bl-cancel").addEventListener("click", close);
+
+  el.querySelector("#moc-bl-upload").addEventListener("click", async () => {
+    const isNew = optNew.checked;
+    const wantedMoreID      = isNew ? -1 : parseInt(selEl.value, 10);
+    const strWantedMoreName = isNew ? newEl.value.trim() : "";
+    if (isNew && !strWantedMoreName) { status.textContent = "Please enter a list name."; return; }
+
+    const uploadBtn = el.querySelector("#moc-bl-upload");
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = "Parsing XML…";
+    status.textContent = "";
+
+    try {
+      console.log('[MOC] BL upload XML:', xml);
+      const parseParams = { xmlStr: xml };
+      if (!isNew) parseParams.wantedMoreID = String(wantedMoreID);
+      const r1 = await fetch("/ajax/clone/wanted/uploadXML.ajax", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(parseParams),
+      });
+      const d1 = await r1.json();
+      const validItems = (d1.wantedItems || []).filter(r => r.itemID > 0);
+      if (d1.returnCode !== 0 && validItems.length === 0) {
+        console.log('[MOC] uploadXML response:', JSON.stringify(d1));
+        throw new Error(`Parse error (code ${d1.returnCode})`);
+      }
+      const skipped = (d1.wantedItems || []).length - validItems.length;
+      if (skipped > 0) status.textContent = `⚠ ${skipped} item(s) not found on BrickLink — uploading the rest…`;
+      if (d1.returnCode !== 0) console.log('[MOC] uploadXML partial result (code', d1.returnCode, ') — skipped', skipped, 'items');
+
+      const resolvedListId = isNew ? -1 : wantedMoreID;
+      const itemsToUpload = validItems
+        .map(r => ({
+          wantedID:         isNew ? 0 : (r.wantedID || 0),
+          wantedMoreID:     resolvedListId,
+          itemID:           r.itemID,
+          colorID:          r.colorID,
+          wantedNew:        r.wantedNew,
+          wantedNotify:     r.wantedNotify,
+          wantedQtyFilled:  (r.wantedQtyFilled || 0) + (r.prevWantedQtyFilled || 0),
+          wantedQty:        (r.wantedQty || 0) + (isNew ? 0 : (r.prevWantedQty || 0)),
+          wantedRemarks:    r.wantedRemarks,
+          wantedPrice:      r.wantedPriceRaw,
+        }));
+
+      uploadBtn.textContent = `Adding ${itemsToUpload.length} lots…`;
+
+      const uploadParams = {
+        wantedItemStr: JSON.stringify(itemsToUpload),
+        wantedMoreID: String(isNew ? -1 : wantedMoreID),
+        uploadFrom: "90",
+        sourceLocation: "90",
+      };
+      if (isNew) {
+        uploadParams.wantedMoreName = strWantedMoreName;
+      }
+
+      const r2 = await fetch("/ajax/clone/wanted/upload.ajax", {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: new URLSearchParams(uploadParams),
+      });
+      const d2 = await r2.json();
+      if (d2.returnCode !== 0) throw new Error(`Upload error (code ${d2.returnCode})`);
+
+      const added = d2.n4ItemQty ?? itemsToUpload.length;
+      const listId = d2.wantedMoreID ?? (isNew ? null : wantedMoreID);
+      const listUrl = listId
+        ? `/v2/wanted/search.page?wantedMoreID=${listId}&pageSize=10000`
+        : "/v2/wanted/list.page";
+
+      el.innerHTML = `
+        <div style="font-weight:700;font-size:22px;margin-bottom:20px">MOC Source → BrickLink WL</div>
+        <div style="color:#4ade80;margin-bottom:28px;font-size:20px">Done! ${added} lot${added !== 1 ? "s" : ""} added to your wanted list.</div>
+        <div style="display:flex;gap:14px">
+          <button id="moc-bl-view" style="background:#2563eb;border:none;color:#fff;font-size:17px;font-weight:600;border-radius:8px;padding:10px 24px;cursor:pointer">View Wanted List</button>
+          <button id="moc-bl-done" style="background:#2d3547;border:none;color:#8b9ab0;font-size:17px;border-radius:8px;padding:10px 24px;cursor:pointer">Dismiss</button>
+        </div>
+      `;
+      el.querySelector("#moc-bl-done").addEventListener("click", close);
+      el.querySelector("#moc-bl-view").addEventListener("click", () => {
+        location.href = listUrl;
+      });
+    } catch (e) {
+      status.textContent = `Error: ${e.message}`;
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = "Upload to BrickLink";
+    }
+  });
+}
+
+(async () => {
+  if (!location.pathname.startsWith("/v2/wanted/upload.page")) return;
+  const { pendingBLUpload } = await chrome.storage.local.get("pendingBLUpload");
+  if (!pendingBLUpload) return;
+  await chrome.storage.local.remove("pendingBLUpload");
+  buildXmlUploadOverlay(pendingBLUpload.xml, pendingBLUpload.listName);
+})();
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
