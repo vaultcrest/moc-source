@@ -84,6 +84,13 @@ INTER_LOCALE_DELAY = 2.0  # seconds between locales
 
 # ─── LEGO fetch ──────────────────────────────────────────────────────────────
 
+def _post_pab(body: dict, headers: dict) -> list[dict]:
+    resp = curl_requests.post(PAB_URL, json=body, headers=headers, impersonate="chrome124", timeout=60)
+    if resp.status_code != 200:
+        raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
+    return resp.json()["data"]["searchElements"]["results"]
+
+
 def fetch_locale(locale: str) -> list[dict]:
     headers = {
         "Origin": "https://www.lego.com",
@@ -92,66 +99,71 @@ def fetch_locale(locale: str) -> list[dict]:
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
     }
 
-    all_results = []
+    # ── Pass 1: paginated full scrape ──────────────────────────────────────────
+    top_level: dict[str, dict] = {}   # id → item (top-level results, channel is accurate)
+    sibling_ids: list[str] = []       # ids that only appeared as siblings
     page = 1
 
     while True:
         print(f"  [{locale}] page {page} ...", flush=True)
-
-        body = {
+        results = _post_pab({
             "operationName": "PickABrickQuery",
-            "variables": {
-                "input": {
-                    "page": page,
-                    "perPage": PER_PAGE,
-                    "sort": {"key": "RELEVANCE", "direction": "DESC"},
-                    "query": "",
-                    "fetchSiblings": True,
-                    "availability": ["AVAILABLE", "OUT_OF_STOCK"],
-                },
-            },
+            "variables": {"input": {
+                "page": page, "perPage": PER_PAGE,
+                "sort": {"key": "RELEVANCE", "direction": "DESC"},
+                "query": "", "fetchSiblings": True,
+                "availability": ["AVAILABLE", "OUT_OF_STOCK"],
+            }},
             "query": PAB_QUERY,
-        }
-
-        resp = curl_requests.post(
-            PAB_URL,
-            json=body,
-            headers=headers,
-            impersonate="chrome124",
-            timeout=60,
-        )
-
-        if resp.status_code != 200:
-            print(f"  [{locale}] HTTP {resp.status_code} on page {page}: {resp.text[:200]}", file=sys.stderr)
-            resp.raise_for_status()
-
-        data = resp.json()
-        results = data["data"]["searchElements"]["results"]
+        }, headers)
 
         if not results:
             break
 
-        # Expand siblings as full rows
-        expanded = []
         for item in results:
-            expanded.append(item)
-            for sibling in item.get("siblings", []):
-                row = dict(item)
-                row.update(sibling)
-                row["designId"] = item.get("designId")
-                row["name"] = item.get("name")
-                row["deliveryChannel"] = item.get("deliveryChannel")
-                expanded.append(row)
-
-        all_results.extend(expanded)
+            top_level[item["id"]] = item
+            for sib in item.get("siblings", []):
+                if sib["id"] not in top_level:
+                    sibling_ids.append(sib["id"])
 
         if len(results) < PER_PAGE:
             break
-
         page += 1
         time.sleep(INTER_PAGE_DELAY)
 
-    print(f"  [{locale}] fetched {len(all_results)} elements", flush=True)
+    # ── Pass 2: re-query siblings by element ID so each appears as a top-level
+    # result with its own deliveryChannel (siblings in pass 1 don't expose it).
+    new_sibling_ids = [sid for sid in sibling_ids if sid not in top_level]
+    BATCH = 900  # IDs per query string (LEGO accepts up to ~900)
+    for b_start in range(0, len(new_sibling_ids), BATCH):
+        batch = new_sibling_ids[b_start:b_start + BATCH]
+        query_str = " ".join(batch)
+        print(f"  [{locale}] sibling lookup {b_start+1}–{b_start+len(batch)} of {len(new_sibling_ids)} ...", flush=True)
+        sib_page = 1
+        while True:
+            try:
+                results = _post_pab({
+                    "operationName": "PickABrickQuery",
+                    "variables": {"input": {
+                        "page": sib_page, "perPage": PER_PAGE,
+                        "query": query_str,
+                        "availability": ["AVAILABLE", "OUT_OF_STOCK"],
+                        "fetchSiblings": False,
+                    }},
+                    "query": PAB_QUERY,
+                }, headers)
+            except Exception as e:
+                print(f"  [{locale}] sibling batch page {sib_page} failed: {e}", file=sys.stderr)
+                break
+            for item in results:
+                top_level[item["id"]] = item
+            if len(results) < PER_PAGE:
+                break
+            sib_page += 1
+            time.sleep(INTER_PAGE_DELAY)
+
+    all_results = list(top_level.values())
+    print(f"  [{locale}] fetched {len(all_results)} elements total ({len(new_sibling_ids)} siblings re-queried)", flush=True)
     return all_results
 
 
@@ -213,13 +225,34 @@ ON CONFLICT (element_id) DO UPDATE SET
     updated_at      = EXCLUDED.updated_at
 """
 
-# Insert-only for non-en-us locales — creates the FK parent row for new elements
-# without overwriting en-us pricing data already in lego_elements
+# For non-en-us locales: create FK parent row if new, or just refresh updated_at so the
+# stale-detection query doesn't falsely mark cross-locale-only elements as 'oos'.
 INSERT_ELEMENTS_NEW_ONLY = """
 INSERT INTO lego_elements
     (element_id, design_id, lego_name, first_seen, updated_at)
 VALUES %s
-ON CONFLICT (element_id) DO NOTHING
+ON CONFLICT (element_id) DO UPDATE SET
+    updated_at = EXCLUDED.updated_at
+"""
+
+# Elements no longer returned by LEGO's API for a locale (discontinued/pulled):
+# mark out of stock so the extension and API stop surfacing them.
+MARK_STALE_PRICES_OOS = """
+UPDATE lego_element_prices
+SET    in_stock   = false,
+       updated_at = %(now)s
+WHERE  locale     = %(locale)s
+  AND  updated_at < %(run_start)s
+  AND  in_stock   = true
+"""
+
+# For en-us canonical table: channel → 'oos' for anything not seen this run.
+MARK_STALE_ELEMENTS_OOS = """
+UPDATE lego_elements
+SET    channel    = 'oos',
+       updated_at = %(now)s
+WHERE  updated_at < %(run_start)s
+  AND  channel   != 'oos'
 """
 
 
@@ -282,6 +315,7 @@ def main():
 
     total_prices = 0
     total_elements = 0
+    run_start = now  # all writes in this run have updated_at >= now
 
     try:
         for i, locale in enumerate(locales):
@@ -294,25 +328,44 @@ def main():
             if args.dry_run:
                 print(f"  [{locale}] dry-run, skipping DB write")
             else:
+                locale_start = run_start
                 with conn.cursor() as cur:
                     if locale == "en-us":
-                        # Full upsert: updates pricing + availability on existing rows,
+                        # Full upsert: updates pricing + channel on existing rows,
                         # and creates any brand-new elements LEGO has added since last seed
                         n2 = write_elements_en_us(cur, rows, now)
                         total_elements += n2
                         print(f"  [{locale}] upserted {n2} lego_elements rows", flush=True)
                     else:
-                        # Ensure FK parents exist for any new elements before writing prices
+                        # Refresh updated_at for known elements, insert new ones.
+                        # Keeps the stale-element check accurate across all locales.
                         ensure_elements_exist(cur, rows, now)
 
                     n = write_prices(cur, rows)
                     total_prices += n
+
+                    # Price rows not touched this run: element left this locale's PAB catalog.
+                    cur.execute(MARK_STALE_PRICES_OOS, {"now": now, "locale": locale, "run_start": locale_start})
+                    stale_p = cur.rowcount
+                    if stale_p:
+                        print(f"  [{locale}] {stale_p} price rows marked out-of-stock (left catalog)", flush=True)
 
                 conn.commit()
                 print(f"  [{locale}] committed {n} price rows", flush=True)
 
             if i < len(locales) - 1:
                 time.sleep(INTER_LOCALE_DELAY)
+
+        if not args.dry_run and conn and len(locales) > 1:
+            # After ALL locales: elements not seen anywhere this run have left the PAB
+            # catalog entirely — mark their canonical channel as 'oos'.
+            # (Must run after all locales so cross-locale-only elements aren't falsely marked.)
+            with conn.cursor() as cur:
+                cur.execute(MARK_STALE_ELEMENTS_OOS, {"now": now, "run_start": run_start})
+                stale_el = cur.rowcount
+                if stale_el:
+                    print(f"\n  {stale_el} lego_elements marked oos (no longer in any locale)", flush=True)
+            conn.commit()
 
     finally:
         if conn:

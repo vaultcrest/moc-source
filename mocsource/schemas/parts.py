@@ -26,14 +26,16 @@ class StudioResolutionOut(BaseModel):
 
 
 class LocalePriceResult(BaseModel):
-    element_id: int
-    design_id: str | None
-    lego_name: str | None
-    bl_part_name: str | None
-    bl_color_id: int | None
-    bl_color_name: str | None
-    lego_color_id: int | None
-    lego_color_name: str | None
+    element_id: int | None = None
+    design_id: str | None = None
+    lego_name: str | None = None
+    bl_part_no: str | None = None
+    bl_part_name: str | None = None
+    bl_color_id: int | None = None
+    bl_color_name: str | None = None
+    bl_color_hex: str | None = None
+    lego_color_id: int | None = None
+    lego_color_name: str | None = None
     locale: str
     channel: str | None
     price_cents: int | None

@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, Text
+from sqlalchemy import Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -11,3 +11,4 @@ class Color(Base):
     bl_name: Mapped[str] = mapped_column(Text, nullable=False)
     lego_id: Mapped[int | None] = mapped_column(Integer)
     lego_name: Mapped[str | None] = mapped_column(Text)
+    hex: Mapped[str | None] = mapped_column(String(6))

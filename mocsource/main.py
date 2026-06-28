@@ -1,3 +1,4 @@
+import logging
 import pathlib
 from contextlib import asynccontextmanager
 
@@ -5,7 +6,13 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
+from .config import settings
 from .routers import parts
+
+logging.basicConfig(
+    level=getattr(logging, settings.log_level.upper(), logging.INFO),
+    format="%(levelname)s [%(name)s] %(message)s",
+)
 
 STATIC_DIR = pathlib.Path(__file__).parent.parent / "static"
 
