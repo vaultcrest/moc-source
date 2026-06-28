@@ -346,17 +346,23 @@ async function renderLists(content) {
   }
 
   for (const btn of content.querySelectorAll(".rename-btn")) {
-    btn.addEventListener("click", () => {
+    btn.addEventListener("click", e => {
+      e.stopPropagation();
       const id  = btn.dataset.id;
       const key = btn.dataset.key;
       const td  = content.querySelector(`.name-cell[data-id="${id}"][data-key="${key}"]`);
       const currentName = td.querySelector(".list-open-btn").textContent;
 
-      td.innerHTML = `<input class="rename-input" type="text" value="${esc(currentName)}"
-        style="font-size:14px;padding:2px 6px;border:1px solid #2563eb;border-radius:4px;width:100%;box-sizing:border-box">`;
-      const input = td.querySelector(".rename-input");
-      input.focus();
-      input.select();
+      // Hide existing td children rather than replacing them — avoids mid-click
+      // DOM removal that can cause Chrome to auto-focus an adjacent element and
+      // race against input.focus().
+      for (const child of td.children) child.style.display = "none";
+      const input = document.createElement("input");
+      input.className = "rename-input";
+      input.type = "text";
+      input.value = currentName;
+      input.style.cssText = "font-size:14px;padding:2px 6px;border:1px solid #2563eb;border-radius:4px;min-width:200px;box-sizing:border-box;flex:1";
+      td.appendChild(input);
 
       let saved = false;
       async function saveRename() {
@@ -375,7 +381,12 @@ async function renderLists(content) {
         if (e.key === "Enter")  { e.preventDefault(); saveRename(); }
         if (e.key === "Escape") { saved = true; renderLists(content); }
       });
-      input.addEventListener("blur", saveRename);
+      // Defer blur listener so it doesn't fire from the same click that opened the input
+      setTimeout(() => {
+        input.focus();
+        input.select();
+        input.addEventListener("blur", saveRename);
+      }, 0);
     });
   }
 
@@ -604,9 +615,148 @@ async function renderProjectDetail(id, content) {
     </div>`;
 
   content.querySelector("#back-btn").addEventListener("click", () => navigate("projects"));
-  content.querySelector("#configure-btn").addEventListener("click", () => {
-    // Phase 2: renderProjectSetup(id, content)
-    alert("Project setup coming in Phase 2.");
+  content.querySelector("#configure-btn").addEventListener("click", () => renderProjectSetup(id, content));
+}
+
+// ─── Project setup view ──────────────────────────────────────────────────────
+
+async function renderProjectSetup(id, content) {
+  const { projects = [], wantedLists = [], carts = [], legoCarts = [] } =
+    await chrome.storage.local.get(["projects", "wantedLists", "carts", "legoCarts"]);
+  const project = projects.find(p => p.id === id);
+  if (!project) { navigate("projects"); return; }
+
+  const wlChecked  = new Set(project.wantedListIds ?? []);
+  const blChecked  = new Set(project.blCartIds ?? []);
+  const lgSelected = project.legoCartId ?? "";
+  const scratchId  = project.scratchWantedListId ?? "";
+
+  function checkRow(inputType, name, value, checked, label, meta) {
+    return `
+      <label style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f3f4f6;cursor:pointer">
+        <input type="${inputType}" name="${name}" value="${esc(value)}" ${checked ? "checked" : ""}
+          style="width:15px;height:15px;flex-shrink:0;cursor:pointer">
+        <span style="flex:1;font-size:13px">${esc(label)}</span>
+        ${meta ? `<span style="font-size:12px;color:#6c757d;flex-shrink:0">${meta}</span>` : ""}
+      </label>`;
+  }
+
+  const wlRowsHtml = wantedLists.length
+    ? wantedLists.map(l => checkRow("checkbox", "wl-pool", l.id, wlChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
+    : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No wanted lists imported yet.</div>`;
+
+  const blRowsHtml = carts.length
+    ? carts.map(l => checkRow("checkbox", "bl-cart", l.id, blChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
+    : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No BL store carts imported yet.</div>`;
+
+  const lgRowsHtml = [
+    `<label style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f3f4f6;cursor:pointer">
+      <input type="radio" name="lego-cart" value="" ${!lgSelected ? "checked" : ""}
+        style="width:15px;height:15px;flex-shrink:0;cursor:pointer">
+      <span style="font-size:13px;color:#6c757d">None</span>
+    </label>`,
+    ...legoCarts.map(l => checkRow("radio", "lego-cart", l.id, lgSelected === l.id, l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)),
+  ].join("");
+
+  function scratchOptions(excludeIds) {
+    const available = wantedLists.filter(l => !excludeIds.has(l.id));
+    if (!available.length) return `<option value="">None (no available lists)</option>`;
+    return `<option value="">None — unallocated parts will be ephemeral</option>` +
+      available.map(l => `<option value="${esc(l.id)}" ${scratchId === l.id && !excludeIds.has(l.id) ? "selected" : ""}>${esc(l.name)}</option>`).join("");
+  }
+
+  content.innerHTML = `
+    <div class="detail-header">
+      <button class="back-btn" id="back-btn">← ${esc(project.name)}</button>
+      <div>
+        <div style="font-size:18px;font-weight:700;color:#1e2330">Configure Project</div>
+        <div class="detail-meta">${esc(project.name)}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div class="section">
+        <div class="section-header">
+          <span>Wanted List Pool</span>
+          <span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px">quantities summed across all selected</span>
+        </div>
+        <div style="padding:4px 16px 6px" id="wl-pool-rows">${wlRowsHtml}</div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span>BrickLink Store Carts</span>
+          <span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px">read-only price reference</span>
+        </div>
+        <div style="padding:4px 16px 6px">${blRowsHtml}</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
+      <div class="section">
+        <div class="section-header">
+          <span>LEGO Cart</span>
+          <span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px">one per project by convention</span>
+        </div>
+        <div style="padding:4px 16px 6px">
+          ${legoCarts.length
+            ? lgRowsHtml
+            : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No LEGO carts saved yet.</div>`}
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-header">
+          <span>Scratch Space</span>
+          <span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px">persist unallocated parts between sessions</span>
+        </div>
+        <div style="padding:12px 16px">
+          <div style="font-size:12px;color:#6c757d;margin-bottom:8px">
+            Link an existing wanted list. Pool lists are excluded.
+          </div>
+          <select id="scratch-select" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px">
+            ${scratchOptions(wlChecked)}
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:10px">
+      <button id="save-btn" style="padding:8px 22px;background:#1e2330;color:#fff;border:none;border-radius:5px;font-size:13px;font-weight:600;cursor:pointer">Save</button>
+      <button id="cancel-btn" style="padding:8px 18px;background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:5px;font-size:13px;cursor:pointer">Cancel</button>
+    </div>`;
+
+  const scratchSelect = content.querySelector("#scratch-select");
+
+  // Keep scratch dropdown in sync: exclude lists checked as pool sources
+  content.querySelectorAll("input[name='wl-pool']").forEach(cb => {
+    cb.addEventListener("change", () => {
+      const checked = new Set([...content.querySelectorAll("input[name='wl-pool']:checked")].map(el => el.value));
+      const prev = scratchSelect.value;
+      scratchSelect.innerHTML = scratchOptions(checked);
+      if (prev && !checked.has(prev)) scratchSelect.value = prev;
+    });
+  });
+
+  content.querySelector("#back-btn").addEventListener("click", () => renderProjectDetail(id, content));
+  content.querySelector("#cancel-btn").addEventListener("click", () => renderProjectDetail(id, content));
+
+  content.querySelector("#save-btn").addEventListener("click", async () => {
+    const newWlIds   = [...content.querySelectorAll("input[name='wl-pool']:checked")].map(el => el.value);
+    const newBlIds   = [...content.querySelectorAll("input[name='bl-cart']:checked")].map(el => el.value);
+    const newLgId    = content.querySelector("input[name='lego-cart']:checked")?.value || null;
+    const newScratch = scratchSelect.value || null;
+
+    const { projects: cur = [] } = await chrome.storage.local.get("projects");
+    const proj = cur.find(p => p.id === id);
+    if (proj) {
+      proj.wantedListIds       = newWlIds;
+      proj.blCartIds           = newBlIds;
+      proj.legoCartId          = newLgId;
+      proj.scratchWantedListId = newScratch;
+      await chrome.storage.local.set({ projects: cur });
+    }
+    renderProjectDetail(id, content);
   });
 }
 
@@ -1000,7 +1150,7 @@ function renderDetailView(content) {
       <div style="flex:1">
         <div style="display:flex;align-items:center;gap:10px">
           <div class="page-title" style="margin:0">${esc(list.name)}</div>
-          ${isLegoCart() ? `<button class="detail-rename-btn btn" style="font-size:12px;padding:2px 8px;opacity:0.5" title="Rename">✎</button>` : ""}
+          <button class="detail-rename-btn btn" style="font-size:12px;padding:2px 8px;opacity:0.5" title="Rename">✎</button>
           ${refreshBtn}
         </div>
         <div class="detail-meta">${list.partsCount} parts · ${cart ? "Cart" : "Wanted List"} · ${fmtDate(list.importedAt)}</div>
@@ -1188,23 +1338,23 @@ function showTransferWarning(skippedParts, isMove) {
 function attachDetailListeners(content) {
   content.querySelector(".back-btn")?.addEventListener("click", () => navigate("lists"));
 
-  content.querySelector(".detail-rename-btn")?.addEventListener("click", () => {
+  content.querySelector(".detail-rename-btn")?.addEventListener("click", e => {
+    e.stopPropagation();
     const titleEl = content.querySelector(".page-title");
     const currentName = currentDetail.list.name;
     titleEl.outerHTML = `<input class="detail-rename-input" type="text" value="${esc(currentName)}"
       style="font-size:22px;font-weight:700;padding:2px 6px;border:1px solid #2563eb;border-radius:4px;width:320px;box-sizing:border-box;margin:0">`;
     const input = content.querySelector(".detail-rename-input");
-    input.focus();
-    input.select();
     let saved = false;
     async function saveRename() {
       if (saved) return;
       saved = true;
       const newName = input.value.trim() || currentName;
       if (newName !== currentName) {
-        const { legoCarts = [] } = await chrome.storage.local.get("legoCarts");
-        const item = legoCarts.find(x => x.id === currentDetail.listId);
-        if (item) { item.name = newName; await chrome.storage.local.set({ legoCarts }); }
+        const { listType, listId } = currentDetail;
+        const { [listType]: arr = [] } = await chrome.storage.local.get(listType);
+        const item = arr.find(x => x.id === listId);
+        if (item) { item.name = newName; await chrome.storage.local.set({ [listType]: arr }); }
         currentDetail.list.name = newName;
       }
       renderDetailView(content);
@@ -1213,7 +1363,11 @@ function attachDetailListeners(content) {
       if (e.key === "Enter")  { e.preventDefault(); saveRename(); }
       if (e.key === "Escape") { saved = true; renderDetailView(content); }
     });
-    input.addEventListener("blur", saveRename);
+    setTimeout(() => {
+      input.focus();
+      input.select();
+      input.addEventListener("blur", saveRename);
+    }, 0);
   });
 
   for (const tab of content.querySelectorAll(".tab[data-tab]")) {
