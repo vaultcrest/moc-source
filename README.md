@@ -45,9 +45,11 @@ Badge types:
 
 **SPA (`index.html` / `index.js`):**
 
-- **Lists view** — two sections (Wanted Lists, Carts); click a name to open detail view
-- **Detail view (Wanted List)** — tabs: All / PAB / Standard / Not on PAB; columns: Part #, Image, Name (BrickLink name), Color (BL name + LEGO name), Want / Have (inline editable), Need, Max $, PAB Price, Channel; element ID shown under part number
-- **Detail view (Cart)** — same tabs + "To Remove" tab; Qty is read-only (cart is source of truth); flag/unflag rows for removal; "↻ Open cart" link to reload from BrickLink
+- **Lists view** — three sections (Wanted Lists, BrickLink Carts, LEGO Carts); click a name to open detail view
+- **Detail view (Wanted List)** — tabs: All / Bestseller / Standard / Not on PAB; toolbar: Remove Selected, → BrickLink / → PAB channel buttons (on All tab shows both), Copy to ▾ / Move to ▾ dropdowns, sort control; columns: Part #, Image, Name, Color, Want / Have (inline editable), Need, Max $, PAB Price, Channel; element ID under part number
+- **Detail view (BL Cart)** — same tabs; toolbar: Remove Selected, → BrickLink / → PAB, ☑ BL cheaper / ☑ PAB ≤ store auto-select buttons, Copy to ▾ / Move to ▾; Qty read-only; "↻ Open cart" link; flag/unflag rows for "To Remove" tab
+- **Detail view (LEGO Cart)** — tabs: All / Bestseller / Standard / BrickLink / To Remove; toolbar: Remove Selected, → BrickLink / → PAB, Copy to ▾ / Move to ▾; Qty read-only
+- All detail views: context-aware sort (column-order options per list type; color sorts alphabetically by BrickLink color name); sort resets on list navigation
 - **Settings** — mirrors popup: PAB region (18 locales), store location filter, buy page filter toggles
 - **Info** — donation links, disclaimer, license
 
@@ -75,11 +77,7 @@ Response includes:
 - `lego_color_id` / `lego_color_name` — LEGO color (e.g. 199 / "Dark stone grey")
 - `price_formatted`, `channel`, `in_stock`, `locale`, `currency_code`
 
-Quick deploy (app code only):
-```bash
-rsync -av mocsource/ excalibrax@app.home.arpa:/tmp/mocsource_deploy/
-ssh app.home.arpa "sudo cp -r /tmp/mocsource_deploy/. /opt/mocsource/app/mocsource/ && sudo systemctl restart mocsource"
-```
+**Rebrickable enrichment** (`rebrickable_client.py`, `enrichment.py`): When a BL part+color combo is not in the DB, the endpoint returns what it knows (name, color) and schedules a background task. The task cross-references Rebrickable — trying the primary part number then any known alternates from `bricklink_alternates` — to find LEGO element IDs, then upserts them into `lego_elements` + `bricklink_mappings`. The next request for the same part returns the full element ID. BL→RB color mapping is fetched once per process and cached in memory. Sends an enrichment email report if SMTP is configured.
 
 Full deploy: `ansible-playbook site.yml` from `moc-source-infra/` (repos must be siblings on disk).
 
@@ -100,9 +98,10 @@ PostgreSQL 18 on `app.home.arpa`.
 |-------|---------|
 | `lego_elements` | Element metadata + en-us price (backwards compat) |
 | `lego_element_prices` | Multi-region prices, PK (element_id, locale), 18 locales × ~17k entries |
-| `bricklink_mappings` | element_id → part_no + color_id + part_name |
+| `bricklink_mappings` | element_id → part_no + color_id + part_name; `source` = "bricklink" or "rebrickable" |
 | `colors` | BrickLink color ID → BL name, LEGO ID, LEGO name (174 colors) |
-| `bricklink_alternates` | Alternate part numbers |
+| `bl_part_catalog` | Cache for BL catalog API lookups (part_no PK, name, item_type, looked_up_at) |
+| `bricklink_alternates` | Alternate part numbers (e.g. x224 ↔ 41751 ↔ 40995); used by Rebrickable enrichment fallback |
 | `studio_resolutions` | Studio → BrickLink part resolution |
 | `multipacks` | Multipack definitions |
 | `failed_studio_mappings` | Parts that couldn't be resolved |
@@ -164,16 +163,19 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Privacy page at https://api.moc-source.com/privacy
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
+- [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
 
 ## What's Next
 
-1. **Cart split** — split wanted list into PAB vs BrickLink buy recommendations (killer feature)
-2. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once cart split routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-3. **BrickLink price column** — needs BrickLink API integration
-4. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
-5. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
-6. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-7. **Extension icon** — deferred
+1. **Projects (Cart Jigsaw)** — 4th main section; named workspaces that aggregate wanted lists as a pool, allocate parts to LEGO PAB cart and BL store carts, track unallocated parts in a scratch space. Ephemeral until explicitly saved. Full spec in memory (`project_jigsaw_spec.md`). Build phases: CRUD → setup view → read-only detail → allocation moves → save actions → drag multi-select.
+2. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+3. **BrickLink store cart writeback** — BL API exists; would let the extension update a store cart to reflect project allocations rather than requiring manual reconciliation
+4. **BrickLink price column** — needs BrickLink API integration
+5. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
+6. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
+7. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
+8. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+9. **Extension icon** — deferred
 
 ## Related Projects
 
