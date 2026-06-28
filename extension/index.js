@@ -265,17 +265,23 @@ let currentPabRegion = "en-us";
 
 function navigate(view) {
   location.hash = view;
-  const baseView = view.startsWith("list/") ? "lists" : view;
+  const baseView = view.startsWith("list/")    ? "lists"
+                 : view.startsWith("project/") ? "projects"
+                 : view;
   for (const el of document.querySelectorAll(".nav-item[data-view]")) {
     el.classList.toggle("active", el.dataset.view === baseView);
   }
   const content = document.getElementById("content");
-  if (view === "lists")          renderLists(content);
-  else if (view === "settings")  renderSettings(content);
-  else if (view === "info")      renderInfo(content);
+  if (view === "lists")               renderLists(content);
+  else if (view === "projects")       renderProjects(content);
+  else if (view === "settings")       renderSettings(content);
+  else if (view === "info")           renderInfo(content);
   else if (view.startsWith("list/")) {
     const parts = view.split("/");
     renderListDetail(parts[1], parts[2], content);
+  }
+  else if (view.startsWith("project/")) {
+    renderProjectDetail(view.split("/")[1], content);
   }
 }
 
@@ -393,6 +399,215 @@ async function renderLists(content) {
       content.querySelector(`.rename-btn[data-id="${newId}"]`)?.click();
     });
   }
+}
+
+// ─── Projects view ───────────────────────────────────────────────────────────
+
+async function renderProjects(content) {
+  const { projects = [], wantedLists = [], carts = [], legoCarts = [] } =
+    await chrome.storage.local.get(["projects", "wantedLists", "carts", "legoCarts"]);
+
+  const wlMap  = Object.fromEntries(wantedLists.map(l => [l.id, l]));
+  const blMap  = Object.fromEntries(carts.map(l => [l.id, l]));
+  const lgMap  = Object.fromEntries(legoCarts.map(l => [l.id, l]));
+
+  function poolPieceCount(p) {
+    return (p.wantedListIds ?? []).reduce((s, id) => s + (wlMap[id]?.partsCount ?? 0), 0);
+  }
+
+  function metaChips(p) {
+    const chips = [];
+    const wlCount = (p.wantedListIds ?? []).length;
+    const blCount = (p.blCartIds ?? []).length;
+    if (wlCount) chips.push(`${wlCount} wanted list${wlCount !== 1 ? "s" : ""}`);
+    if (blCount) chips.push(`${blCount} BL cart${blCount !== 1 ? "s" : ""}`);
+    if (p.legoCartId && lgMap[p.legoCartId]) chips.push("1 LEGO cart");
+    return chips.length
+      ? chips.map(c => `<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;background:#f0f4ff;color:#2563eb;margin-right:4px">${esc(c)}</span>`).join("")
+      : `<span style="font-size:11px;color:#9ca3af">Not configured</span>`;
+  }
+
+  const cardsHtml = projects.map(p => {
+    const pieces = poolPieceCount(p);
+    return `
+      <div style="background:#fff;border:1px solid #e1e4e8;border-radius:8px;padding:14px 18px;margin-bottom:10px;display:flex;align-items:center;gap:14px">
+        <div style="flex:1;min-width:0">
+          <div class="project-name-cell" data-id="${esc(p.id)}" style="display:flex;align-items:center;gap:8px;margin-bottom:5px">
+            <button class="project-open-btn" data-id="${esc(p.id)}"
+              style="background:none;border:none;padding:0;cursor:pointer;font-weight:600;font-size:14px;color:#1e2330;text-align:left">${esc(p.name)}</button>
+            <button class="btn project-rename-btn" data-id="${esc(p.id)}"
+              style="font-size:11px;padding:1px 6px;opacity:0.4;flex-shrink:0" title="Rename">✎</button>
+          </div>
+          <div>${metaChips(p)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;min-width:64px">
+          <div style="font-size:20px;font-weight:700;color:#1e2330">${pieces.toLocaleString()}</div>
+          <div style="font-size:11px;color:#6c757d">pieces</div>
+        </div>
+        <div style="flex-shrink:0;font-size:12px;color:#9ca3af;min-width:80px;text-align:right">${fmtDate(p.createdAt)}</div>
+        <button class="btn btn-danger project-del-btn" data-id="${esc(p.id)}">Delete</button>
+      </div>`;
+  }).join("");
+
+  content.innerHTML = `
+    <div class="page-title">Projects</div>
+    <div class="section">
+      <div class="section-header">
+        <span>My Projects</span>
+        <button id="new-project-btn" style="margin-left:auto;font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer">+ New Project</button>
+      </div>
+      ${projects.length
+        ? `<div style="padding:12px 14px">${cardsHtml}</div>`
+        : `<div class="section-empty">No projects yet.<br>Create a project to plan your sourcing across multiple lists and carts.</div>`}
+    </div>`;
+
+  content.querySelector("#new-project-btn").addEventListener("click", async () => {
+    const { projects: cur = [] } = await chrome.storage.local.get("projects");
+    const id = crypto.randomUUID?.() ?? (Math.random().toString(36).slice(2) + Date.now().toString(36));
+    cur.unshift({
+      id,
+      name: "New Project",
+      createdAt: Date.now(),
+      wantedListIds: [],
+      blCartIds: [],
+      legoCartId: null,
+      scratchWantedListId: null,
+      allocations: {},
+    });
+    await chrome.storage.local.set({ projects: cur });
+    await renderProjects(content);
+    content.querySelector(`.project-rename-btn[data-id="${id}"]`)?.click();
+  });
+
+  for (const btn of content.querySelectorAll(".project-open-btn")) {
+    btn.addEventListener("click", () => navigate(`project/${btn.dataset.id}`));
+  }
+
+  for (const btn of content.querySelectorAll(".project-del-btn")) {
+    btn.addEventListener("click", async () => {
+      const { projects: cur = [] } = await chrome.storage.local.get("projects");
+      await chrome.storage.local.set({ projects: cur.filter(p => p.id !== btn.dataset.id) });
+      renderProjects(content);
+    });
+  }
+
+  for (const btn of content.querySelectorAll(".project-rename-btn")) {
+    btn.addEventListener("click", () => {
+      const id   = btn.dataset.id;
+      const cell = content.querySelector(`.project-name-cell[data-id="${id}"]`);
+      const currentName = cell.querySelector(".project-open-btn").textContent;
+
+      cell.innerHTML = `<input class="project-rename-input" type="text" value="${esc(currentName)}"
+        style="font-size:14px;padding:2px 6px;border:1px solid #2563eb;border-radius:4px;min-width:200px;box-sizing:border-box">`;
+      const input = cell.querySelector(".project-rename-input");
+      input.focus(); input.select();
+
+      let saved = false;
+      async function saveRename() {
+        if (saved) return; saved = true;
+        const newName = input.value.trim() || currentName;
+        if (newName !== currentName) {
+          const { projects: cur = [] } = await chrome.storage.local.get("projects");
+          const proj = cur.find(p => p.id === id);
+          if (proj) { proj.name = newName; await chrome.storage.local.set({ projects: cur }); }
+        }
+        renderProjects(content);
+      }
+
+      input.addEventListener("keydown", e => {
+        if (e.key === "Enter")  { e.preventDefault(); saveRename(); }
+        if (e.key === "Escape") { saved = true; renderProjects(content); }
+      });
+      input.addEventListener("blur", saveRename);
+    });
+  }
+}
+
+// ─── Project detail view ─────────────────────────────────────────────────────
+
+async function renderProjectDetail(id, content) {
+  const { projects = [], wantedLists = [], carts = [], legoCarts = [] } =
+    await chrome.storage.local.get(["projects", "wantedLists", "carts", "legoCarts"]);
+  const project = projects.find(p => p.id === id);
+
+  if (!project) {
+    content.innerHTML = `
+      <div class="detail-header">
+        <button class="back-btn" id="back-btn">← Projects</button>
+      </div>
+      <div style="padding:24px;color:#6c757d;font-size:13px">Project not found.</div>`;
+    content.querySelector("#back-btn").addEventListener("click", () => navigate("projects"));
+    return;
+  }
+
+  const wlMap = Object.fromEntries(wantedLists.map(l => [l.id, l]));
+  const blMap = Object.fromEntries(carts.map(l => [l.id, l]));
+  const lgMap = Object.fromEntries(legoCarts.map(l => [l.id, l]));
+
+  const poolLists  = (project.wantedListIds ?? []).map(i => wlMap[i]).filter(Boolean);
+  const blCarts    = (project.blCartIds     ?? []).map(i => blMap[i]).filter(Boolean);
+  const legoCart   = project.legoCartId ? lgMap[project.legoCartId] : null;
+  const totalPieces = poolLists.reduce((s, l) => s + (l.partsCount ?? 0), 0);
+
+  function listRows(items, emptyMsg) {
+    if (!items.length) return `<div style="color:#9ca3af;font-size:12px;padding:6px 0">${emptyMsg}</div>`;
+    return items.map(l => `
+      <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid #f3f4f6">
+        <span style="flex:1;font-size:13px">${esc(l.name)}</span>
+        <span style="font-size:12px;color:#6c757d">${(l.partsCount ?? 0).toLocaleString()} parts</span>
+      </div>`).join("");
+  }
+
+  content.innerHTML = `
+    <div class="detail-header">
+      <button class="back-btn" id="back-btn">← Projects</button>
+      <div>
+        <div style="font-size:18px;font-weight:700;color:#1e2330">${esc(project.name)}</div>
+        <div class="detail-meta">Created ${fmtDate(project.createdAt)} · ${totalPieces.toLocaleString()} pieces in pool</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+      <div class="section">
+        <div class="section-header"><span>Wanted List Pool</span></div>
+        <div style="padding:10px 16px">${listRows(poolLists, "No wanted lists added.")}</div>
+      </div>
+      <div class="section">
+        <div class="section-header"><span>BrickLink Carts</span></div>
+        <div style="padding:10px 16px">${listRows(blCarts, "No BL carts added.")}</div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-bottom:14px">
+      <div class="section-header"><span>LEGO Cart</span></div>
+      <div style="padding:10px 16px">
+        ${legoCart
+          ? `<div style="font-size:13px">${esc(legoCart.name)} <span style="color:#6c757d;font-size:12px">(${(legoCart.partsCount ?? 0).toLocaleString()} parts)</span></div>`
+          : `<div style="color:#9ca3af;font-size:12px">No LEGO cart selected.</div>`}
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header"><span>Scratch Space</span></div>
+      <div style="padding:10px 16px">
+        ${project.scratchWantedListId && wlMap[project.scratchWantedListId]
+          ? `<div style="font-size:13px">Linked to: ${esc(wlMap[project.scratchWantedListId].name)}</div>`
+          : `<div style="color:#9ca3af;font-size:12px">No wanted list linked — unallocated parts will be ephemeral.</div>`}
+      </div>
+    </div>
+
+    <div style="margin-top:18px;padding:16px 20px;background:#fff;border:1px solid #e1e4e8;border-radius:8px;display:flex;align-items:center;gap:14px">
+      <div style="flex:1;font-size:13px;color:#6c757d">
+        Configure this project to add wanted lists, BL carts, and a LEGO cart before allocating parts.
+      </div>
+      <button id="configure-btn" style="padding:7px 18px;background:#1e2330;color:#fff;border:none;border-radius:5px;font-size:13px;font-weight:600;cursor:pointer">Configure Project</button>
+    </div>`;
+
+  content.querySelector("#back-btn").addEventListener("click", () => navigate("projects"));
+  content.querySelector("#configure-btn").addEventListener("click", () => {
+    // Phase 2: renderProjectSetup(id, content)
+    alert("Project setup coming in Phase 2.");
+  });
 }
 
 // ─── Settings view ───────────────────────────────────────────────────────────
@@ -1462,4 +1677,9 @@ for (const item of document.querySelectorAll(".nav-item[data-view]")) {
 }
 
 const initial = location.hash.replace("#", "") || "lists";
-navigate(initial.startsWith("list/") ? initial : (["lists","settings","info"].includes(initial) ? initial : "lists"));
+const validTopLevel = ["lists", "projects", "settings", "info"];
+navigate(
+  initial.startsWith("list/")    ? initial :
+  initial.startsWith("project/") ? initial :
+  validTopLevel.includes(initial) ? initial : "lists"
+);
