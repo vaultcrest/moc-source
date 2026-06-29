@@ -15,6 +15,12 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://store.bricklink.com/*"],
+      "js": ["content_main.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
       "matches": [
         "https://www.bricklink.com/v2/wanted/*",
         "https://www.bricklink.com/v2/globalcart.page*",

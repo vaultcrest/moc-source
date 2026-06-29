@@ -165,12 +165,12 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
-- [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 complete:
+- [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 fully complete:
   - Phase 1: Project CRUD + `chrome.storage.local` schema (`projects`, allocations, estimatedShipping, scratchWantedListId)
   - Phase 2: Setup view — configure wanted lists, BL store carts, LEGO cart, scratch list per project
   - Phase 3: Detail view — wanted list pool (PAB/STD/BL/All tabs), LEGO cart section, per-cart BL sections, scratch space; over-allocation highlighting; part IDs link to BrickLink catalog
   - Phase 4: Allocation moves — checkbox multi-select; move pool→LEGO/BL/scratch, section→section; BL-only parts blocked from LEGO cart; per-cart sort (7 options); unallocate single rows
-  - Phase 5: Save actions — LEGO cart diff+replace modal; scratch space save to linked list (or create new); pool save to single wanted list (diff modal) or combined new list (multi-source); pool part exclude/restore (soft-removes from pool, filtered from save)
+  - Phase 5: Save actions — LEGO cart diff+replace modal; scratch space save to linked list (or create new); pool save to single wanted list (diff modal) or combined new list (multi-source); pool part exclude/restore; BL store cart writeback: "Save Cart ↓" diffs allocations vs stored cart and stages `pendingBlCartWriteback` in local storage; "Update cart from MOC Source" button on BL cart page shows a removal modal (part name / color / qty per row) with single "Remove all" action, auto-confirms BL native dialogs via a MAIN-world content script (`content_main.js`) that bypasses BrickLink's CSP, then applies qty changes; `↻ Refresh` button per BL cart section triggers bidirectional allocation sync: caps over-allocated entries to actual cart qty, and fills scratch-space qty back into carts when qty is restored
   - Grand total bar across all carts with per-cart BL subtotals, estimated shipping inputs for TBD stores, and vs-PAB net savings per BL cart and grand total (green/red/grey neutral for $0)
   - LEGO cart cost summary shows Bestseller (BS) and Standard (STD) subtotals alongside Parts/Shipping/Total
   - Sort controls (6 sort keys × asc/desc) on LEGO cart section and Scratch space (matching BL cart sort)
@@ -180,16 +180,15 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 
 ## What's Next
 
-1. **Projects Phase 5 remaining** — BL store cart writeback (reduce allocated-away part qtys in the saved cart, remove if qty hits 0)
-2. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
-3. **BrickLink API key setting** — encrypted storage of BL OAuth credentials in `chrome.storage.local` (AES-GCM via SubtleCrypto); prerequisite for BL store API calls
-4. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
-5. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-6. **BrickLink price column** — needs BrickLink API integration
-7. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
-8. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
-9. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-10. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
+1. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
+2. **BrickLink API key setting** — encrypted storage of BL OAuth credentials in `chrome.storage.local` (AES-GCM via SubtleCrypto); prerequisite for BL store API calls
+3. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
+4. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+5. **BrickLink price column** — needs BrickLink API integration
+6. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
+7. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
+8. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+9. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
 
 ## Related Projects
 

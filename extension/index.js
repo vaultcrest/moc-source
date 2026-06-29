@@ -4,6 +4,45 @@ const BL_COUNTRIES = ["Afghanistan","Albania","Algeria","Andorra","Angola","Angu
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
+// BrickLink OAuth credential encryption (AES-GCM via SubtleCrypto).
+// Key is derived from the extension ID (device-bound, never transmitted).
+async function _blCryptoKey() {
+  const enc = new TextEncoder();
+  const raw = enc.encode(chrome.runtime.id);
+  const base = await crypto.subtle.importKey("raw", raw, "PBKDF2", false, ["deriveKey"]);
+  return crypto.subtle.deriveKey(
+    { name: "PBKDF2", salt: enc.encode("moc-source-bl"), iterations: 100000, hash: "SHA-256" },
+    base,
+    { name: "AES-GCM", length: 256 },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+async function encryptBLCredentials(creds) {
+  const key = await _blCryptoKey();
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const enc = new TextEncoder();
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(creds)));
+  const toB64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return { iv: toB64(iv), ciphertext: toB64(ciphertext) };
+}
+
+async function decryptBLCredentials() {
+  const { blCredentials } = await chrome.storage.local.get("blCredentials");
+  if (!blCredentials) return null;
+  try {
+    const key = await _blCryptoKey();
+    const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64(blCredentials.iv) },
+      key,
+      fromB64(blCredentials.ciphertext)
+    );
+    return JSON.parse(new TextDecoder().decode(plain));
+  } catch { return null; }
+}
+
 function esc(s) {
   return String(s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -602,6 +641,64 @@ async function renderProjectDetail(id, content) {
     return wantedQty - used;
   }
 
+  // Bidirectional cart sync. Mutates allocs in-place. Returns count of adjustments.
+  // Pass 1 — reduce: cap allocs to cart qty; remove allocs for parts gone from cart.
+  // Pass 2 — fill:   for parts with scratch qty, fill back into any cart that has capacity.
+  function pruneStaleAllocations(allocs, cartList) {
+    let changed = 0;
+
+    // Pass 1: reduce
+    for (const [key, a] of Object.entries(allocs)) {
+      if (!a.storeQty) continue;
+      const [partNo, colorId] = key.split("_");
+      for (const cartId of Object.keys(a.storeQty)) {
+        const allocQty = a.storeQty[cartId] ?? 0;
+        if (allocQty <= 0) continue;
+        const cart = cartList.find(c => c.id === cartId);
+        if (!cart) continue;
+        const cartPart = (cart.parts ?? []).find(cp =>
+          cp.partNo === partNo && String(cp.colorId) === String(colorId)
+        );
+        if (!cartPart) {
+          delete a.storeQty[cartId]; changed++;
+        } else if (allocQty > (cartPart.qty ?? 1)) {
+          a.storeQty[cartId] = cartPart.qty ?? 1; changed++;
+        }
+      }
+      if ((a.legoQty ?? 0) === 0 && !Object.keys(a.storeQty ?? {}).length && !a.excluded) {
+        delete allocs[key];
+      }
+    }
+
+    // Pass 2: fill — for each pool part that has unallocated (scratch) qty,
+    // fill back into carts that have capacity, trusting the user to adjust intent.
+    for (const cart of cartList) {
+      for (const cartPart of (cart.parts ?? [])) {
+        const key = `${cartPart.partNo}_${cartPart.colorId}`;
+        const poolPart = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        if (!poolPart) continue;
+        const a = allocs[key];
+        if (a?.excluded) continue;
+        const currentAlloc = allocs[key]?.storeQty?.[cart.id] ?? 0;
+        const cartQty = cartPart.qty ?? 1;
+        if (currentAlloc >= cartQty) continue;
+        // Recompute scratch from current (post-pass-1) allocs so multi-cart parts don't double-fill
+        const totalAllocated = (allocs[key]?.legoQty ?? 0) +
+          Object.values(allocs[key]?.storeQty ?? {}).reduce((s, v) => s + v, 0);
+        const scratchQty = poolPart.wantedQty - totalAllocated;
+        if (scratchQty <= 0) continue;
+        const fillQty = Math.min(cartQty - currentAlloc, scratchQty);
+        if (fillQty <= 0) continue;
+        if (!allocs[key]) allocs[key] = { legoQty: 0, storeQty: {} };
+        if (!allocs[key].storeQty) allocs[key].storeQty = {};
+        allocs[key].storeQty[cart.id] = currentAlloc + fillQty;
+        changed++;
+      }
+    }
+
+    return changed;
+  }
+
   // ── section builders ──────────────────────────────────────────────────────
 
   function buildSectionActionBar(selCount, srcType, srcCartId, targets) {
@@ -896,7 +993,11 @@ async function renderProjectDetail(id, content) {
       ["channel",     "Channel"],
     ].map(([v, l]) => `<option value="${v}"${cartSort === v ? " selected" : ""}>${l}</option>`).join("");
     return `
-      <div class="section-header"><span>${esc(cart.name)}</span></div>
+      <div class="section-header">
+        <span>${esc(cart.name)}</span>
+        <button class="btn bl-cart-refresh-btn" data-cart-id="${esc(cart.id)}" style="margin-left:auto;font-size:12px" title="Reload cart from saved data and clear stale allocations">↻ Refresh</button>
+        <button class="btn bl-cart-save-btn" data-cart-id="${esc(cart.id)}" style="font-size:12px;background:#1e2330;color:#fff;border-color:#1e2330">Save Cart ↓</button>
+      </div>
       <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid #e1e4e8;flex-wrap:wrap">
         <div style="font-size:12px;color:#6c757d">${blAllocs.length} lots · ${allocPcs.toLocaleString()} pieces assigned</div>
         <select class="bl-cart-sort" data-cart-id="${esc(cart.id)}" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px;color:#374151;margin-left:6px">${sortOpts}</select>
@@ -1019,6 +1120,13 @@ async function renderProjectDetail(id, content) {
   // ── actions ───────────────────────────────────────────────────────────────
 
   let currentAllocs      = project.allocations ?? {};
+  {
+    const cleared = pruneStaleAllocations(currentAllocs, blCartList);
+    if (cleared) {
+      project.allocations = currentAllocs;
+      await chrome.storage.local.set({ projects });
+    }
+  }
   let legoSectionTab     = "all";
   let legoSectionSort    = "name_color";
   let legoSectionSortDir = "asc";
@@ -1332,6 +1440,86 @@ async function renderProjectDetail(id, content) {
     }
   }
 
+  function showBlCartSave(cart) {
+    const poolKeys = new Set(poolParts.map(p => `${p.partNo}_${p.colorId}`));
+    const changes = [];
+    for (const cp of (cart.parts ?? [])) {
+      const key = `${cp.partNo}_${cp.colorId}`;
+      if (!poolKeys.has(key)) continue;
+      const newQty  = currentAllocs[key]?.storeQty?.[cart.id] ?? 0;
+      const oldQty  = cp.qty ?? 1;
+      if (newQty === oldQty) continue;
+      const pp      = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      const name      = pp?.pabEntry?.bl_part_name || pp?.name || cp.partNo;
+      const colorName = pp?.pabEntry?.bl_color_name || String(cp.colorId);
+      changes.push({ partNo: cp.partNo, colorId: cp.colorId, name, colorName, oldQty, newQty });
+    }
+    const removed      = changes.filter(c => c.newQty === 0);
+    const reduced      = changes.filter(c => c.newQty > 0);
+    const nonPoolCount = (cart.parts ?? []).filter(cp => !poolKeys.has(`${cp.partNo}_${cp.colorId}`)).length;
+    const noChanges    = changes.length === 0;
+    const fmt    = c => `<div style="padding:2px 0;font-size:12px">${esc(c.name)}<span style="color:#9ca3af;margin-left:6px">${esc(c.colorName)}</span></div>`;
+    const fmtRed = c => `<div style="padding:2px 0;font-size:12px">${esc(c.name)} <span style="color:#9ca3af">${esc(c.colorName)}</span> <span style="color:#9ca3af">${c.oldQty} → <strong>${c.newQty}</strong></span></div>`;
+
+    const modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:8px;padding:24px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save BL Store Cart</div>
+        <div style="font-size:12px;color:#6c757d;margin-bottom:16px">Updating <strong>${esc(cart.name)}</strong>${nonPoolCount ? ` · ${nonPoolCount} non-pool part${nonPoolCount !== 1 ? "s" : ""} untouched` : ""}</div>
+        ${noChanges
+          ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — cart already matches your allocations.</div>`
+          : `<div style="overflow-y:auto;flex:1;min-height:0">
+              ${removed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removed.length})</div>${removed.map(fmt).join("")}</div>` : ""}
+              ${reduced.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty changed (${reduced.length})</div>${reduced.map(fmtRed).join("")}</div>` : ""}
+            </div>
+            <div style="font-size:12px;color:#6c757d;margin-top:12px;padding-top:12px;border-top:1px solid #f3f4f6">
+              Items will be pre-selected for removal on the BL cart page next time you open it.
+            </div>`}
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+          <button id="bl-cart-save-cancel" class="btn">Cancel</button>
+          ${!noChanges ? `<button id="bl-cart-save-confirm" class="btn btn-danger">Update Cart</button>` : ""}
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector("#bl-cart-save-cancel").addEventListener("click", () => modal.remove());
+    modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+
+    const confirmBtn = modal.querySelector("#bl-cart-save-confirm");
+    if (confirmBtn) {
+      confirmBtn.addEventListener("click", async () => {
+        const { carts = [] } = await chrome.storage.local.get("carts");
+        const stored = carts.find(c => c.id === cart.id);
+        if (stored) {
+          stored.parts = (stored.parts ?? [])
+            .filter(cp => {
+              const key = `${cp.partNo}_${cp.colorId}`;
+              if (!poolKeys.has(key)) return true;
+              return (currentAllocs[key]?.storeQty?.[cart.id] ?? 0) > 0;
+            })
+            .map(cp => {
+              const key = `${cp.partNo}_${cp.colorId}`;
+              if (!poolKeys.has(key)) return cp;
+              return { ...cp, qty: currentAllocs[key]?.storeQty?.[cart.id] ?? cp.qty };
+            });
+          stored.partsCount = stored.parts.length;
+          await chrome.storage.local.set({ carts });
+          Object.assign(cart, stored);
+        }
+        if (changes.length > 0) {
+          const { pendingBlCartWriteback = {} } = await chrome.storage.local.get("pendingBlCartWriteback");
+          // Key by storeUrl when available (looked up by URL in content.js), fall back to cart.id
+          const writebackKey = cart.storeUrl || cart.id;
+          pendingBlCartWriteback[writebackKey] = changes.map(c => ({ partNo: c.partNo, colorId: c.colorId, newQty: c.newQty, name: c.name, colorName: c.colorName }));
+          await chrome.storage.local.set({ pendingBlCartWriteback });
+        }
+        modal.remove();
+        refreshBlSection(cart.id);
+        refreshGrandTotal();
+      });
+    }
+  }
+
   function showPoolSave() {
     const wlCount = project.wantedListIds?.length ?? 0;
     if (!wlCount) return;
@@ -1586,6 +1774,11 @@ async function renderProjectDetail(id, content) {
     const proj = allProjects.find(p => p.id === id);
     if (!proj) return;
     currentAllocs = proj.allocations ?? {};
+    const cleared = pruneStaleAllocations(currentAllocs, blCartList);
+    if (cleared) {
+      proj.allocations = currentAllocs;
+      await chrome.storage.local.set({ projects: allProjects });
+    }
     renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
     refreshLegoSection();
     for (const c of blCartList) refreshBlSection(c.id);
@@ -1688,6 +1881,18 @@ async function renderProjectDetail(id, content) {
     if (scratchSaveBtn) { showScratchSave(); return; }
     const poolSaveBtn = e.target.closest(".pool-save-btn");
     if (poolSaveBtn) { showPoolSave(); return; }
+    const blCartRefreshBtn = e.target.closest(".bl-cart-refresh-btn");
+    if (blCartRefreshBtn) {
+      await refresh();
+      return;
+    }
+    const blCartSaveBtn = e.target.closest(".bl-cart-save-btn");
+    if (blCartSaveBtn) {
+      const cid = blCartSaveBtn.dataset.cartId;
+      const cart = blCartList.find(c => c.id === cid);
+      if (cart) showBlCartSave(cart);
+      return;
+    }
 
     const excludeBtn = e.target.closest(".pool-exclude-btn");
     if (excludeBtn) {
@@ -2448,6 +2653,36 @@ async function renderSettings(content) {
       </p>
     </div>
 
+    <div class="settings-card">
+      <h3>BrickLink API Credentials</h3>
+      <p style="font-size:12px;color:#6c757d;margin:0 0 10px">
+        Required for BL store API features (missed deals scanner, cart writeback).
+        Credentials are encrypted and stored locally — never transmitted.
+        Generate keys at <a href="https://www.bricklink.com/v3/api.page" target="_blank" style="color:#0d6efd">bricklink.com/v3/api.page</a>.
+      </p>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label for="blConsumerKey" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Consumer Key</label>
+        <input type="password" id="blConsumerKey" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label for="blConsumerSecret" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Consumer Secret</label>
+        <input type="password" id="blConsumerSecret" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+        <label for="blToken" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Token</label>
+        <input type="password" id="blToken" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <label for="blTokenSecret" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Token Secret</label>
+        <input type="password" id="blTokenSecret" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
+      </div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <button class="btn btn-primary" id="saveBLCreds" style="font-size:12px;padding:5px 14px">Save credentials</button>
+        <button class="btn" id="clearBLCreds" style="font-size:12px;padding:5px 14px;color:#dc2626;border-color:#dc2626">Clear</button>
+        <span id="blCredStatus" style="font-size:12px;color:#6c757d"></span>
+      </div>
+    </div>
+
     <div class="saved-msg" id="savedMsg">Saved</div>
   `;
 
@@ -2483,6 +2718,51 @@ async function renderSettings(content) {
   for (const el of content.querySelectorAll("select, input[type=checkbox]")) {
     el.addEventListener("change", save);
   }
+
+  // BL credentials — show masked placeholders if already saved
+  const existingCreds = await decryptBLCredentials();
+  if (existingCreds) {
+    const MASK = "••••••••••••";
+    for (const id of ["blConsumerKey","blConsumerSecret","blToken","blTokenSecret"]) {
+      content.querySelector(`#${id}`).placeholder = MASK;
+    }
+    content.querySelector("#blCredStatus").textContent = "Credentials saved";
+    content.querySelector("#blCredStatus").style.color = "#16a34a";
+  }
+
+  content.querySelector("#saveBLCreds").addEventListener("click", async () => {
+    const ck = content.querySelector("#blConsumerKey").value.trim();
+    const cs = content.querySelector("#blConsumerSecret").value.trim();
+    const t  = content.querySelector("#blToken").value.trim();
+    const ts = content.querySelector("#blTokenSecret").value.trim();
+    const status = content.querySelector("#blCredStatus");
+    if (!ck || !cs || !t || !ts) {
+      status.textContent = "All four fields are required";
+      status.style.color = "#dc2626";
+      return;
+    }
+    const encrypted = await encryptBLCredentials({ consumerKey: ck, consumerSecret: cs, token: t, tokenSecret: ts });
+    await chrome.storage.local.set({ blCredentials: encrypted });
+    for (const id of ["blConsumerKey","blConsumerSecret","blToken","blTokenSecret"]) {
+      const el = content.querySelector(`#${id}`);
+      el.value = "";
+      el.placeholder = "••••••••••••";
+    }
+    status.textContent = "Credentials saved";
+    status.style.color = "#16a34a";
+  });
+
+  content.querySelector("#clearBLCreds").addEventListener("click", async () => {
+    await chrome.storage.local.remove("blCredentials");
+    for (const id of ["blConsumerKey","blConsumerSecret","blToken","blTokenSecret"]) {
+      const el = content.querySelector(`#${id}`);
+      el.value = "";
+      el.placeholder = "";
+    }
+    const status = content.querySelector("#blCredStatus");
+    status.textContent = "Credentials cleared";
+    status.style.color = "#6c757d";
+  });
 }
 
 // ─── Info view ───────────────────────────────────────────────────────────────

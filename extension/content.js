@@ -275,11 +275,12 @@ function injectCartImportButton() {
   if (!document.querySelector("article.store-cart-item")) return;
   const heading = [...document.querySelectorAll("h1,h2,h3")].find(el => /Shopping Cart/i.test(el.textContent));
   if (!heading) return;
-  const btn = document.createElement("button");
-  btn.className = "moc-cart-import-btn";
-  btn.textContent = "Save to MOC Source";
-  btn.style.cssText = "display:inline-block;vertical-align:middle;padding:6px 14px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;";
-  btn.addEventListener("click", async () => {
+
+  const saveBtn = document.createElement("button");
+  saveBtn.className = "moc-cart-import-btn";
+  saveBtn.textContent = "Save to MOC Source";
+  saveBtn.style.cssText = "display:inline-block;vertical-align:middle;padding:6px 14px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;";
+  saveBtn.addEventListener("click", async () => {
     const parts = collectCartParts();
     if (!parts.length) return;
     const { carts = [] } = await chrome.storage.local.get("carts");
@@ -302,8 +303,16 @@ function injectCartImportButton() {
     await chrome.storage.local.set({ carts });
     chrome.runtime.sendMessage({ type: "OPEN_MOC_SOURCE" });
   });
+
+  const updateBtn = document.createElement("button");
+  updateBtn.className = "moc-cart-update-btn";
+  updateBtn.textContent = "Update cart from MOC Source";
+  updateBtn.style.cssText = "display:inline-block;vertical-align:middle;padding:6px 14px;background:#fff;color:#1e2330;border:1px solid #1e2330;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;margin-left:8px;";
+  updateBtn.addEventListener("click", () => applyBlCartWriteback());
+
   heading.insertAdjacentHTML("beforeend", "&nbsp;&nbsp;");
-  heading.appendChild(btn);
+  heading.appendChild(saveBtn);
+  heading.appendChild(updateBtn);
 }
 
 // ─── Auto page-size ──────────────────────────────────────────────────────────
@@ -575,6 +584,147 @@ function buildXmlUploadOverlay(xml, defaultName) {
   await chrome.storage.local.remove("pendingBLUpload");
   buildXmlUploadOverlay(pendingBLUpload.xml, pendingBLUpload.listName);
 })();
+
+// ─── BL cart writeback ───────────────────────────────────────────────────────
+
+async function applyBlCartWriteback() {
+  if (location.hostname !== "store.bricklink.com" || !location.hash.includes("cart")) return;
+  const { pendingBlCartWriteback = {}, carts = [] } = await chrome.storage.local.get(["pendingBlCartWriteback", "carts"]);
+  const url = `${location.origin}${location.pathname}#/cart`;
+  // Primary lookup by storeUrl; fall back to cart.id for carts imported before storeUrl was tracked
+  let changes = pendingBlCartWriteback[url];
+  let writebackKey = url;
+  if (!changes?.length) {
+    const matchedCart = carts.find(c => c.storeUrl === url);
+    if (matchedCart?.id) {
+      changes = pendingBlCartWriteback[matchedCart.id];
+      writebackKey = matchedCart.id;
+    }
+  }
+  if (!changes?.length) {
+    const t = document.createElement("div");
+    t.style.cssText = "position:fixed;bottom:20px;right:20px;z-index:99999;background:#374151;color:#fff;padding:8px 14px;border-radius:5px;font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3)";
+    t.textContent = "No pending updates for this cart.";
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 2500);
+    return;
+  }
+
+  const articles = [...document.querySelectorAll("article.store-cart-item")];
+  const toRemove = [], toUpdate = [];
+
+  for (const { partNo, colorId, newQty } of changes) {
+    const article = articles.find(a => {
+      const img = a.querySelector("img[src*='ItemImage/PT/']");
+      if (!img) return false;
+      const m = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+      return m && parseInt(m[1], 10) === colorId && m[2] === partNo;
+    });
+    if (!article) continue;
+    if (newQty === 0) {
+      toRemove.push(article);
+    } else {
+      toUpdate.push({ article, newQty });
+    }
+  }
+
+  if (toRemove.length === 0 && toUpdate.length === 0) return;
+
+  // Apply qty changes immediately (auto-saves on blur in BL's cart)
+  let qtyCount = 0;
+  for (const { article, newQty } of toUpdate) {
+    const input = article.querySelector("input[type='number']");
+    if (input && parseInt(input.value, 10) !== newQty) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+      setter.call(input, String(newQty));
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
+      qtyCount++;
+    }
+  }
+
+  // Build item metadata map from stored change metadata
+  const labelMap = new Map();
+  for (const c of changes) {
+    labelMap.set(`${c.partNo}_${c.colorId}`, {
+      name:      c.name      || c.partNo,
+      colorName: c.colorName || String(c.colorId),
+      newQty:    c.newQty,
+    });
+  }
+
+  // Show modal summarising what was applied and listing items to remove
+  const overlay = document.createElement("div");
+  overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center";
+
+  const qtyPart    = qtyCount    ? `${qtyCount} qty change${qtyCount !== 1 ? "s" : ""} applied` : "";
+  const removePart = toRemove.length ? `${toRemove.length} item${toRemove.length !== 1 ? "s" : ""} to remove` : "";
+  const summary    = [qtyPart, removePart].filter(Boolean).join(" · ");
+
+  const removeListHtml = toRemove.map(article => {
+    const img = article.querySelector("img[src*='ItemImage/PT/']");
+    const m   = img?.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+    const key = m ? `${m[2]}_${m[1]}` : "";
+    const meta = labelMap.get(key);
+    const name      = meta?.name      || (m ? m[2] : "Unknown part");
+    const colorName = meta?.colorName || (m ? m[1] : "");
+    const qty       = parseInt(article.querySelector("input[type='number']")?.value || "0", 10) || "?";
+    return `<li style="padding:5px 0;border-bottom:1px solid #2a3142;font-size:13px;display:flex;gap:8px;align-items:baseline">
+      <span style="min-width:28px;text-align:right;color:#9ca3af;font-size:12px;flex-shrink:0">×${qty}</span>
+      <span style="flex:1">${name}</span>
+      <span style="color:#9ca3af;font-size:12px;flex-shrink:0">${colorName}</span>
+    </li>`;
+  }).join("");
+
+  overlay.innerHTML = `
+    <div style="background:#1e2330;color:#fff;border-radius:8px;padding:24px;min-width:380px;max-width:520px;max-height:80vh;display:flex;flex-direction:column;gap:16px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
+      <div style="font-weight:700;font-size:15px">MOC Source — Cart Update</div>
+      <div style="font-size:13px;color:#9ca3af">${summary}</div>
+      ${toRemove.length ? `
+        <div style="flex:1;overflow-y:auto;max-height:340px">
+          <div style="font-size:12px;color:#6b7280;margin-bottom:6px;font-weight:600">ITEMS TO REMOVE (${toRemove.length})</div>
+          <ul style="margin:0;padding:0;list-style:none">${removeListHtml}</ul>
+        </div>
+        <button id="moc-remove-all-btn" style="background:#dc2626;border:none;color:#fff;padding:8px 16px;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600;width:100%">Remove all ${toRemove.length} items from cart</button>
+      ` : ""}
+      <button id="moc-close-btn" style="background:transparent;border:1px solid rgba(255,255,255,0.25);color:#9ca3af;padding:6px 16px;border-radius:5px;cursor:pointer;font-size:12px">${toRemove.length ? "Cancel" : "Done"}</button>
+    </div>`;
+
+  document.body.appendChild(overlay);
+  overlay.querySelector("#moc-close-btn").addEventListener("click", async () => {
+    // If no removes pending (qty-only or user confirmed all done), clear the writeback
+    if (!overlay.querySelector("#moc-remove-all-btn")) {
+      delete pendingBlCartWriteback[writebackKey];
+      await chrome.storage.local.set({ pendingBlCartWriteback });
+    }
+    overlay.remove();
+  });
+
+  const removeAllBtn = overlay.querySelector("#moc-remove-all-btn");
+  if (removeAllBtn) {
+    removeAllBtn.addEventListener("click", async () => {
+      removeAllBtn.disabled = true;
+      // Signal content_main.js (MAIN world) to override window.confirm
+      window.dispatchEvent(new CustomEvent("moc:confirm-override"));
+      let done = 0;
+      for (const article of toRemove) {
+        const link = [...article.querySelectorAll("a, button")].find(el => /^remove$/i.test(el.textContent.trim()));
+        if (link) {
+          link.click();
+          done++;
+          removeAllBtn.textContent = `Removing… ${done}/${toRemove.length}`;
+          await new Promise(r => setTimeout(r, 150));
+        }
+      }
+      window.dispatchEvent(new CustomEvent("moc:confirm-restore"));
+      // Clear pending writeback now that removal is complete
+      delete pendingBlCartWriteback[writebackKey];
+      await chrome.storage.local.set({ pendingBlCartWriteback });
+      overlay.remove();
+    });
+  }
+}
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
