@@ -161,6 +161,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible
 - [x] Chrome Web Store — extension published (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
 - [x] Privacy page at https://api.moc-source.com/privacy
+- [x] Extension icon — Vaultcrest brick shield
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
@@ -170,7 +171,9 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
   - Phase 3: Detail view — wanted list pool (PAB/STD/BL/All tabs), LEGO cart section, per-cart BL sections, scratch space; over-allocation highlighting; part IDs link to BrickLink catalog
   - Phase 4: Allocation moves — checkbox multi-select; move pool→LEGO/BL/scratch, section→section; BL-only parts blocked from LEGO cart; per-cart sort (7 options); unallocate single rows
   - Phase 5: Save actions — LEGO cart diff+replace modal; scratch space save to linked list (or create new); pool save to single wanted list (diff modal) or combined new list (multi-source); pool part exclude/restore (soft-removes from pool, filtered from save)
-  - Grand total bar across all carts with per-cart BL subtotals, estimated shipping inputs for TBD stores, and vs-PAB net savings per BL cart (plain-language: "$X cheaper/more than PAB")
+  - Grand total bar across all carts with per-cart BL subtotals, estimated shipping inputs for TBD stores, and vs-PAB net savings per BL cart and grand total (green/red/grey neutral for $0)
+  - LEGO cart cost summary shows Bestseller (BS) and Standard (STD) subtotals alongside Parts/Shipping/Total
+  - Sort controls (6 sort keys × asc/desc) on LEGO cart section and Scratch space (matching BL cart sort)
   - Pool header shows total lots/pieces + allocated vs remaining breakdown
   - Scroll position preserved when checking boxes
   - Auto-allocation seeds LEGO cart from saved cart parts on first open and reset
@@ -179,14 +182,14 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 
 1. **Projects Phase 5 remaining** — BL store cart writeback (reduce allocated-away part qtys in the saved cart, remove if qty hits 0)
 2. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
-3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-4. **BrickLink store cart writeback** — BL API exists; would let the extension update a store cart to reflect project allocations rather than requiring manual reconciliation
-4. **BrickLink price column** — needs BrickLink API integration
-5. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
-6. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
-7. **ko-kr** — investigate why only 1,299 entries vs ~17k for other locales
-8. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-9. **Extension icon** — deferred
+3. **BrickLink API key setting** — encrypted storage of BL OAuth credentials in `chrome.storage.local` (AES-GCM via SubtleCrypto); prerequisite for BL store API calls
+4. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
+5. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+6. **BrickLink price column** — needs BrickLink API integration
+7. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
+8. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
+9. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+10. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
 
 ## Related Projects
 

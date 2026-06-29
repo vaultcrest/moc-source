@@ -659,6 +659,29 @@ async function renderProjectDetail(id, content) {
         }
       });
     }
+    if (sectionType === "lego") {
+      const d = legoSectionSortDir === "desc" ? -1 : 1;
+      entries = [...entries].sort((a, b) => {
+        const pa = poolParts.find(p => `${p.partNo}_${p.colorId}` === a.key);
+        const pb = poolParts.find(p => `${p.partNo}_${p.colorId}` === b.key);
+        const na = (pa?.pabEntry?.bl_part_name || pa?.name || "").toLowerCase();
+        const nb = (pb?.pabEntry?.bl_part_name || pb?.name || "").toLowerCase();
+        const ca = (pa?.pabEntry?.bl_color_name || String(pa?.colorId ?? "")).toLowerCase();
+        const cb = (pb?.pabEntry?.bl_color_name || String(pb?.colorId ?? "")).toLowerCase();
+        const ia = pa?.partNo || "", ib = pb?.partNo || "";
+        switch (legoSectionSort) {
+          case "partid_color": return d * (ia.localeCompare(ib, undefined, { numeric: true }) || ca.localeCompare(cb));
+          case "partid":       return d * ia.localeCompare(ib, undefined, { numeric: true });
+          case "color":        return d * (ca.localeCompare(cb) || na.localeCompare(nb));
+          case "pab_price":    return d * ((pa?.pabEntry?.price_cents ?? -1) - (pb?.pabEntry?.price_cents ?? -1));
+          case "channel": {
+            const o = { pab: 0, bap: 1 };
+            return d * ((o[pa?.pabEntry?.channel] ?? 2) - (o[pb?.pabEntry?.channel] ?? 2) || na.localeCompare(nb));
+          }
+          default: return d * (na.localeCompare(nb) || ca.localeCompare(cb));
+        }
+      });
+    }
     const allSelected = entries.every(e => selSet?.has(e.key));
     const showStore   = sectionType === "bl";
     const blCart      = showStore ? blCartList.find(c => c.id === sectionCartId) : null;
@@ -756,11 +779,15 @@ async function renderProjectDetail(id, content) {
               font-weight:${active ? "600" : "400"}`;
     };
     // Cost summary
-    let legoParts = 0, legoPartsKnown = true;
+    let legoParts = 0, legoBsParts = 0, legoStdParts = 0, legoPartsKnown = true;
     for (const { key, qty } of allLegoAllocs) {
       const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-      if (part?.pabEntry?.price_cents) legoParts += (part.pabEntry.price_cents / 100) * qty;
-      else legoPartsKnown = false;
+      if (part?.pabEntry?.price_cents) {
+        const cost = (part.pabEntry.price_cents / 100) * qty;
+        legoParts += cost;
+        if (part.pabEntry.channel === "pab") legoBsParts += cost;
+        else if (part.pabEntry.channel === "bap") legoStdParts += cost;
+      } else legoPartsKnown = false;
     }
     const svcFee   = (!ignoreLegoFees && legoPartsKnown && legoParts < 14 && allLegoAllocs.length > 0) ? 7 : 0;
     const legShip  = ignoreLegoFees ? 0 : legoParts >= 35 ? 0 : legoParts <= 25 ? 4.95 : 6.95;
@@ -768,10 +795,20 @@ async function renderProjectDetail(id, content) {
     const legoSummary = allLegoAllocs.length === 0 ? "" : `
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
         <span>Parts: <strong>${legoPartsKnown ? `$${legoParts.toFixed(2)}` : `~$${legoParts.toFixed(2)}`}</strong></span>
+        ${legoBsParts > 0 ? `<span style="color:#15803d">BS: <strong>$${legoBsParts.toFixed(2)}</strong></span>` : ""}
+        ${legoStdParts > 0 ? `<span style="color:#1d4ed8">STD: <strong>$${legoStdParts.toFixed(2)}</strong></span>` : ""}
         ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>$7.00</strong> <span style="color:#9ca3af;font-weight:400">(under $14 order)</span></span>` : ""}
         ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : `$${legShip.toFixed(2)}`}</strong></span>` : ""}
         ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${legoGrand.toFixed(2)}` : `~$${legoGrand.toFixed(2)}`}</span>` : ""}
       </div>`;
+    const legoSortOpts = [
+      ["name_color",  "Name+Color"],
+      ["partid_color","Part+Color"],
+      ["partid",      "Part ID"],
+      ["color",       "Color"],
+      ["pab_price",   "PAB $"],
+      ["channel",     "Channel"],
+    ].map(([v, l]) => `<option value="${v}"${legoSectionSort === v ? " selected" : ""}>${l}</option>`).join("");
     return `
       <div class="section-header"><span>LEGO Cart</span></div>
       <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #e1e4e8">
@@ -781,6 +818,10 @@ async function renderProjectDetail(id, content) {
         </div>
         <button class="btn lego-save-btn" style="font-size:12px;background:#1e2330;color:#fff;border-color:#1e2330">Save to Cart ↓</button>
         <button class="btn open-cart-btn" data-type="legoCarts" data-id="${esc(legoCart.id)}" style="font-size:12px">Open ↗</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
+        <select class="lego-sort" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px;color:#374151">${legoSortOpts}</select>
+        <button class="btn lego-sort-dir" style="font-size:11px;padding:2px 5px;background:#fff;border:1px solid #d1d5db;color:#374151">${legoSectionSortDir === "desc" ? "↓" : "↑"}</button>
       </div>
       ${legoSummary}
       <div style="display:flex;border-bottom:1px solid #e1e4e8;background:#fafbfc">
@@ -830,9 +871,9 @@ async function renderProjectDetail(id, content) {
     const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${blTotal.toFixed(2)}` : null;
     const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${(blTotal + effShip).toFixed(2)}` : null;
     const pabNetStr    = pabNetLots > 0
-      ? `$${Math.abs(pabNetTotal).toFixed(2)} ${pabNetTotal >= 0 ? "cheaper than PAB" : "more than PAB"}`
+      ? `$${Math.abs(pabNetTotal).toFixed(2)} ${pabNetTotal > 0 ? "cheaper than PAB" : pabNetTotal < 0 ? "more than PAB" : "same as PAB"}`
       : null;
-    const pabNetColor  = pabNetTotal >= 0 ? "#16a34a" : "#dc2626";
+    const pabNetColor  = pabNetTotal > 0 ? "#16a34a" : pabNetTotal < 0 ? "#dc2626" : "#6b7280";
     const blSummary    = blTotalStr ? `
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
         <span>Parts: <strong>${blTotalStr}</strong></span>
@@ -872,7 +913,7 @@ async function renderProjectDetail(id, content) {
   }
 
   function buildScratchSection(allocs) {
-    const scratchEntries = poolParts
+    let scratchEntries = poolParts
       .filter(p => allocRemaining(allocs, `${p.partNo}_${p.colorId}`, p.wantedQty) > 0)
       .map(p => ({ key: `${p.partNo}_${p.colorId}`, qty: allocRemaining(allocs, `${p.partNo}_${p.colorId}`, p.wantedQty), p }));
     const scratchPieces = scratchEntries.reduce((s, e) => s + e.qty, 0);
@@ -893,6 +934,26 @@ async function renderProjectDetail(id, content) {
     if (!scratchEntries.length) {
       return `${header}<div style="padding:10px 16px;font-size:12px;color:#9ca3af">All parts allocated.</div>`;
     }
+    const scratchD = scratchSortDir === "desc" ? -1 : 1;
+    scratchEntries = [...scratchEntries].sort((a, b) => {
+      const pa = a.p, pb = b.p;
+      const na = (pa.pabEntry?.bl_part_name || pa.name || "").toLowerCase();
+      const nb = (pb.pabEntry?.bl_part_name || pb.name || "").toLowerCase();
+      const ca = (pa.pabEntry?.bl_color_name || String(pa.colorId ?? "")).toLowerCase();
+      const cb = (pb.pabEntry?.bl_color_name || String(pb.colorId ?? "")).toLowerCase();
+      const ia = pa.partNo || "", ib = pb.partNo || "";
+      switch (scratchSort) {
+        case "partid_color": return scratchD * (ia.localeCompare(ib, undefined, { numeric: true }) || ca.localeCompare(cb));
+        case "partid":       return scratchD * ia.localeCompare(ib, undefined, { numeric: true });
+        case "color":        return scratchD * (ca.localeCompare(cb) || na.localeCompare(nb));
+        case "pab_price":    return scratchD * ((pa.pabEntry?.price_cents ?? -1) - (pb.pabEntry?.price_cents ?? -1));
+        case "channel": {
+          const o = { pab: 0, bap: 1 };
+          return scratchD * ((o[pa.pabEntry?.channel] ?? 2) - (o[pb.pabEntry?.channel] ?? 2) || na.localeCompare(nb));
+        }
+        default: return scratchD * (na.localeCompare(nb) || ca.localeCompare(cb));
+      }
+    });
     const allScratchSelected = scratchEntries.every(e => selectedScratchKeys.has(e.key));
     const scratchColHdr = `
       <div style="display:flex;align-items:center;gap:8px;padding:3px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
@@ -936,8 +997,20 @@ async function renderProjectDetail(id, content) {
           <div style="font-size:13px;font-weight:600;flex-shrink:0;width:24px;text-align:right">${qty}</div>
         </div>`;
     }).join("");
+    const scratchSortOpts = [
+      ["name_color",  "Name+Color"],
+      ["partid_color","Part+Color"],
+      ["partid",      "Part ID"],
+      ["color",       "Color"],
+      ["pab_price",   "PAB $"],
+      ["channel",     "Channel"],
+    ].map(([v, l]) => `<option value="${v}"${scratchSort === v ? " selected" : ""}>${l}</option>`).join("");
     return `${header}
-      <div style="font-size:12px;color:#6c757d;padding:6px 14px;border-bottom:1px solid #f3f4f6">${scratchEntries.length} lots · ${scratchPieces.toLocaleString()} pieces</div>
+      <div style="display:flex;align-items:center;gap:6px;padding:4px 12px;border-bottom:1px solid #f3f4f6">
+        <span style="font-size:12px;color:#6c757d">${scratchEntries.length} lots · ${scratchPieces.toLocaleString()} pieces</span>
+        <select class="scratch-sort" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px;color:#374151;margin-left:4px">${scratchSortOpts}</select>
+        <button class="btn scratch-sort-dir" style="font-size:11px;padding:2px 5px;background:#fff;border:1px solid #d1d5db;color:#374151">${scratchSortDir === "desc" ? "↓" : "↑"}</button>
+      </div>
       ${buildSectionActionBar(selCount, "scratch", "", targets)}
       ${scratchColHdr}
       <div style="max-height:460px;overflow-y:auto">${rows}</div>`;
@@ -945,8 +1018,12 @@ async function renderProjectDetail(id, content) {
 
   // ── actions ───────────────────────────────────────────────────────────────
 
-  let currentAllocs   = project.allocations ?? {};
-  let legoSectionTab  = "all";
+  let currentAllocs      = project.allocations ?? {};
+  let legoSectionTab     = "all";
+  let legoSectionSort    = "name_color";
+  let legoSectionSortDir = "asc";
+  let scratchSort        = "name_color";
+  let scratchSortDir     = "asc";
   estBlShipping       = project.estimatedShipping ?? {};
 
   function isPabEligible(key) {
@@ -1099,6 +1176,7 @@ async function renderProjectDetail(id, content) {
 
   function buildGrandTotal() {
     let grand = 0, grandKnown = true;
+    let pabNetTotal = 0, pabNetLots = 0;
     const cartRows = [];
 
     for (const cart of blCartList) {
@@ -1111,13 +1189,22 @@ async function renderProjectDetail(id, content) {
         const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
         const cp   = cart.parts?.find(c => c.partNo === part?.partNo && String(c.colorId) === String(part?.colorId));
         const pr   = parseStorePrice(cp?.storePrice);
-        if (pr != null) total += pr * qty; else totalKnown = false;
+        if (pr != null) {
+          total += pr * qty;
+          const pabCents = part?.pabEntry?.price_cents;
+          pabNetTotal += (pabCents != null ? pabCents / 100 - pr : 0) * qty;
+          pabNetLots++;
+        } else {
+          totalKnown = false;
+        }
       }
       const rawS   = cart.orderSummary?.shipping?.replace(/^US\s+/, "");
       const rawO   = cart.orderSummary?.orderTotal?.replace(/^US\s+/, "");
       const sNum   = parseStorePrice(rawS);
       const isTbd  = sNum == null || sNum === 0 || rawS === rawO;
       const effS   = isTbd ? (estBlShipping[cart.id] ?? 0) : (sNum ?? 0);
+      // BL shipping reduces total savings vs PAB (you pay it at BL but not PAB)
+      if (pabNetLots > 0) pabNetTotal -= effS;
       const cartGrand = total + effS;
       grand += cartGrand;
       if (!totalKnown || (isTbd && !(estBlShipping[cart.id] > 0))) grandKnown = false;
@@ -1143,9 +1230,12 @@ async function renderProjectDetail(id, content) {
     }
 
     if (!cartRows.length) return "";
+    const pabSavedStr   = pabNetLots > 0 ? `$${Math.abs(pabNetTotal).toFixed(2)} ${pabNetTotal > 0 ? "saved vs PAB" : pabNetTotal < 0 ? "more than PAB" : "same as PAB"}` : null;
+    const pabSavedColor = pabNetTotal > 0 ? "#16a34a" : pabNetTotal < 0 ? "#dc2626" : "#6b7280";
     return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px">
       <span style="font-size:13px;font-weight:700;color:#0369a1">Grand Total</span>
       ${cartRows.join("")}
+      ${pabSavedStr ? `<span style="font-size:12px;color:#374151" title="Net savings vs buying all BL-allocated parts on Pick a Brick">vs PAB: <strong style="color:${pabSavedColor}">${esc(pabSavedStr)}</strong></span>` : ""}
       <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1">${grandKnown ? "" : "~"}$${grand.toFixed(2)}</span>
     </div>`;
   }
@@ -1640,6 +1730,18 @@ async function renderProjectDetail(id, content) {
       refreshBlSection(cid);
       return;
     }
+    const legoSortDirBtn = e.target.closest(".lego-sort-dir");
+    if (legoSortDirBtn) {
+      legoSectionSortDir = legoSectionSortDir === "desc" ? "asc" : "desc";
+      refreshLegoSection();
+      return;
+    }
+    const scratchSortDirBtn = e.target.closest(".scratch-sort-dir");
+    if (scratchSortDirBtn) {
+      scratchSortDir = scratchSortDir === "desc" ? "asc" : "desc";
+      refreshScratch();
+      return;
+    }
     const legoTabBtn = e.target.closest(".lego-tab-btn");
     if (legoTabBtn) { legoSectionTab = legoTabBtn.dataset.legoTab; refreshLegoSection(); return; }
     const channelSelBtn = e.target.closest(".bl-sel-channel");
@@ -1707,6 +1809,18 @@ async function renderProjectDetail(id, content) {
     if (blSortSel) {
       blCartSort.set(blSortSel.dataset.cartId, blSortSel.value);
       refreshBlSection(blSortSel.dataset.cartId);
+      return;
+    }
+    const legoSortSel = e.target.closest(".lego-sort");
+    if (legoSortSel) {
+      legoSectionSort = legoSortSel.value;
+      refreshLegoSection();
+      return;
+    }
+    const scratchSortSel = e.target.closest(".scratch-sort");
+    if (scratchSortSel) {
+      scratchSort = scratchSortSel.value;
+      refreshScratch();
       return;
     }
     // Estimated shipping input for BL carts
