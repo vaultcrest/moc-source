@@ -177,10 +177,15 @@ function summaryPanel(parts, cart) {
                <span style="${bold ? "font-weight:700" : "font-weight:500"}">${val ?? "—"}</span>
              </div>`;
           const fmt = v => v ? v.replace(/^US\s+/, "") : v;
+          const fmtShip = fmt(os.shipping);
+          const fmtOrd  = fmt(os.orderTotal);
+          const shipTbd = !fmtShip || fmtShip === fmtOrd;
           return `
             ${os.itemTotal  ? row("BrickLink Item Total", fmt(os.itemTotal)) : ""}
-            ${os.shipping   ? row("Shipping & Handling",  fmt(os.shipping))  : ""}
-            ${os.orderTotal ? row("Order Total",           fmt(os.orderTotal), true) : ""}`;
+            ${shipTbd
+              ? row("Shipping & Handling", '<span style="color:#9ca3af">TBD</span>')
+              : row("Shipping & Handling", fmtShip)}
+            ${os.orderTotal ? row("Order Total", fmtOrd, true) : ""}`;
         })()}
       </div>`;
   }
@@ -260,6 +265,18 @@ let currentTab = "all";
 let currentSort = "name_color";
 let currentSortDir = "asc";
 let currentPabRegion = "en-us";
+let currentProjectTab = "all";
+let poolSort    = "name_color";
+let poolSortDir = "asc";
+let selectedPoolKeys    = new Set();
+let showAllocatedParts  = false;
+let showExcludedParts   = false;
+let selectedLegoKeys    = new Set();
+let selectedBlKeys      = new Map(); // cartId -> Set<key>
+let selectedScratchKeys = new Set();
+let estBlShipping       = {};        // cartId -> estimated shipping amount
+let blCartSort          = new Map(); // cartId -> sort key
+let blCartSortDir       = new Map(); // cartId -> "asc"|"desc"
 
 // ─── Router ──────────────────────────────────────────────────────────────────
 
@@ -539,6 +556,7 @@ async function renderProjects(content) {
 async function renderProjectDetail(id, content) {
   const { projects = [], wantedLists = [], carts = [], legoCarts = [] } =
     await chrome.storage.local.get(["projects", "wantedLists", "carts", "legoCarts"]);
+  const { ignoreLegoFees = false } = await chrome.storage.sync.get({ ignoreLegoFees: false });
   const project = projects.find(p => p.id === id);
 
   if (!project) {
@@ -555,67 +573,1480 @@ async function renderProjectDetail(id, content) {
   const blMap = Object.fromEntries(carts.map(l => [l.id, l]));
   const lgMap = Object.fromEntries(legoCarts.map(l => [l.id, l]));
 
-  const poolLists  = (project.wantedListIds ?? []).map(i => wlMap[i]).filter(Boolean);
-  const blCarts    = (project.blCartIds     ?? []).map(i => blMap[i]).filter(Boolean);
-  const legoCart   = project.legoCartId ? lgMap[project.legoCartId] : null;
-  const totalPieces = poolLists.reduce((s, l) => s + (l.partsCount ?? 0), 0);
-
-  function listRows(items, emptyMsg) {
-    if (!items.length) return `<div style="color:#9ca3af;font-size:12px;padding:6px 0">${emptyMsg}</div>`;
-    return items.map(l => `
-      <div style="display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid #f3f4f6">
-        <span style="flex:1;font-size:13px">${esc(l.name)}</span>
-        <span style="font-size:12px;color:#6c757d">${(l.partsCount ?? 0).toLocaleString()} parts</span>
-      </div>`).join("");
+  const poolMap = new Map();
+  for (const lid of project.wantedListIds ?? []) {
+    const list = wlMap[lid];
+    if (!list) continue;
+    for (const p of (list.parts ?? [])) {
+      const key = `${p.partNo}_${p.colorId}`;
+      if (poolMap.has(key)) {
+        poolMap.get(key).wantedQty += (p.want ?? p.qty ?? 1);
+      } else {
+        poolMap.set(key, { ...p, wantedQty: (p.want ?? p.qty ?? 1), pabEntry: null });
+      }
+    }
   }
+  const poolParts = [...poolMap.values()];
+  const totalPoolPieces = poolParts.reduce((s, p) => s + p.wantedQty, 0);
+
+  const legoCart    = project.legoCartId ? lgMap[project.legoCartId] : null;
+  const blCartList  = (project.blCartIds ?? []).map(i => blMap[i]).filter(Boolean);
+  const scratchList = project.scratchWantedListId ? wlMap[project.scratchWantedListId] : null;
+
+  // ── allocation helpers ────────────────────────────────────────────────────
+
+  function allocRemaining(allocs, key, wantedQty) {
+    const a = allocs[key];
+    if (!a) return wantedQty;
+    const used = (a.legoQty ?? 0) + Object.values(a.storeQty ?? {}).reduce((s, v) => s + v, 0);
+    return wantedQty - used;
+  }
+
+  // ── section builders ──────────────────────────────────────────────────────
+
+  function buildSectionActionBar(selCount, srcType, srcCartId, targets) {
+    if (!selCount) return "";
+    const btns = targets.map(t => {
+      const isSelf = t.type === srcType && t.cartId === srcCartId;
+      if (isSelf) return "";
+      const s = t.type === "lego"
+        ? `style="font-size:12px;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8"`
+        : t.type === "pool"
+        ? `style="font-size:12px;color:#6c757d"`
+        : `style="font-size:12px"`;
+      return `<button class="btn section-move-btn"
+        data-src-type="${srcType}" data-src-cart="${esc(srcCartId ?? "")}"
+        data-tgt-type="${t.type}" data-tgt-cart="${esc(t.cartId ?? "")}"
+        ${s}>${t.label}</button>`;
+    }).filter(Boolean).join(" ");
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 12px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;flex-wrap:wrap">
+      <span style="font-size:12px;color:#6c757d;flex-shrink:0">${selCount} selected</span>
+      ${btns}
+    </div>`;
+  }
+
+  function buildAllocRows(entries, sectionType, sectionCartId, selSet) {
+    if (!entries.length) {
+      return `<div style="font-size:12px;color:#9ca3af;padding:8px 14px 10px">Nothing allocated yet.</div>`;
+    }
+    if (sectionType === "bl") {
+      const sort = blCartSort.get(sectionCartId) || "name_color";
+      const d    = blCartSortDir.get(sectionCartId) === "desc" ? -1 : 1;
+      const cart = blCartList.find(c => c.id === sectionCartId);
+      entries = [...entries].sort((a, b) => {
+        const pa = poolParts.find(p => `${p.partNo}_${p.colorId}` === a.key);
+        const pb = poolParts.find(p => `${p.partNo}_${p.colorId}` === b.key);
+        const na = (pa?.pabEntry?.bl_part_name || pa?.name || "").toLowerCase();
+        const nb = (pb?.pabEntry?.bl_part_name || pb?.name || "").toLowerCase();
+        const ca = (pa?.pabEntry?.bl_color_name || String(pa?.colorId ?? "")).toLowerCase();
+        const cb = (pb?.pabEntry?.bl_color_name || String(pb?.colorId ?? "")).toLowerCase();
+        const ia = pa?.partNo || "", ib = pb?.partNo || "";
+        switch (sort) {
+          case "partid_color": return d * (ia.localeCompare(ib, undefined, { numeric: true }) || ca.localeCompare(cb));
+          case "partid":       return d * ia.localeCompare(ib, undefined, { numeric: true });
+          case "color":        return d * (ca.localeCompare(cb) || na.localeCompare(nb));
+          case "store_price": {
+            const cpa = cart?.parts?.find(cp => cp.partNo === pa?.partNo && String(cp.colorId) === String(pa?.colorId));
+            const cpb = cart?.parts?.find(cp => cp.partNo === pb?.partNo && String(cp.colorId) === String(pb?.colorId));
+            return d * ((parseStorePrice(cpa?.storePrice) ?? -1) - (parseStorePrice(cpb?.storePrice) ?? -1));
+          }
+          case "pab_price": return d * ((pa?.pabEntry?.price_cents ?? -1) - (pb?.pabEntry?.price_cents ?? -1));
+          case "channel": {
+            const o = { pab: 0, bap: 1 };
+            return d * ((o[pa?.pabEntry?.channel] ?? 2) - (o[pb?.pabEntry?.channel] ?? 2) || na.localeCompare(nb));
+          }
+          default: return d * (na.localeCompare(nb) || ca.localeCompare(cb));
+        }
+      });
+    }
+    const allSelected = entries.every(e => selSet?.has(e.key));
+    const showStore   = sectionType === "bl";
+    const blCart      = showStore ? blCartList.find(c => c.id === sectionCartId) : null;
+    const colHdr = `
+      <div style="display:flex;align-items:center;gap:8px;padding:3px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
+        <input type="checkbox" class="section-sel-all"
+          data-section-type="${sectionType}" data-section-cart="${esc(sectionCartId ?? "")}"
+          ${allSelected ? "checked" : ""}
+          style="cursor:pointer;flex-shrink:0">
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:54px;text-transform:uppercase;letter-spacing:.04em">Part</div>
+        <div style="width:36px;flex-shrink:0"></div>
+        <div style="flex:1;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em">Name</div>
+        ${showStore ? `<div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Store $</div>` : ""}
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">PAB $</div>
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:46px;text-align:center;text-transform:uppercase;letter-spacing:.04em">Ch</div>
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:24px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Qty</div>
+        <div style="width:26px;flex-shrink:0"></div>
+      </div>`;
+    const rows = entries.map(({ key, qty }) => {
+      const part      = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      const name      = part?.pabEntry?.bl_part_name || part?.name || key;
+      const color     = part?.pabEntry?.bl_color_name || part?.colorName || "";
+      const pabPrice  = part?.pabEntry?.price_formatted || "—";
+      const ch        = part?.pabEntry?.channel;
+      const badge     = ch === "pab"
+        ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
+        : ch === "bap"
+        ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#fef9c3;color:#ca8a04">STD</span>`
+        : part?.pabEntry
+        ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#f3f4f6;color:#6c757d">BL</span>`
+        : `<span style="color:#9ca3af">—</span>`;
+      const cartPart  = blCart?.parts?.find(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
+      const storeNum  = parseStorePrice(cartPart?.storePrice);
+      const pabNum    = part?.pabEntry?.price_cents ? part.pabEntry.price_cents / 100 : null;
+      const pabCheaper = showStore && storeNum != null && pabNum != null && pabNum < storeNum;
+      const storeColor = pabCheaper ? "#dc2626" : "#374151";
+      const storeCell = showStore
+        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${cartPart?.storePrice || "—"}</div>`
+        : "";
+      const rowBg     = pabCheaper ? "background:#fff5f5;" : "";
+      const img = part?.imageUrl
+        ? `<img src="${esc(part.imageUrl)}" style="width:36px;height:28px;object-fit:contain;flex-shrink:0">`
+        : `<div style="width:36px;flex-shrink:0"></div>`;
+      const isChecked = selSet?.has(key) ?? false;
+      return `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px;border-bottom:1px solid #f3f4f6;${rowBg}">
+          <input type="checkbox" class="section-row-check"
+            data-section-type="${sectionType}"
+            data-section-cart="${esc(sectionCartId ?? "")}"
+            data-key="${esc(key)}"
+            ${isChecked ? "checked" : ""}
+            style="cursor:pointer;flex-shrink:0">
+          <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(part?.partNo || key.split('_')[0])}#T=C&C=${esc(String(part?.colorId ?? ''))}" target="_blank" rel="noopener" style="font-size:11px;font-family:monospace;color:#6c757d;flex-shrink:0;width:54px;text-decoration:none;display:flex;align-items:center;align-self:stretch" title="View on BrickLink">${esc(part?.partNo || key.split('_')[0])}</a>
+          ${img}
+          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="color:#9ca3af;font-size:11px">${esc(color)}</span></div>
+          ${storeCell}
+          <div style="font-size:12px;color:#6c757d;flex-shrink:0;width:52px;text-align:right">${pabPrice}</div>
+          <div style="flex-shrink:0;width:46px;text-align:center">${badge}</div>
+          <div style="font-size:13px;font-weight:600;flex-shrink:0;width:24px;text-align:right">${qty}</div>
+          <button class="btn btn-danger"
+            data-unalloc-key="${esc(key)}"
+            data-unalloc-type="${sectionType}"
+            data-unalloc-cart="${esc(sectionCartId ?? "")}"
+            style="padding:1px 6px;font-size:12px;flex-shrink:0">×</button>
+        </div>`;
+    }).join("");
+    return `${colHdr}<div style="max-height:460px;overflow-y:auto">${rows}</div>`;
+  }
+
+  function buildLegoSection(allocs) {
+    const allLegoAllocs = Object.entries(allocs)
+      .filter(([, a]) => (a.legoQty ?? 0) > 0)
+      .map(([key, a]) => ({ key, qty: a.legoQty }));
+    if (!legoCart) {
+      return `
+        <div class="section-header"><span>LEGO Cart</span></div>
+        <div class="section-empty" style="padding:16px">No LEGO cart selected. <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb">Configure</button> to add one.</div>`;
+    }
+    const getChannel = key => poolParts.find(p => `${p.partNo}_${p.colorId}` === key)?.pabEntry?.channel;
+    const bsCount    = allLegoAllocs.filter(e => getChannel(e.key) === "pab").length;
+    const stdCount   = allLegoAllocs.filter(e => getChannel(e.key) === "bap").length;
+    const legoAllocs = legoSectionTab === "pab" ? allLegoAllocs.filter(e => getChannel(e.key) === "pab")
+                     : legoSectionTab === "bap" ? allLegoAllocs.filter(e => getChannel(e.key) === "bap")
+                     : allLegoAllocs;
+    const allocPcs   = legoAllocs.reduce((s, e) => s + e.qty, 0);
+    const selCount   = legoAllocs.filter(e => selectedLegoKeys.has(e.key)).length;
+    const targets    = [
+      ...blCartList.map(c => ({ type: "bl",   cartId: c.id, label: `→ ${esc(c.name)}` })),
+      { type: "pool", cartId: "", label: "Return to pool" }
+    ];
+    const tabStyle = (key, bg) => {
+      const active = legoSectionTab === key;
+      return `padding:5px 10px;font-size:12px;border:none;background:${active ? bg : "transparent"};
+              color:${active ? "#111" : "#6c757d"};cursor:pointer;border-bottom:2px solid ${active ? "#374151" : "transparent"};
+              font-weight:${active ? "600" : "400"}`;
+    };
+    // Cost summary
+    let legoParts = 0, legoPartsKnown = true;
+    for (const { key, qty } of allLegoAllocs) {
+      const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      if (part?.pabEntry?.price_cents) legoParts += (part.pabEntry.price_cents / 100) * qty;
+      else legoPartsKnown = false;
+    }
+    const svcFee   = (!ignoreLegoFees && legoPartsKnown && legoParts < 14 && allLegoAllocs.length > 0) ? 7 : 0;
+    const legShip  = ignoreLegoFees ? 0 : legoParts >= 35 ? 0 : legoParts <= 25 ? 4.95 : 6.95;
+    const legoGrand = legoParts + svcFee + legShip;
+    const legoSummary = allLegoAllocs.length === 0 ? "" : `
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
+        <span>Parts: <strong>${legoPartsKnown ? `$${legoParts.toFixed(2)}` : `~$${legoParts.toFixed(2)}`}</strong></span>
+        ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>$7.00</strong> <span style="color:#9ca3af;font-weight:400">(under $14 order)</span></span>` : ""}
+        ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : `$${legShip.toFixed(2)}`}</strong></span>` : ""}
+        ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${legoGrand.toFixed(2)}` : `~$${legoGrand.toFixed(2)}`}</span>` : ""}
+      </div>`;
+    return `
+      <div class="section-header"><span>LEGO Cart</span></div>
+      <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #e1e4e8">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:600">${esc(legoCart.name)}</div>
+          <div style="font-size:12px;color:#6c757d">${allLegoAllocs.length} lots · ${allocPcs.toLocaleString()} pieces assigned</div>
+        </div>
+        <button class="btn lego-save-btn" style="font-size:12px;background:#1e2330;color:#fff;border-color:#1e2330">Save to Cart ↓</button>
+        <button class="btn open-cart-btn" data-type="legoCarts" data-id="${esc(legoCart.id)}" style="font-size:12px">Open ↗</button>
+      </div>
+      ${legoSummary}
+      <div style="display:flex;border-bottom:1px solid #e1e4e8;background:#fafbfc">
+        <button class="lego-tab-btn" data-lego-tab="all" style="${tabStyle("all","#f3f4f6")}">All (${allLegoAllocs.length})</button>
+        <button class="lego-tab-btn" data-lego-tab="pab" style="${tabStyle("pab","#dcfce7")}">Bestseller (${bsCount})</button>
+        <button class="lego-tab-btn" data-lego-tab="bap" style="${tabStyle("bap","#dbeafe")}">Standard (${stdCount})</button>
+      </div>
+      ${buildSectionActionBar(selCount, "lego", "", targets)}
+      ${buildAllocRows(legoAllocs, "lego", "", selectedLegoKeys)}`;
+  }
+
+  function buildBlSection(cart, allocs) {
+    const blAllocs  = Object.entries(allocs)
+      .filter(([, a]) => (a.storeQty?.[cart.id] ?? 0) > 0)
+      .map(([key, a]) => ({ key, qty: a.storeQty[cart.id] }));
+    const allocPcs   = blAllocs.reduce((s, e) => s + e.qty, 0);
+    const selSet     = selectedBlKeys.get(cart.id) ?? new Set();
+    const selCount   = blAllocs.filter(e => selSet.has(e.key)).length;
+    const targets    = [
+      ...(legoCart ? [{ type: "lego", cartId: "",      label: "→ LEGO Cart" }] : []),
+      ...blCartList.filter(c => c.id !== cart.id).map(c => ({ type: "bl", cartId: c.id, label: `→ ${esc(c.name)}` })),
+      { type: "pool", cartId: "", label: "Return to pool" }
+    ];
+    // Cost summary
+    let blTotal = 0, blTotalKnown = true;
+    let pabNetTotal = 0, pabNetLots = 0;
+    for (const { key, qty } of blAllocs) {
+      const part     = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      const cartPart = cart.parts?.find(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
+      const blPrice  = parseStorePrice(cartPart?.storePrice);
+      if (blPrice != null) blTotal += blPrice * qty;
+      else blTotalKnown = false;
+      if (blPrice != null) {
+        const pabCents = part?.pabEntry?.price_cents;
+        // BL-only parts (no PAB price) are neutral — $0 net
+        pabNetTotal += (pabCents != null ? pabCents / 100 - blPrice : 0) * qty;
+        pabNetLots++;
+      }
+    }
+    const rawShip      = cart.orderSummary?.shipping?.replace(/^US\s+/, "");
+    const rawOrderTot  = cart.orderSummary?.orderTotal?.replace(/^US\s+/, "");
+    const shipNum      = parseStorePrice(rawShip);
+    // TBD: not captured, is $0, or BL DOM bled the order total into the shipping field
+    const shipIsTbd    = shipNum == null || shipNum === 0 || rawShip === rawOrderTot;
+    const estShipVal   = estBlShipping[cart.id] ?? "";
+    const effShip      = shipIsTbd ? (estBlShipping[cart.id] ?? 0) : (shipNum ?? 0);
+    const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${blTotal.toFixed(2)}` : null;
+    const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${(blTotal + effShip).toFixed(2)}` : null;
+    const pabNetStr    = pabNetLots > 0
+      ? `$${Math.abs(pabNetTotal).toFixed(2)} ${pabNetTotal >= 0 ? "cheaper than PAB" : "more than PAB"}`
+      : null;
+    const pabNetColor  = pabNetTotal >= 0 ? "#16a34a" : "#dc2626";
+    const blSummary    = blTotalStr ? `
+      <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
+        <span>Parts: <strong>${blTotalStr}</strong></span>
+        ${shipIsTbd
+          ? `<label style="display:flex;align-items:center;gap:4px;color:#6c757d">Est. ship: <input type="number" class="bl-est-ship" data-cart-id="${esc(cart.id)}" min="0" step="0.01" value="${estShipVal}" placeholder="0.00" style="width:68px;padding:1px 5px;border:1px solid #d1d5db;border-radius:3px;font-size:12px;color:#374151"></label>`
+          : `<span>Shipping: <strong>${rawShip}</strong></span>`}
+        ${pabNetStr ? `<span title="Savings vs buying the same parts on Pick a Brick">vs PAB: <strong style="color:${pabNetColor}">${esc(pabNetStr)}</strong></span>` : ""}
+        ${blGrandStr ? `<span style="margin-left:auto;font-weight:700">Total: ${blGrandStr}</span>` : ""}
+      </div>` : "";
+    const selBtnStyle = "font-size:11px;padding:2px 7px;background:#fff;border:1px solid #d1d5db;color:#374151";
+    const cartSort    = blCartSort.get(cart.id)    || "name_color";
+    const cartSortDir = blCartSortDir.get(cart.id) || "asc";
+    const sortOpts    = [
+      ["name_color",  "Name+Color"],
+      ["partid_color","Part+Color"],
+      ["partid",      "Part ID"],
+      ["color",       "Color"],
+      ["store_price", "Store $"],
+      ["pab_price",   "PAB $"],
+      ["channel",     "Channel"],
+    ].map(([v, l]) => `<option value="${v}"${cartSort === v ? " selected" : ""}>${l}</option>`).join("");
+    return `
+      <div class="section-header"><span>${esc(cart.name)}</span></div>
+      <div style="display:flex;align-items:center;gap:6px;padding:6px 12px;border-bottom:1px solid #e1e4e8;flex-wrap:wrap">
+        <div style="font-size:12px;color:#6c757d">${blAllocs.length} lots · ${allocPcs.toLocaleString()} pieces assigned</div>
+        <select class="bl-cart-sort" data-cart-id="${esc(cart.id)}" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px;color:#374151;margin-left:6px">${sortOpts}</select>
+        <button class="btn bl-cart-sort-dir" data-cart-id="${esc(cart.id)}" style="${selBtnStyle};padding:2px 5px">${cartSortDir === "desc" ? "↓" : "↑"}</button>
+        <div style="flex:1"></div>
+        <button class="btn bl-sel-channel" data-cart-id="${esc(cart.id)}" data-channel="pab" style="${selBtnStyle};background:#f0fdf4;border-color:#86efac" title="Select all Bestseller parts">☑ Bestseller</button>
+        <button class="btn bl-sel-channel" data-cart-id="${esc(cart.id)}" data-channel="bap" style="${selBtnStyle};background:#eff6ff;border-color:#93c5fd" title="Select all Standard parts">☑ Standard</button>
+        <button class="btn bl-sel-pab-cheaper" data-cart-id="${esc(cart.id)}" style="${selBtnStyle}" title="Select all where store price exceeds PAB price">☑ PAB cheaper</button>
+        <button class="btn open-cart-btn" data-type="carts" data-id="${esc(cart.id)}" style="font-size:12px">Open ↗</button>
+      </div>
+      ${blSummary}
+      ${buildSectionActionBar(selCount, "bl", cart.id, targets)}
+      ${buildAllocRows(blAllocs, "bl", cart.id, selSet)}`;
+  }
+
+  function buildScratchSection(allocs) {
+    const scratchEntries = poolParts
+      .filter(p => allocRemaining(allocs, `${p.partNo}_${p.colorId}`, p.wantedQty) > 0)
+      .map(p => ({ key: `${p.partNo}_${p.colorId}`, qty: allocRemaining(allocs, `${p.partNo}_${p.colorId}`, p.wantedQty), p }));
+    const scratchPieces = scratchEntries.reduce((s, e) => s + e.qty, 0);
+    const selCount      = scratchEntries.filter(e => selectedScratchKeys.has(e.key)).length;
+    const targets       = [
+      ...(legoCart ? [{ type: "lego", cartId: "", label: "→ LEGO Cart" }] : []),
+      ...blCartList.map(c => ({ type: "bl", cartId: c.id, label: `→ ${esc(c.name)}` }))
+    ];
+    const header = `
+      <div class="section-header">
+        <span>Scratch Space</span>
+        <span style="font-size:12px;color:#9ca3af;font-weight:400;margin-left:8px">${scratchList ? `linked to ${esc(scratchList.name)}` : "ephemeral"}</span>
+        <button class="btn scratch-save-btn" style="margin-left:auto;font-size:12px;background:#1e2330;color:#fff;border-color:#1e2330">Save to List ↓</button>
+      </div>`;
+    if (!poolParts.length) {
+      return `${header}<div style="padding:10px 16px;font-size:13px;color:#9ca3af">No parts in pool yet.</div>`;
+    }
+    if (!scratchEntries.length) {
+      return `${header}<div style="padding:10px 16px;font-size:12px;color:#9ca3af">All parts allocated.</div>`;
+    }
+    const allScratchSelected = scratchEntries.every(e => selectedScratchKeys.has(e.key));
+    const scratchColHdr = `
+      <div style="display:flex;align-items:center;gap:8px;padding:3px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
+        <input type="checkbox" class="section-sel-all"
+          data-section-type="scratch" data-section-cart=""
+          ${allScratchSelected ? "checked" : ""}
+          style="cursor:pointer;flex-shrink:0">
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:54px;text-transform:uppercase;letter-spacing:.04em">Part</div>
+        <div style="width:36px;flex-shrink:0"></div>
+        <div style="flex:1;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em">Name</div>
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">PAB $</div>
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:46px;text-align:center;text-transform:uppercase;letter-spacing:.04em">Ch</div>
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:24px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Qty</div>
+      </div>`;
+    const rows = scratchEntries.map(({ key, qty, p }) => {
+      const name  = p.pabEntry?.bl_part_name  || p.name      || "";
+      const color = p.pabEntry?.bl_color_name || p.colorName || "";
+      const price = p.pabEntry?.price_formatted || "—";
+      const ch    = p.pabEntry?.channel;
+      const badge = ch === "pab"
+        ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
+        : ch === "bap"
+        ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#fef9c3;color:#ca8a04">STD</span>`
+        : p.pabEntry
+        ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#f3f4f6;color:#6c757d">BL</span>`
+        : `<span style="color:#9ca3af">—</span>`;
+      const img   = p.imageUrl
+        ? `<img src="${esc(p.imageUrl)}" style="width:36px;height:28px;object-fit:contain;flex-shrink:0">`
+        : `<div style="width:36px;flex-shrink:0"></div>`;
+      return `
+        <div style="display:flex;align-items:center;gap:8px;padding:4px 12px;border-bottom:1px solid #f3f4f6">
+          <input type="checkbox" class="section-row-check"
+            data-section-type="scratch" data-section-cart="" data-key="${esc(key)}"
+            ${selectedScratchKeys.has(key) ? "checked" : ""}
+            style="cursor:pointer;flex-shrink:0">
+          <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo || '')}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="font-size:11px;font-family:monospace;color:#6c757d;flex-shrink:0;width:54px;text-decoration:none;display:flex;align-items:center;align-self:stretch" title="View on BrickLink">${esc(p.partNo || "")}</a>
+          ${img}
+          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="color:#9ca3af;font-size:11px">${esc(color)}</span></div>
+          <div style="font-size:12px;color:#6c757d;flex-shrink:0;width:52px;text-align:right">${price}</div>
+          <div style="flex-shrink:0;width:46px;text-align:center">${badge}</div>
+          <div style="font-size:13px;font-weight:600;flex-shrink:0;width:24px;text-align:right">${qty}</div>
+        </div>`;
+    }).join("");
+    return `${header}
+      <div style="font-size:12px;color:#6c757d;padding:6px 14px;border-bottom:1px solid #f3f4f6">${scratchEntries.length} lots · ${scratchPieces.toLocaleString()} pieces</div>
+      ${buildSectionActionBar(selCount, "scratch", "", targets)}
+      ${scratchColHdr}
+      <div style="max-height:460px;overflow-y:auto">${rows}</div>`;
+  }
+
+  // ── actions ───────────────────────────────────────────────────────────────
+
+  let currentAllocs   = project.allocations ?? {};
+  let legoSectionTab  = "all";
+  estBlShipping       = project.estimatedShipping ?? {};
+
+  function isPabEligible(key) {
+    const ch = poolParts.find(p => `${p.partNo}_${p.colorId}` === key)?.pabEntry?.channel;
+    return ch === "pab" || ch === "bap";
+  }
+
+  async function onMove(targetType, cartId) {
+    if (!selectedPoolKeys.size) return;
+    if (targetType === "lego") {
+      for (const key of [...selectedPoolKeys]) if (!isPabEligible(key)) selectedPoolKeys.delete(key);
+      if (!selectedPoolKeys.size) return;
+    }
+    if (targetType === "bl") {
+      const tgtCart = blCartList.find(c => c.id === cartId);
+      const missing = [...selectedPoolKeys].filter(key => {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        return !tgtCart?.parts?.some(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
+      });
+      if (missing.length) {
+        const names = missing.slice(0, 5).map(key => {
+          const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+          return `• ${part?.pabEntry?.bl_part_name || part?.name || key}`;
+        });
+        const extra = missing.length > 5 ? `\n+ ${missing.length - 5} more` : "";
+        if (!confirm(`${missing.length} part(s) are not stocked in "${tgtCart?.name}":\n${names.join("\n")}${extra}\n\nAllocate anyway?`)) return;
+      }
+    }
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    const proj = allProjects.find(p => p.id === id);
+    if (!proj) return;
+    if (!proj.allocations) proj.allocations = {};
+    for (const key of selectedPoolKeys) {
+      const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      if (!part) continue;
+      const rem = allocRemaining(proj.allocations, key, part.wantedQty);
+      if (rem <= 0) continue;
+      if (!proj.allocations[key]) proj.allocations[key] = { legoQty: 0, storeQty: {} };
+      if (targetType === "lego") {
+        proj.allocations[key].legoQty = (proj.allocations[key].legoQty ?? 0) + rem;
+      } else {
+        if (!proj.allocations[key].storeQty) proj.allocations[key].storeQty = {};
+        proj.allocations[key].storeQty[cartId] = (proj.allocations[key].storeQty[cartId] ?? 0) + rem;
+      }
+    }
+    await chrome.storage.local.set({ projects: allProjects });
+    selectedPoolKeys.clear();
+    await refresh();
+  }
+
+  async function onSectionMove(srcType, srcCartId, tgtType, tgtCartId) {
+    let selKeys;
+    if (srcType === "lego")    selKeys = [...selectedLegoKeys];
+    else if (srcType === "bl") selKeys = [...(selectedBlKeys.get(srcCartId) ?? new Set())];
+    else                       selKeys = [...selectedScratchKeys];
+    if (!selKeys.length) return;
+
+    if (tgtType === "lego") {
+      selKeys = selKeys.filter(isPabEligible);
+      if (!selKeys.length) return;
+    }
+    if (tgtType === "bl") {
+      const tgtCartObj = blCartList.find(c => c.id === tgtCartId);
+      const missing = selKeys.filter(key => {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        return !tgtCartObj?.parts?.some(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
+      });
+      if (missing.length) {
+        const names = missing.slice(0, 5).map(key => {
+          const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+          return `• ${part?.pabEntry?.bl_part_name || part?.name || key}`;
+        });
+        const extra = missing.length > 5 ? `\n+ ${missing.length - 5} more` : "";
+        if (!confirm(`${missing.length} part(s) are not stocked in "${tgtCartObj?.name}":\n${names.join("\n")}${extra}\n\nAllocate anyway?`)) return;
+      }
+    }
+
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    const proj = allProjects.find(p => p.id === id);
+    if (!proj) return;
+    if (!proj.allocations) proj.allocations = {};
+
+    for (const key of selKeys) {
+      const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      if (!part) continue;
+
+      let moveQty = 0;
+      if (srcType === "lego") {
+        moveQty = proj.allocations[key]?.legoQty ?? 0;
+        if (proj.allocations[key]) proj.allocations[key].legoQty = 0;
+      } else if (srcType === "bl") {
+        moveQty = proj.allocations[key]?.storeQty?.[srcCartId] ?? 0;
+        if (proj.allocations[key]?.storeQty) delete proj.allocations[key].storeQty[srcCartId];
+      } else { // scratch = move remaining unallocated qty
+        moveQty = allocRemaining(proj.allocations, key, part.wantedQty);
+      }
+      if (moveQty <= 0) continue;
+
+      if (tgtType !== "pool") {
+        if (!proj.allocations[key]) proj.allocations[key] = { legoQty: 0, storeQty: {} };
+        if (tgtType === "lego") {
+          proj.allocations[key].legoQty = (proj.allocations[key].legoQty ?? 0) + moveQty;
+        } else {
+          if (!proj.allocations[key].storeQty) proj.allocations[key].storeQty = {};
+          proj.allocations[key].storeQty[tgtCartId] = (proj.allocations[key].storeQty[tgtCartId] ?? 0) + moveQty;
+        }
+      }
+      // Prune empty record
+      const a = proj.allocations[key];
+      if (a && (a.legoQty ?? 0) === 0 && !Object.keys(a.storeQty ?? {}).length) delete proj.allocations[key];
+    }
+
+    await chrome.storage.local.set({ projects: allProjects });
+    if (srcType === "lego")    selectedLegoKeys.clear();
+    else if (srcType === "bl") selectedBlKeys.get(srcCartId)?.clear();
+    else                       selectedScratchKeys.clear();
+    await refresh();
+  }
+
+  async function onUnallocate(targetType, cartId, key) {
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    const proj = allProjects.find(p => p.id === id);
+    if (!proj?.allocations?.[key]) return;
+    if (targetType === "lego") {
+      proj.allocations[key].legoQty = 0;
+    } else if (cartId) {
+      if (proj.allocations[key].storeQty) delete proj.allocations[key].storeQty[cartId];
+    }
+    const a = proj.allocations[key];
+    if ((a.legoQty ?? 0) === 0 && !Object.keys(a.storeQty ?? {}).length) delete proj.allocations[key];
+    await chrome.storage.local.set({ projects: allProjects });
+    await refresh();
+  }
+
+  function setHtmlPreserveScroll(el, html) {
+    if (!el) return;
+    const scroller = el.querySelector("[style*='overflow-y:auto']");
+    const top = scroller?.scrollTop ?? 0;
+    el.innerHTML = html;
+    if (top > 0) {
+      const newScroller = el.querySelector("[style*='overflow-y:auto']");
+      if (newScroller) newScroller.scrollTop = top;
+    }
+  }
+
+  function refreshLegoSection()      { setHtmlPreserveScroll(content.querySelector("#lego-section"),                                    buildLegoSection(currentAllocs)); }
+  function refreshBlSection(cartId)  { const el = content.querySelector(`[data-bl-section="${esc(cartId)}"]`); const c = blCartList.find(x => x.id === cartId); if (c) setHtmlPreserveScroll(el, buildBlSection(c, currentAllocs)); }
+  function refreshScratch()          { setHtmlPreserveScroll(content.querySelector("#scratch-section"),                                  buildScratchSection(currentAllocs)); }
+  function refreshGrandTotal()       { const el = content.querySelector("#grand-total-section"); if (el) el.innerHTML = buildGrandTotal(); }
+
+  function buildGrandTotal() {
+    let grand = 0, grandKnown = true;
+    const cartRows = [];
+
+    for (const cart of blCartList) {
+      const blAllocs = Object.entries(currentAllocs)
+        .filter(([, a]) => (a.storeQty?.[cart.id] ?? 0) > 0)
+        .map(([key, a]) => ({ key, qty: a.storeQty[cart.id] }));
+      if (!blAllocs.length) continue;
+      let total = 0, totalKnown = true;
+      for (const { key, qty } of blAllocs) {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        const cp   = cart.parts?.find(c => c.partNo === part?.partNo && String(c.colorId) === String(part?.colorId));
+        const pr   = parseStorePrice(cp?.storePrice);
+        if (pr != null) total += pr * qty; else totalKnown = false;
+      }
+      const rawS   = cart.orderSummary?.shipping?.replace(/^US\s+/, "");
+      const rawO   = cart.orderSummary?.orderTotal?.replace(/^US\s+/, "");
+      const sNum   = parseStorePrice(rawS);
+      const isTbd  = sNum == null || sNum === 0 || rawS === rawO;
+      const effS   = isTbd ? (estBlShipping[cart.id] ?? 0) : (sNum ?? 0);
+      const cartGrand = total + effS;
+      grand += cartGrand;
+      if (!totalKnown || (isTbd && !(estBlShipping[cart.id] > 0))) grandKnown = false;
+      cartRows.push(`<span style="font-size:12px;color:#374151">${esc(cart.name)}: <strong>${totalKnown ? "" : "~"}$${cartGrand.toFixed(2)}</strong>${isTbd && !(estBlShipping[cart.id] > 0) ? `<span style="color:#9ca3af;font-size:11px"> (ship TBD)</span>` : ""}</span>`);
+    }
+
+    if (legoCart) {
+      let legoParts = 0, legoPartsKnown = true;
+      const legoAllocs = Object.entries(currentAllocs).filter(([, a]) => (a.legoQty ?? 0) > 0).map(([key, a]) => ({ key, qty: a.legoQty }));
+      for (const { key, qty } of legoAllocs) {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        if (part?.pabEntry?.price_cents) legoParts += (part.pabEntry.price_cents / 100) * qty;
+        else legoPartsKnown = false;
+      }
+      if (legoAllocs.length > 0) {
+        const svcFee  = (!ignoreLegoFees && legoPartsKnown && legoParts < 14) ? 7 : 0;
+        const legShip = ignoreLegoFees ? 0 : legoParts >= 35 ? 0 : legoParts <= 25 ? 4.95 : 6.95;
+        const legoGrand = legoParts + svcFee + legShip;
+        grand += legoGrand;
+        if (!legoPartsKnown) grandKnown = false;
+        cartRows.push(`<span style="font-size:12px;color:#374151">LEGO: <strong>${legoPartsKnown ? "" : "~"}$${legoGrand.toFixed(2)}</strong></span>`);
+      }
+    }
+
+    if (!cartRows.length) return "";
+    return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px">
+      <span style="font-size:13px;font-weight:700;color:#0369a1">Grand Total</span>
+      ${cartRows.join("")}
+      <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1">${grandKnown ? "" : "~"}$${grand.toFixed(2)}</span>
+    </div>`;
+  }
+
+  async function saveEstShipping() {
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    const proj = allProjects.find(p => p.id === id);
+    if (!proj) return;
+    proj.estimatedShipping = estBlShipping;
+    await chrome.storage.local.set({ projects: allProjects });
+  }
+
+  function showLegoSaveDiff() {
+    if (!legoCart) return;
+
+    // Build the new parts list from current LEGO allocations
+    const newParts = Object.entries(currentAllocs)
+      .filter(([, a]) => (a.legoQty ?? 0) > 0)
+      .map(([key, a]) => {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        const eid  = part?.pabEntry?.element_id;
+        if (!eid) return null;
+        return {
+          elementId: eid,
+          designId:  part.pabEntry.design_id || part.partNo,
+          name:      part.pabEntry.bl_part_name || part.name || key,
+          qty:       a.legoQty,
+          channel:   part.pabEntry.channel,
+        };
+      }).filter(Boolean);
+
+    const curParts = legoCart.parts ?? [];
+    const curMap   = new Map(curParts.map(p => [p.elementId, p]));
+    const newMap   = new Map(newParts.map(p => [p.elementId, p]));
+
+    const added   = newParts.filter(p => !curMap.has(p.elementId));
+    const removed = curParts.filter(p => !newMap.has(p.elementId));
+    const changed = newParts.filter(p => {
+      const cur = curMap.get(p.elementId);
+      return cur && cur.qty !== p.qty;
+    });
+    const unchanged = newParts.filter(p => {
+      const cur = curMap.get(p.elementId);
+      return cur && cur.qty === p.qty;
+    });
+
+    const fmt = p => `<div style="padding:2px 0;font-size:12px">${esc(p.name)}<span style="color:#9ca3af;margin-left:6px">${p.elementId}</span></div>`;
+    const fmtChg = p => {
+      const old = curMap.get(p.elementId)?.qty ?? "?";
+      return `<div style="padding:2px 0;font-size:12px">${esc(p.name)} <span style="color:#9ca3af">${old} → <strong>${p.qty}</strong></span></div>`;
+    };
+
+    const noChanges = added.length === 0 && removed.length === 0 && changed.length === 0;
+
+    const modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:8px;padding:24px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save to LEGO Cart</div>
+        <div style="font-size:12px;color:#6c757d;margin-bottom:16px">Replacing <strong>${esc(legoCart.name)}</strong> · ${unchanged.length + added.length + changed.length} lots</div>
+        ${noChanges ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — cart is already up to date.</div>` : `
+          <div style="overflow-y:auto;flex:1;min-height:0">
+            ${added.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added (${added.length})</div>${added.map(fmt).join("")}</div>` : ""}
+            ${removed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removed.length})</div>${removed.map(fmt).join("")}</div>` : ""}
+            ${changed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty changed (${changed.length})</div>${changed.map(fmtChg).join("")}</div>` : ""}
+          </div>`}
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6">
+          <button id="lego-diff-cancel" class="btn">Cancel</button>
+          ${!noChanges ? `<button id="lego-diff-confirm" class="btn btn-danger">Replace Cart</button>` : ""}
+        </div>
+      </div>`;
+
+    document.body.appendChild(modal);
+
+    modal.querySelector("#lego-diff-cancel").addEventListener("click", () => modal.remove());
+    modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+
+    const confirmBtn = modal.querySelector("#lego-diff-confirm");
+    if (confirmBtn) {
+      confirmBtn.addEventListener("click", async () => {
+        const { legoCarts = [] } = await chrome.storage.local.get("legoCarts");
+        const cart = legoCarts.find(c => c.id === legoCart.id);
+        if (cart) {
+          cart.parts     = newParts;
+          cart.savedAt   = new Date().toISOString();
+          cart.partsCount = newParts.length;
+          await chrome.storage.local.set({ legoCarts });
+          legoCart.parts = newParts; // update in-memory reference
+        }
+        modal.remove();
+        refreshLegoSection();
+        refreshGrandTotal();
+      });
+    }
+  }
+
+  function showPoolSave() {
+    const wlCount = project.wantedListIds?.length ?? 0;
+    if (!wlCount) return;
+
+    // Build the new parts list — full wantedQty, excluding parts marked as removed from pool
+    const newParts = poolParts.filter(p => !currentAllocs[`${p.partNo}_${p.colorId}`]?.excluded).map(p => ({
+      partNo:    p.partNo,
+      colorId:   p.colorId,
+      colorName: p.pabEntry?.bl_color_name || p.colorName || "",
+      name:      p.pabEntry?.bl_part_name  || p.name      || "",
+      want:      p.wantedQty,
+      have:      0,
+      qty:       p.wantedQty,
+      imageUrl:  p.imageUrl || null,
+    }));
+
+    const modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+
+    if (wlCount === 1) {
+      // ── Single list: overwrite in-place ──────────────────────────────────────
+      const wl     = wlMap[project.wantedListIds[0]];
+      if (!wl) { alert("Source wanted list not found in storage."); return; }
+      const curParts = wl.parts ?? [];
+      const curMap   = new Map(curParts.map(p => [`${p.partNo}_${p.colorId}`, p]));
+      const newMap   = new Map(newParts.map(p => [`${p.partNo}_${p.colorId}`, p]));
+      const added    = newParts.filter(p => !curMap.has(`${p.partNo}_${p.colorId}`));
+      const removed  = curParts.filter(p => !newMap.has(`${p.partNo}_${p.colorId}`));
+      const changed  = newParts.filter(p => {
+        const cur = curMap.get(`${p.partNo}_${p.colorId}`);
+        return cur && (cur.want ?? cur.qty ?? 1) !== p.want;
+      });
+      const noChanges = !added.length && !removed.length && !changed.length;
+      const fmt    = p => `<div style="padding:2px 0;font-size:12px">${esc(p.name || p.partNo)} <span style="color:#9ca3af">${esc(p.colorName)}</span></div>`;
+      const fmtChg = p => {
+        const old = curMap.get(`${p.partNo}_${p.colorId}`)?.want ?? "?";
+        return `<div style="padding:2px 0;font-size:12px">${esc(p.name || p.partNo)}: ${old} → <strong>${p.want}</strong></div>`;
+      };
+      modal.innerHTML = `
+        <div style="background:#fff;border-radius:8px;padding:24px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+          <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save to Wanted List</div>
+          <div style="font-size:12px;color:#6c757d;margin-bottom:8px">Overwriting <strong>${esc(wl.name)}</strong> with current pool · ${newParts.length} lots</div>
+          <div style="font-size:12px;background:#fef3c7;border:1px solid #fde68a;border-radius:4px;padding:8px 10px;margin-bottom:12px">This is destructive — the original list will be replaced.</div>
+          ${noChanges
+            ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — list is already up to date.</div>`
+            : `<div style="overflow-y:auto;flex:1;min-height:0">
+                ${added.length   ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added (${added.length})</div>${added.map(fmt).join("")}</div>` : ""}
+                ${removed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed — fully allocated (${removed.length})</div>${removed.map(fmt).join("")}</div>` : ""}
+                ${changed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty reduced (${changed.length})</div>${changed.map(fmtChg).join("")}</div>` : ""}
+              </div>`}
+          <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6">
+            <button id="pool-save-cancel" class="btn">Cancel</button>
+            ${!noChanges ? `<button id="pool-save-confirm" class="btn btn-danger">Overwrite List</button>` : ""}
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      modal.querySelector("#pool-save-cancel").addEventListener("click", () => modal.remove());
+      modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+      modal.querySelector("#pool-save-confirm")?.addEventListener("click", async () => {
+        const { wantedLists = [] } = await chrome.storage.local.get("wantedLists");
+        const target = wantedLists.find(w => w.id === wl.id);
+        if (target) {
+          target.parts      = newParts;
+          target.partsCount = newParts.length;
+          target.importedAt = new Date().toISOString();
+          await chrome.storage.local.set({ wantedLists });
+          Object.assign(wl, target);
+        }
+        modal.remove();
+      });
+
+    } else {
+      // ── Multi list: create new combined list ──────────────────────────────────
+      const sourceNames = (project.wantedListIds ?? [])
+        .map(lid => wlMap[lid]?.name).filter(Boolean).join(", ");
+      modal.innerHTML = `
+        <div style="background:#fff;border-radius:8px;padding:24px;max-width:460px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+          <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save as New Wanted List</div>
+          <div style="font-size:12px;color:#6c757d;margin-bottom:4px">Combining ${wlCount} lists into a new wanted list · ${newParts.length} lots</div>
+          <div style="font-size:12px;color:#9ca3af;margin-bottom:16px">Sources: ${esc(sourceNames)}</div>
+          <div style="margin-bottom:12px">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">New list name</label>
+            <input id="pool-new-name" type="text" value="${esc(project.name)} — Combined" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;box-sizing:border-box">
+          </div>
+          <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin-bottom:16px;cursor:pointer">
+            <input type="checkbox" id="pool-swap-project" checked>
+            Replace project's source lists with this new list
+          </label>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button id="pool-save-cancel" class="btn">Cancel</button>
+            <button id="pool-save-confirm" class="btn btn-primary" style="background:#1e2330;color:#fff;border-color:#1e2330">Create List</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      modal.querySelector("#pool-save-cancel").addEventListener("click", () => modal.remove());
+      modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+      modal.querySelector("#pool-save-confirm").addEventListener("click", async () => {
+        const name    = modal.querySelector("#pool-new-name").value.trim() || `${project.name} — Combined`;
+        const doSwap  = modal.querySelector("#pool-swap-project").checked;
+        const { wantedLists = [], projects: allProjects = [] } = await chrome.storage.local.get(["wantedLists", "projects"]);
+        const newList = {
+          id:         crypto.randomUUID(),
+          name,
+          parts:      newParts,
+          partsCount: newParts.length,
+          importedAt: new Date().toISOString(),
+        };
+        wantedLists.push(newList);
+        if (doSwap) {
+          const proj = allProjects.find(p => p.id === id);
+          if (proj) proj.wantedListIds = [newList.id];
+        }
+        await chrome.storage.local.set({ wantedLists, projects: allProjects });
+        modal.remove();
+        if (doSwap) renderProjectDetail(id, content);
+      });
+    }
+  }
+
+  function showScratchSave() {
+    // Build the new parts list from unallocated pool parts
+    const scratchParts = poolParts
+      .map(p => {
+        const rem = allocRemaining(currentAllocs, `${p.partNo}_${p.colorId}`, p.wantedQty);
+        if (rem <= 0) return null;
+        return {
+          partNo:    p.partNo,
+          colorId:   p.colorId,
+          colorName: p.pabEntry?.bl_color_name || p.colorName || "",
+          name:      p.pabEntry?.bl_part_name  || p.name      || "",
+          want:      rem,
+          have:      0,
+          qty:       rem,
+          imageUrl:  p.imageUrl || null,
+        };
+      }).filter(Boolean);
+
+    const modal = document.createElement("div");
+    modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
+
+    if (!scratchList) {
+      // No linked list — prompt to create one or cancel
+      modal.innerHTML = `
+        <div style="background:#fff;border-radius:8px;padding:24px;max-width:400px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+          <div style="font-size:16px;font-weight:700;margin-bottom:8px">Save Scratch Space</div>
+          <div style="font-size:13px;color:#6c757d;margin-bottom:16px">No wanted list is linked to this scratch space. Create a new list from the ${scratchParts.length} unallocated lot(s)?</div>
+          <div style="margin-bottom:12px">
+            <label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px">New list name</label>
+            <input id="scratch-new-name" type="text" value="${esc(project.name)} — Scratch" style="width:100%;padding:6px 8px;border:1px solid #d1d5db;border-radius:4px;font-size:13px;box-sizing:border-box">
+          </div>
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button id="scratch-cancel" class="btn">Cancel</button>
+            <button id="scratch-create" class="btn btn-primary" style="background:#1e2330;color:#fff;border-color:#1e2330">Create List</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+      modal.querySelector("#scratch-cancel").addEventListener("click", () => modal.remove());
+      modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+      modal.querySelector("#scratch-create").addEventListener("click", async () => {
+        const name = modal.querySelector("#scratch-new-name").value.trim() || `${project.name} — Scratch`;
+        const { wantedLists = [], projects: allProjects = [] } = await chrome.storage.local.get(["wantedLists", "projects"]);
+        const newList = {
+          id:         crypto.randomUUID(),
+          name,
+          parts:      scratchParts,
+          partsCount: scratchParts.length,
+          importedAt: new Date().toISOString(),
+        };
+        wantedLists.push(newList);
+        const proj = allProjects.find(p => p.id === id);
+        if (proj) proj.scratchWantedListId = newList.id;
+        await chrome.storage.local.set({ wantedLists, projects: allProjects });
+        Object.assign(scratchList ?? {}, newList); // won't help if null — page re-render needed
+        modal.remove();
+        renderProjectDetail(id, content); // reload to pick up new scratchList reference
+      });
+      return;
+    }
+
+    // Linked list exists — show what will be overwritten
+    const curParts  = scratchList.parts ?? [];
+    const curMap    = new Map(curParts.map(p => [`${p.partNo}_${p.colorId}`, p]));
+    const newMap    = new Map(scratchParts.map(p => [`${p.partNo}_${p.colorId}`, p]));
+    const added     = scratchParts.filter(p => !curMap.has(`${p.partNo}_${p.colorId}`));
+    const removed   = curParts.filter(p => !newMap.has(`${p.partNo}_${p.colorId}`));
+    const changed   = scratchParts.filter(p => {
+      const cur = curMap.get(`${p.partNo}_${p.colorId}`);
+      return cur && (cur.want ?? cur.qty ?? 1) !== p.want;
+    });
+    const noChanges = added.length === 0 && removed.length === 0 && changed.length === 0;
+    const fmt       = p => `<div style="padding:2px 0;font-size:12px">${esc(p.name || p.partNo)} <span style="color:#9ca3af">${esc(p.colorName)}</span></div>`;
+    const fmtChg    = p => {
+      const old = curMap.get(`${p.partNo}_${p.colorId}`)?.want ?? "?";
+      return `<div style="padding:2px 0;font-size:12px">${esc(p.name || p.partNo)}: ${old} → <strong>${p.want}</strong></div>`;
+    };
+    modal.innerHTML = `
+      <div style="background:#fff;border-radius:8px;padding:24px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save Scratch Space</div>
+        <div style="font-size:12px;color:#6c757d;margin-bottom:16px">Overwriting <strong>${esc(scratchList.name)}</strong> · ${scratchParts.length} lots</div>
+        ${noChanges
+          ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — list is already up to date.</div>`
+          : `<div style="overflow-y:auto;flex:1;min-height:0">
+              ${added.length   ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added (${added.length})</div>${added.map(fmt).join("")}</div>` : ""}
+              ${removed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removed.length})</div>${removed.map(fmt).join("")}</div>` : ""}
+              ${changed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty changed (${changed.length})</div>${changed.map(fmtChg).join("")}</div>` : ""}
+            </div>`}
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6">
+          <button id="scratch-cancel" class="btn">Cancel</button>
+          ${!noChanges ? `<button id="scratch-confirm" class="btn btn-danger">Overwrite List</button>` : ""}
+        </div>
+      </div>`;
+    document.body.appendChild(modal);
+    modal.querySelector("#scratch-cancel").addEventListener("click", () => modal.remove());
+    modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+    const confirmBtn = modal.querySelector("#scratch-confirm");
+    if (confirmBtn) {
+      confirmBtn.addEventListener("click", async () => {
+        const { wantedLists = [] } = await chrome.storage.local.get("wantedLists");
+        const wl = wantedLists.find(w => w.id === scratchList.id);
+        if (wl) {
+          wl.parts      = scratchParts;
+          wl.partsCount = scratchParts.length;
+          wl.importedAt = new Date().toISOString();
+          await chrome.storage.local.set({ wantedLists });
+          Object.assign(scratchList, wl);
+        }
+        modal.remove();
+      });
+    }
+  }
+
+  async function reloadSourceData() {
+    const { carts = [], legoCarts = [], wantedLists = [] } =
+      await chrome.storage.local.get(["carts", "legoCarts", "wantedLists"]);
+    for (const cart of blCartList) {
+      const fresh = carts.find(c => c.id === cart.id);
+      if (fresh) Object.assign(cart, fresh);
+    }
+    if (legoCart) {
+      const fresh = legoCarts.find(c => c.id === legoCart.id);
+      if (fresh) Object.assign(legoCart, fresh);
+    }
+    if (scratchList) {
+      const fresh = wantedLists.find(w => w.id === scratchList.id);
+      if (fresh) Object.assign(scratchList, fresh);
+    }
+  }
+
+  async function refresh() {
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    await reloadSourceData();
+    const proj = allProjects.find(p => p.id === id);
+    if (!proj) return;
+    currentAllocs = proj.allocations ?? {};
+    renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+    refreshLegoSection();
+    for (const c of blCartList) refreshBlSection(c.id);
+    refreshScratch();
+    refreshGrandTotal();
+  }
+
+  // ── initial render ────────────────────────────────────────────────────────
 
   content.innerHTML = `
     <div class="detail-header">
       <button class="back-btn" id="back-btn">← Projects</button>
-      <div>
-        <div style="font-size:18px;font-weight:700;color:#1e2330">${esc(project.name)}</div>
-        <div class="detail-meta">Created ${fmtDate(project.createdAt)} · ${totalPieces.toLocaleString()} pieces in pool</div>
+      <div style="flex:1">
+        <div style="display:flex;align-items:center;gap:10px">
+          <div class="page-title" style="margin:0">${esc(project.name)}</div>
+          <button class="btn" id="configure-btn" style="font-size:12px;padding:2px 8px;opacity:0.6">⚙ Configure</button>
+          <button class="btn btn-danger" id="reset-btn" style="font-size:12px;padding:2px 8px">↺ Reset</button>
+        </div>
+        <div class="detail-meta">Created ${fmtDate(project.createdAt)} · ${poolParts.length} lots · ${totalPoolPieces.toLocaleString()} pieces in pool</div>
       </div>
     </div>
 
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px">
+    <div id="grand-total-section" style="margin-bottom:14px">${buildGrandTotal()}</div>
+
+    <div id="pool-section" style="margin-bottom:14px">
       <div class="section">
-        <div class="section-header"><span>Wanted List Pool</span></div>
-        <div style="padding:10px 16px">${listRows(poolLists, "No wanted lists added.")}</div>
-      </div>
-      <div class="section">
-        <div class="section-header"><span>BrickLink Carts</span></div>
-        <div style="padding:10px 16px">${listRows(blCarts, "No BL carts added.")}</div>
+        <div class="section-header"><span>Wanted List Pool</span><span style="font-size:12px;color:#9ca3af;font-weight:400;margin-left:8px">loading prices…</span></div>
+        <div class="section-empty">Loading PAB prices…</div>
       </div>
     </div>
 
-    <div class="section" style="margin-bottom:14px">
-      <div class="section-header"><span>LEGO Cart</span></div>
-      <div style="padding:10px 16px">
-        ${legoCart
-          ? `<div style="font-size:13px">${esc(legoCart.name)} <span style="color:#6c757d;font-size:12px">(${(legoCart.partsCount ?? 0).toLocaleString()} parts)</span></div>`
-          : `<div style="color:#9ca3af;font-size:12px">No LEGO cart selected.</div>`}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start;margin-bottom:20px">
+      <div style="display:flex;flex-direction:column;gap:14px">
+        <div id="lego-section" class="section">${buildLegoSection(currentAllocs)}</div>
+        <div id="scratch-section" class="section">${buildScratchSection(currentAllocs)}</div>
       </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header"><span>Scratch Space</span></div>
-      <div style="padding:10px 16px">
-        ${project.scratchWantedListId && wlMap[project.scratchWantedListId]
-          ? `<div style="font-size:13px">Linked to: ${esc(wlMap[project.scratchWantedListId].name)}</div>`
-          : `<div style="color:#9ca3af;font-size:12px">No wanted list linked — unallocated parts will be ephemeral.</div>`}
+      <div style="display:flex;flex-direction:column;gap:14px">
+        ${blCartList.length
+          ? blCartList.map(c => `<div class="section" data-bl-section="${esc(c.id)}">${buildBlSection(c, currentAllocs)}</div>`).join("")
+          : `<div class="section" style="grid-column:1/-1">
+              <div class="section-header"><span>BrickLink Store Carts</span></div>
+              <div class="section-empty" style="padding:16px">No BL carts added. <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb">Configure</button> to add some.</div>
+            </div>`}
       </div>
-    </div>
-
-    <div style="margin-top:18px;padding:16px 20px;background:#fff;border:1px solid #e1e4e8;border-radius:8px;display:flex;align-items:center;gap:14px">
-      <div style="flex:1;font-size:13px;color:#6c757d">
-        Configure this project to add wanted lists, BL carts, and a LEGO cart before allocating parts.
-      </div>
-      <button id="configure-btn" style="padding:7px 18px;background:#1e2330;color:#fff;border:none;border-radius:5px;font-size:13px;font-weight:600;cursor:pointer">Configure Project</button>
     </div>`;
 
   content.querySelector("#back-btn").addEventListener("click", () => navigate("projects"));
   content.querySelector("#configure-btn").addEventListener("click", () => renderProjectSetup(id, content));
+  content.querySelector("#reset-btn").addEventListener("click", async () => {
+    if (!confirm("Reset all allocations? This will clear any manual moves and re-detect parts from your BL store carts.")) return;
+    await reloadSourceData();
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    const proj = allProjects.find(p => p.id === id);
+    if (!proj) return;
+    proj.allocations  = {};
+    proj.autoAlloced  = false;
+    // Re-run auto-allocation from BL store carts and LEGO cart
+    for (const poolPart of poolParts) {
+      const key = `${poolPart.partNo}_${poolPart.colorId}`;
+      for (const cart of blCartList) {
+        const cartPart = (cart.parts ?? []).find(cp =>
+          cp.partNo === poolPart.partNo && String(cp.colorId) === String(poolPart.colorId)
+        );
+        if (!cartPart) continue;
+        proj.allocations[key] = { legoQty: 0, storeQty: { [cart.id]: Math.min(poolPart.wantedQty, cartPart.qty ?? 1) } };
+        break;
+      }
+      // Not matched to any BL cart — check LEGO cart by elementId
+      if (!proj.allocations[key] && legoCart) {
+        const eid = poolPart.pabEntry?.element_id;
+        const lgPart = eid ? (legoCart.parts ?? []).find(p => p.elementId === eid) : null;
+        if (lgPart) proj.allocations[key] = { legoQty: Math.min(poolPart.wantedQty, lgPart.qty ?? 1), storeQty: {} };
+      }
+    }
+    proj.autoAlloced = true;
+    await chrome.storage.local.set({ projects: allProjects });
+    selectedPoolKeys.clear();
+    selectedLegoKeys.clear();
+    selectedBlKeys.clear();
+    selectedScratchKeys.clear();
+    await refresh();
+  });
+
+  content.addEventListener("click", async e => {
+    const unBtn = e.target.closest("[data-unalloc-key]");
+    if (unBtn) {
+      e.stopPropagation();
+      await onUnallocate(unBtn.dataset.unallocType, unBtn.dataset.unallocCart || null, unBtn.dataset.unallocKey);
+      return;
+    }
+    const moveBtn = e.target.closest(".section-move-btn");
+    if (moveBtn) {
+      const { srcType, srcCart, tgtType, tgtCart } = moveBtn.dataset;
+      await onSectionMove(srcType, srcCart || null, tgtType, tgtCart || null);
+      return;
+    }
+    const legoSaveBtn = e.target.closest(".lego-save-btn");
+    if (legoSaveBtn) { showLegoSaveDiff(); return; }
+    const scratchSaveBtn = e.target.closest(".scratch-save-btn");
+    if (scratchSaveBtn) { showScratchSave(); return; }
+    const poolSaveBtn = e.target.closest(".pool-save-btn");
+    if (poolSaveBtn) { showPoolSave(); return; }
+
+    const excludeBtn = e.target.closest(".pool-exclude-btn");
+    if (excludeBtn) {
+      const key = excludeBtn.dataset.key;
+      const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+      const proj = allProjects.find(p => p.id === id);
+      if (!proj) return;
+      if (!proj.allocations) proj.allocations = {};
+      proj.allocations[key] = { excluded: true, legoQty: 0, storeQty: {} };
+      await chrome.storage.local.set({ projects: allProjects });
+      currentAllocs = proj.allocations;
+      selectedPoolKeys.delete(key);
+      renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+      refreshLegoSection();
+      for (const c of blCartList) refreshBlSection(c.id);
+      refreshGrandTotal();
+      return;
+    }
+
+    const restoreBtn = e.target.closest(".pool-restore-btn");
+    if (restoreBtn) {
+      const key = restoreBtn.dataset.key;
+      const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+      const proj = allProjects.find(p => p.id === id);
+      if (!proj) return;
+      if (proj.allocations?.[key]) delete proj.allocations[key];
+      await chrome.storage.local.set({ projects: allProjects });
+      currentAllocs = proj.allocations ?? {};
+      renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+      refreshLegoSection();
+      for (const c of blCartList) refreshBlSection(c.id);
+      refreshGrandTotal();
+      return;
+    }
+
+    const blSortDirBtn = e.target.closest(".bl-cart-sort-dir");
+    if (blSortDirBtn) {
+      const cid = blSortDirBtn.dataset.cartId;
+      blCartSortDir.set(cid, blCartSortDir.get(cid) === "desc" ? "asc" : "desc");
+      refreshBlSection(cid);
+      return;
+    }
+    const legoTabBtn = e.target.closest(".lego-tab-btn");
+    if (legoTabBtn) { legoSectionTab = legoTabBtn.dataset.legoTab; refreshLegoSection(); return; }
+    const channelSelBtn = e.target.closest(".bl-sel-channel");
+    if (channelSelBtn) {
+      const cid = channelSelBtn.dataset.cartId;
+      const ch  = channelSelBtn.dataset.channel;
+      if (!selectedBlKeys.has(cid)) selectedBlKeys.set(cid, new Set());
+      const selSet = selectedBlKeys.get(cid);
+      for (const [key, a] of Object.entries(currentAllocs)) {
+        if (!(a.storeQty?.[cid] > 0)) continue;
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        if (part?.pabEntry?.channel === ch) selSet.add(key);
+      }
+      refreshBlSection(cid);
+      return;
+    }
+    const pabCheaperBtn = e.target.closest(".bl-sel-pab-cheaper");
+    if (pabCheaperBtn) {
+      const cid  = pabCheaperBtn.dataset.cartId;
+      const cart = blCartList.find(c => c.id === cid);
+      if (!selectedBlKeys.has(cid)) selectedBlKeys.set(cid, new Set());
+      const selSet = selectedBlKeys.get(cid);
+      for (const [key, a] of Object.entries(currentAllocs)) {
+        if (!(a.storeQty?.[cid] > 0)) continue;
+        const part     = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        const cartPart = cart?.parts?.find(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
+        const storeNum = parseStorePrice(cartPart?.storePrice);
+        const pabNum   = part?.pabEntry?.price_cents ? part.pabEntry.price_cents / 100 : null;
+        if (storeNum != null && pabNum != null && pabNum < storeNum) selSet.add(key);
+      }
+      refreshBlSection(cid);
+      return;
+    }
+    if (e.target.classList.contains("proj-configure-link")) { renderProjectSetup(id, content); return; }
+    const openBtn = e.target.closest(".open-cart-btn");
+    if (openBtn) navigate(`list/${openBtn.dataset.type}/${openBtn.dataset.id}`);
+  });
+
+  content.addEventListener("change", e => {
+    // Select-all checkbox for a section
+    const selAll = e.target.closest(".section-sel-all");
+    if (selAll) {
+      const { sectionType, sectionCart } = selAll.dataset;
+      if (sectionType === "lego") {
+        const keys = Object.entries(currentAllocs).filter(([, a]) => (a.legoQty ?? 0) > 0).map(([k]) => k);
+        if (selAll.checked) keys.forEach(k => selectedLegoKeys.add(k));
+        else                keys.forEach(k => selectedLegoKeys.delete(k));
+        refreshLegoSection();
+      } else if (sectionType === "bl") {
+        const keys = Object.entries(currentAllocs).filter(([, a]) => (a.storeQty?.[sectionCart] ?? 0) > 0).map(([k]) => k);
+        if (!selectedBlKeys.has(sectionCart)) selectedBlKeys.set(sectionCart, new Set());
+        if (selAll.checked) keys.forEach(k => selectedBlKeys.get(sectionCart).add(k));
+        else                keys.forEach(k => selectedBlKeys.get(sectionCart).delete(k));
+        refreshBlSection(sectionCart);
+      } else if (sectionType === "scratch") {
+        const keys = poolParts.filter(p => allocRemaining(currentAllocs, `${p.partNo}_${p.colorId}`, p.wantedQty) > 0).map(p => `${p.partNo}_${p.colorId}`);
+        if (selAll.checked) keys.forEach(k => selectedScratchKeys.add(k));
+        else                keys.forEach(k => selectedScratchKeys.delete(k));
+        refreshScratch();
+      }
+      return;
+    }
+    // BL cart sort dropdown
+    const blSortSel = e.target.closest(".bl-cart-sort");
+    if (blSortSel) {
+      blCartSort.set(blSortSel.dataset.cartId, blSortSel.value);
+      refreshBlSection(blSortSel.dataset.cartId);
+      return;
+    }
+    // Estimated shipping input for BL carts
+    const estShipEl = e.target.closest(".bl-est-ship");
+    if (estShipEl) {
+      const cid = estShipEl.dataset.cartId;
+      const val = parseFloat(estShipEl.value);
+      if (!isNaN(val) && val >= 0) estBlShipping[cid] = val;
+      else delete estBlShipping[cid];
+      saveEstShipping();
+      refreshBlSection(cid);
+      refreshGrandTotal();
+      return;
+    }
+    // Individual row checkbox
+    const chk = e.target.closest(".section-row-check");
+    if (!chk) return;
+    const { sectionType, sectionCart, key } = chk.dataset;
+    if (sectionType === "lego") {
+      if (chk.checked) selectedLegoKeys.add(key); else selectedLegoKeys.delete(key);
+      refreshLegoSection();
+    } else if (sectionType === "bl") {
+      if (!selectedBlKeys.has(sectionCart)) selectedBlKeys.set(sectionCart, new Set());
+      if (chk.checked) selectedBlKeys.get(sectionCart).add(key); else selectedBlKeys.get(sectionCart).delete(key);
+      refreshBlSection(sectionCart);
+    } else if (sectionType === "scratch") {
+      if (chk.checked) selectedScratchKeys.add(key); else selectedScratchKeys.delete(key);
+      refreshScratch();
+    }
+  });
+
+  if (!poolParts.length) {
+    content.querySelector("#pool-section").innerHTML = `
+      <div class="section">
+        <div class="section-header"><span>Wanted List Pool</span></div>
+        <div class="section-empty">${
+          !project.wantedListIds?.length
+            ? `No wanted lists added to pool. <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb">Configure</button> to add some.`
+            : "The selected wanted lists have no parts."
+        }</div>
+      </div>`;
+    return;
+  }
+
+  currentProjectTab   = "all";
+  legoSectionTab      = "all";
+  selectedPoolKeys.clear();
+  selectedLegoKeys.clear();
+  selectedBlKeys.clear();
+  selectedScratchKeys.clear();
+  showAllocatedParts  = false;
+  showExcludedParts   = false;
+
+  await Promise.all(poolParts.map(async (p, i) => {
+    poolParts[i].pabEntry = await chrome.runtime.sendMessage({
+      type: "GET_PAB_PRICE", partNo: p.partNo, colorId: p.colorId,
+    });
+  }));
+
+
+  // One-time auto-allocation: match pool parts against BL store carts and LEGO cart on first open
+  if (!project.autoAlloced && (blCartList.length || legoCart)) {
+    const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+    const proj = allProjects.find(p => p.id === id);
+    if (proj) {
+      if (!proj.allocations) proj.allocations = {};
+      let dirty = false;
+      for (const poolPart of poolParts) {
+        const key = `${poolPart.partNo}_${poolPart.colorId}`;
+        if (proj.allocations[key]) continue;
+        for (const cart of blCartList) {
+          const cartPart = (cart.parts ?? []).find(cp =>
+            cp.partNo === poolPart.partNo && String(cp.colorId) === String(poolPart.colorId)
+          );
+          if (!cartPart) continue;
+          proj.allocations[key] = { legoQty: 0, storeQty: { [cart.id]: Math.min(poolPart.wantedQty, cartPart.qty ?? 1) } };
+          dirty = true;
+          break;
+        }
+        // Not matched to any BL cart — check LEGO cart by elementId
+        if (!proj.allocations[key] && legoCart) {
+          const eid = poolPart.pabEntry?.element_id;
+          const lgPart = eid ? (legoCart.parts ?? []).find(p => p.elementId === eid) : null;
+          if (lgPart) {
+            proj.allocations[key] = { legoQty: Math.min(poolPart.wantedQty, lgPart.qty ?? 1), storeQty: {} };
+            dirty = true;
+          }
+        }
+      }
+      proj.autoAlloced = true;
+      await chrome.storage.local.set({ projects: allProjects });
+      currentAllocs = proj.allocations;
+    }
+  }
+
+  renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+  refreshLegoSection();
+  for (const c of blCartList) refreshBlSection(c.id);
+  refreshScratch();
+  refreshGrandTotal();
+}
+
+function renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project) {
+  const poolEl = content.querySelector("#pool-section");
+  if (!poolEl) return;
+
+  function remQty(p) {
+    const key = `${p.partNo}_${p.colorId}`;
+    const a   = allocations[key];
+    if (!a) return p.wantedQty;
+    const used = (a.legoQty ?? 0) + Object.values(a.storeQty ?? {}).reduce((s, v) => s + v, 0);
+    return p.wantedQty - used;
+  }
+
+  function sortPool(arr) {
+    const dir = poolSortDir === "desc" ? -1 : 1;
+    return [...arr].sort((a, b) => {
+      const na = (a.pabEntry?.bl_part_name || a.name || "").toLowerCase();
+      const nb = (b.pabEntry?.bl_part_name || b.name || "").toLowerCase();
+      const ia = a.partNo || "", ib = b.partNo || "";
+      const ca = (a.pabEntry?.bl_color_name || String(a.colorId ?? "")).toLowerCase();
+      const cb = (b.pabEntry?.bl_color_name || String(b.colorId ?? "")).toLowerCase();
+      switch (poolSort) {
+        case "partid_color": return dir * (ia.localeCompare(ib, undefined, { numeric: true }) || ca.localeCompare(cb));
+        case "partid":       return dir * ia.localeCompare(ib, undefined, { numeric: true });
+        case "color":        return dir * (ca.localeCompare(cb) || na.localeCompare(nb));
+        case "pab_price":    return dir * ((a.pabEntry?.price_cents ?? -1) - (b.pabEntry?.price_cents ?? -1));
+        case "channel": {
+          const o = { pab: 0, bap: 1 };
+          return dir * ((o[a.pabEntry?.channel] ?? 2) - (o[b.pabEntry?.channel] ?? 2) || na.localeCompare(nb));
+        }
+        default: return dir * (na.localeCompare(nb) || ca.localeCompare(cb));
+      }
+    });
+  }
+
+  const tab           = currentProjectTab;
+  const excludedParts = parts.filter(p => allocations[`${p.partNo}_${p.colorId}`]?.excluded);
+  const activeParts   = parts.filter(p => !allocations[`${p.partNo}_${p.colorId}`]?.excluded);
+  const unallocParts  = activeParts.filter(p => remQty(p) > 0);
+  const allocedParts  = activeParts.filter(p => remQty(p) <= 0 && allocations[`${p.partNo}_${p.colorId}`]);
+
+  const totalLots      = activeParts.length;
+  const totalPiecesAll = activeParts.reduce((s, p) => s + p.wantedQty, 0);
+  const allocedLots    = allocedParts.length;
+  const unallocLots    = unallocParts.length;
+  const unallocPieces  = unallocParts.reduce((s, p) => s + remQty(p), 0);
+  const allocedPieces  = totalPiecesAll - unallocPieces;
+
+  const pabParts = unallocParts.filter(p => p.pabEntry?.channel === "pab");
+  const stdParts = unallocParts.filter(p => p.pabEntry?.channel === "bap");
+  const blParts  = unallocParts.filter(p => !p.pabEntry?.channel);
+  const counts   = { all: unallocParts.length, pab: pabParts.length, std: stdParts.length, bl: blParts.length };
+  const filtered = sortPool(tab === "pab" ? pabParts : tab === "std" ? stdParts : tab === "bl" ? blParts : unallocParts);
+
+  const allSelected  = filtered.length > 0 && filtered.every(p => selectedPoolKeys.has(`${p.partNo}_${p.colorId}`));
+  const someSelected = !allSelected && filtered.some(p => selectedPoolKeys.has(`${p.partNo}_${p.colorId}`));
+  const selCount     = filtered.filter(p => selectedPoolKeys.has(`${p.partNo}_${p.colorId}`)).length;
+
+  const tabBar = ["all","pab","std","bl"].map(k => {
+    const label = { all: "All", pab: "Bestseller", std: "Standard", bl: "BrickLink" }[k];
+    return `<button class="tab${tab === k ? " active" : ""}" data-project-tab="${k}">${label} (${counts[k]})</button>`;
+  }).join("");
+
+  const moveTargets = [
+    legoCart
+      ? `<button class="btn move-btn" data-move-type="lego" data-move-cart="" style="font-size:12px;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">→ LEGO Cart</button>`
+      : "",
+    ...(blCartList ?? []).map(c =>
+      `<button class="btn move-btn" data-move-type="bl" data-move-cart="${esc(c.id)}" style="font-size:12px">→ ${esc(c.name)}</button>`)
+  ].filter(Boolean).join(" ");
+
+  const actionBar = selCount > 0 ? `
+    <div style="display:flex;align-items:center;gap:8px;padding:7px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;flex-wrap:wrap">
+      <span style="font-size:12px;color:#6c757d;flex-shrink:0">${selCount} selected</span>
+      ${moveTargets}
+    </div>` : "";
+
+  function buildRow(p, dimmed) {
+    const key   = `${p.partNo}_${p.colorId}`;
+    const name  = p.pabEntry?.bl_part_name  || p.name      || "";
+    const color = p.pabEntry?.bl_color_name || p.colorName || "";
+    const price = p.pabEntry?.price_formatted || "—";
+    const ch    = p.pabEntry?.channel;
+    const badge = ch === "pab"
+      ? `<span style="padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
+      : ch === "bap"
+      ? `<span style="padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700;background:#fef9c3;color:#ca8a04">STD</span>`
+      : `<span style="padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700;background:#f3f4f6;color:#6c757d">BL</span>`;
+    const elemId  = p.pabEntry?.element_id;
+    const rem     = remQty(p);
+    const checked = selectedPoolKeys.has(key) && !dimmed;
+    return `<tr${dimmed ? ' style="opacity:0.4"' : ""}>
+      <td style="padding:4px 8px">${dimmed ? "" : `<input type="checkbox" class="pool-row-check" data-key="${esc(key)}" ${checked ? "checked" : ""} style="cursor:pointer">`}</td>
+      <td style="padding:0"><a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo || '')}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="display:block;padding:4px 8px;font-size:12px;font-family:monospace;color:inherit;text-decoration:none" title="View on BrickLink">${esc(p.partNo || "")}${elemId ? `<br><span style="color:#9ca3af">${elemId}</span>` : ""}</a></td>
+      <td>${p.imageUrl ? `<img src="${esc(p.imageUrl)}" style="width:60px;height:45px;object-fit:contain">` : ""}</td>
+      <td>${esc(name)}</td>
+      <td>${esc(color)}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <div style="font-size:11px;color:#6c757d">Wanted ${p.wantedQty}</div>
+        <div style="font-size:11px;font-weight:600${rem < 0 ? ";color:#dc2626" : ""}">Assigned ${p.wantedQty - rem}</div>
+      </td>
+      <td>${price}</td>
+      <td>${badge}</td>
+      <td style="padding:2px 6px"><button class="btn pool-exclude-btn" data-key="${esc(key)}" title="Remove from pool" style="font-size:11px;padding:1px 5px;color:#9ca3af;border-color:#e5e7eb">×</button></td>
+    </tr>`;
+  }
+
+  function buildExcludedRow(p) {
+    const key   = `${p.partNo}_${p.colorId}`;
+    const name  = p.pabEntry?.bl_part_name  || p.name      || "";
+    const color = p.pabEntry?.bl_color_name || p.colorName || "";
+    return `<tr style="opacity:0.5">
+      <td></td>
+      <td style="padding:4px 8px;font-size:12px;font-family:monospace;color:#9ca3af">${esc(p.partNo || "")}</td>
+      <td>${p.imageUrl ? `<img src="${esc(p.imageUrl)}" style="width:60px;height:45px;object-fit:contain;filter:grayscale(1)">` : ""}</td>
+      <td style="text-decoration:line-through;color:#9ca3af">${esc(name)}</td>
+      <td style="color:#9ca3af">${esc(color)}</td>
+      <td style="text-align:right;font-size:11px;color:#9ca3af">Wanted ${p.wantedQty}</td>
+      <td></td><td></td>
+      <td style="padding:2px 6px"><button class="btn pool-restore-btn" data-key="${esc(key)}" title="Restore to pool" style="font-size:11px;padding:1px 5px;color:#2563eb;border-color:#bfdbfe">↩</button></td>
+    </tr>`;
+  }
+
+  const mainRows    = filtered.map(p => buildRow(p, false)).join("");
+  const allocedRows = showAllocatedParts
+    ? allocedParts
+        .filter(p => {
+          const ch = p.pabEntry?.channel;
+          return tab === "pab" ? ch === "pab" : tab === "std" ? ch === "bap" : tab === "bl" ? !ch : true;
+        })
+        .map(p => buildRow(p, true)).join("")
+    : "";
+  const excludedRows = showExcludedParts ? excludedParts.map(buildExcludedRow).join("") : "";
+
+  const bottomToggles = [
+    allocedParts.length > 0
+      ? `<button class="btn" id="toggle-alloc-btn" style="font-size:12px;color:#6c757d">${showAllocatedParts ? "Hide" : "Show"} ${allocedParts.length} allocated</button>`
+      : "",
+    excludedParts.length > 0
+      ? `<button class="btn" id="toggle-excl-btn" style="font-size:12px;color:#dc2626">${showExcludedParts ? "Hide" : "Show"} ${excludedParts.length} removed</button>`
+      : "",
+  ].filter(Boolean).join(" ");
+  const showToggleBar = bottomToggles ? `
+    <div style="padding:6px 14px;border-top:1px solid #f3f4f6;display:flex;gap:8px;justify-content:center">
+      ${bottomToggles}
+    </div>` : "";
+
+  poolEl.innerHTML = `
+    <div class="section">
+      <div class="section-header">
+        <span>Wanted List Pool</span>
+        <span style="font-size:12px;color:#9ca3af;font-weight:400;margin-left:8px">${totalLots} lots · ${totalPiecesAll.toLocaleString()} pieces</span>
+        <span style="font-size:11px;font-weight:400;margin-left:6px;color:#9ca3af">·</span>
+        <span style="font-size:11px;font-weight:400;margin-left:6px;color:#16a34a">${allocedLots} lots / ${allocedPieces.toLocaleString()} pcs allocated</span>
+        <span style="font-size:11px;font-weight:400;margin-left:6px;color:#9ca3af">·</span>
+        <span style="font-size:11px;font-weight:400;margin-left:6px;color:#d97706">${unallocLots} lots / ${unallocPieces.toLocaleString()} pcs remaining</span>
+        <div style="margin-left:auto;display:flex;align-items:center;gap:6px">
+          ${(project?.wantedListIds?.length === 1)
+            ? `<button class="btn pool-save-btn" style="font-size:12px;background:#1e2330;color:#fff;border-color:#1e2330">Save to List ↓</button>`
+            : (project?.wantedListIds?.length > 1)
+            ? `<button class="btn pool-save-btn" style="font-size:12px;background:#1e2330;color:#fff;border-color:#1e2330">Save as New List ↓</button>`
+            : ""}
+          <label style="font-size:11px;color:#9ca3af">Sort:</label>
+          <select id="pool-sort-select" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px">
+            ${[["name_color","Name, Color"],["partid_color","Part, Color"],["partid","Part"],["color","Color"],["pab_price","PAB Price"],["channel","Channel"]]
+              .map(([v,l])=>`<option value="${v}"${poolSort===v?" selected":""}>${l}</option>`).join("")}
+          </select>
+          <select id="pool-sort-dir" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px">
+            <option value="asc"${poolSortDir==="asc"?" selected":""}>↑ Asc</option>
+            <option value="desc"${poolSortDir==="desc"?" selected":""}>↓ Desc</option>
+          </select>
+        </div>
+      </div>
+      <div class="tab-bar">${tabBar}</div>
+      ${actionBar}
+      ${(filtered.length || (showAllocatedParts && allocedParts.length) || (showExcludedParts && excludedParts.length))
+        ? `<div style="max-height:460px;overflow-y:auto">
+            <table>
+              <thead><tr>
+                <th style="width:32px;padding:4px 8px"><input type="checkbox" id="pool-select-all" ${allSelected ? "checked" : ""} style="cursor:pointer"></th>
+                <th>Part</th><th>Image</th><th>Name</th><th>Color</th>
+                <th style="text-align:right;white-space:nowrap">Wanted / Assigned</th><th>PAB Price</th><th>Channel</th>
+                <th style="width:30px"></th>
+              </tr></thead>
+              <tbody>${mainRows}${allocedRows}${excludedRows}</tbody>
+            </table>
+          </div>
+          ${showToggleBar}`
+        : `<div class="section-empty">No parts in this tab.</div>${showToggleBar}`}
+    </div>`;
+
+  // Header checkbox indeterminate state (must be set via JS, not HTML attribute)
+  const hdrChk = poolEl.querySelector("#pool-select-all");
+  if (hdrChk) hdrChk.indeterminate = someSelected;
+
+  for (const btn of poolEl.querySelectorAll("[data-project-tab]")) {
+    btn.addEventListener("click", () => {
+      currentProjectTab = btn.dataset.projectTab;
+      renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project);
+    });
+  }
+
+  if (hdrChk) {
+    hdrChk.addEventListener("change", () => {
+      if (hdrChk.checked) filtered.forEach(p => selectedPoolKeys.add(`${p.partNo}_${p.colorId}`));
+      else                 filtered.forEach(p => selectedPoolKeys.delete(`${p.partNo}_${p.colorId}`));
+      renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project);
+    });
+  }
+
+  for (const chk of poolEl.querySelectorAll(".pool-row-check")) {
+    chk.addEventListener("change", () => {
+      if (chk.checked) selectedPoolKeys.add(chk.dataset.key);
+      else             selectedPoolKeys.delete(chk.dataset.key);
+      renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project);
+    });
+  }
+
+  for (const btn of poolEl.querySelectorAll(".move-btn")) {
+    btn.addEventListener("click", () => onMove(btn.dataset.moveType, btn.dataset.moveCart || null));
+  }
+
+  poolEl.querySelector("#toggle-alloc-btn")?.addEventListener("click", () => {
+    showAllocatedParts = !showAllocatedParts;
+    renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project);
+  });
+  poolEl.querySelector("#toggle-excl-btn")?.addEventListener("click", () => {
+    showExcludedParts = !showExcludedParts;
+    renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project);
+  });
+
+  poolEl.querySelector("#pool-sort-select")?.addEventListener("change", e => {
+    poolSort = e.target.value;
+    renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove);
+  });
+  poolEl.querySelector("#pool-sort-dir")?.addEventListener("change", e => {
+    poolSortDir = e.target.value;
+    renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove);
+  });
 }
 
 // ─── Project setup view ──────────────────────────────────────────────────────
@@ -747,9 +2178,64 @@ async function renderProjectSetup(id, content) {
     const newLgId    = content.querySelector("input[name='lego-cart']:checked")?.value || null;
     const newScratch = scratchSelect.value || null;
 
-    const { projects: cur = [] } = await chrome.storage.local.get("projects");
+    const { projects: cur = [], wantedLists = [], carts = [] } =
+      await chrome.storage.local.get(["projects", "wantedLists", "carts"]);
     const proj = cur.find(p => p.id === id);
     if (proj) {
+      const oldBlSet  = new Set(proj.blCartIds ?? []);
+      const newBlSet  = new Set(newBlIds);
+      const removedIds = [...oldBlSet].filter(cid => !newBlSet.has(cid));
+      const addedIds   = newBlIds.filter(cid => !oldBlSet.has(cid));
+
+      if (!proj.allocations) proj.allocations = {};
+
+      // Removed carts: free their allocations back to scratch/pool
+      for (const cid of removedIds) {
+        for (const key of Object.keys(proj.allocations)) {
+          const a = proj.allocations[key];
+          if (a.storeQty?.[cid] != null) delete a.storeQty[cid];
+          if ((a.legoQty ?? 0) === 0 && !Object.keys(a.storeQty ?? {}).length)
+            delete proj.allocations[key];
+        }
+      }
+
+      // Added carts: pull from LEGO/scratch into new cart (not from other BL carts)
+      if (addedIds.length) {
+        // Build wantedQty map from the (new) pool wanted lists
+        const wantedQtyMap = {};
+        for (const lid of newWlIds) {
+          const wl = wantedLists.find(w => w.id === lid);
+          for (const p of wl?.parts ?? []) {
+            const key = `${p.partNo}_${p.colorId}`;
+            wantedQtyMap[key] = (wantedQtyMap[key] ?? 0) + (p.want ?? p.qty ?? 1);
+          }
+        }
+
+        for (const newCid of addedIds) {
+          const cart = carts.find(c => c.id === newCid);
+          for (const cp of cart?.parts ?? []) {
+            const key       = `${cp.partNo}_${cp.colorId}`;
+            const wantedQty = wantedQtyMap[key];
+            if (!wantedQty) continue; // not in pool
+
+            const a          = proj.allocations[key];
+            // qty locked in other retained BL carts — leave those alone
+            const otherBLqty = a?.storeQty
+              ? Object.entries(a.storeQty)
+                  .filter(([cid]) => cid !== newCid && newBlSet.has(cid))
+                  .reduce((s, [, v]) => s + v, 0)
+              : 0;
+            const available = wantedQty - otherBLqty;
+            if (available <= 0) continue;
+
+            if (!proj.allocations[key]) proj.allocations[key] = { legoQty: 0, storeQty: {} };
+            proj.allocations[key].legoQty = 0; // clear any LEGO allocation
+            if (!proj.allocations[key].storeQty) proj.allocations[key].storeQty = {};
+            proj.allocations[key].storeQty[newCid] = available;
+          }
+        }
+      }
+
       proj.wantedListIds       = newWlIds;
       proj.blCartIds           = newBlIds;
       proj.legoCartId          = newLgId;
@@ -768,6 +2254,7 @@ async function renderSettings(content) {
     pabRegion:          "en-us",
     filterLotsOverMax:  true,
     filterLotsBelowQty: false,
+    ignoreLegoFees:     false,
   });
 
   content.innerHTML = `
@@ -834,6 +2321,19 @@ async function renderSettings(content) {
       </label>
     </div>
 
+    <div class="settings-card">
+      <h3>Project Jigsaw — LEGO Fees</h3>
+      <label class="field-check">
+        <input type="checkbox" id="ignoreLegoFees">
+        Ignore LEGO fees &amp; shipping in cart cost estimates
+      </label>
+      <p style="font-size:12px;color:#6c757d;margin:6px 0 0 24px">
+        When unchecked, the project view calculates the $7 service fee (orders under $14)
+        and PAB delivery ($4.95 ≤$25 · $6.95 $25–$35 · Free ≥$35).
+        Enable this if you plan to pad your order above the thresholds.
+      </p>
+    </div>
+
     <div class="saved-msg" id="savedMsg">Saved</div>
   `;
 
@@ -851,6 +2351,7 @@ async function renderSettings(content) {
   content.querySelector("#storeLocation").value    = sync.storeLocation;
   content.querySelector("#filterLotsOverMax").checked  = sync.filterLotsOverMax;
   content.querySelector("#filterLotsBelowQty").checked = sync.filterLotsBelowQty;
+  content.querySelector("#ignoreLegoFees").checked     = sync.ignoreLegoFees;
 
   const save = async () => {
     await chrome.storage.sync.set({
@@ -858,6 +2359,7 @@ async function renderSettings(content) {
       storeLocation:      content.querySelector("#storeLocation").value,
       filterLotsOverMax:  content.querySelector("#filterLotsOverMax").checked,
       filterLotsBelowQty: content.querySelector("#filterLotsBelowQty").checked,
+      ignoreLegoFees:     content.querySelector("#ignoreLegoFees").checked,
     });
     const msg = content.querySelector("#savedMsg");
     msg.classList.add("show");
@@ -1228,7 +2730,7 @@ function buildLegoCartRow(p, idx) {
         ${p.elementId ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.elementId}</div>` : ""}
       </td>
       <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(this.src!=='${legoImg}'){this.src='${legoImg}'}else{this.style.display='none'}"></td>
-      <td style="max-width:160px">${esc(displayName)}</td>
+      <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 0}</strong></td>
       <td>${pabPrice}</td>
@@ -1252,7 +2754,7 @@ function buildWantedRow(p, idx) {
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
       <td><img class="part-img" src="${esc(imgSrc)}" onerror="this.style.display='none'"></td>
-      <td style="max-width:160px">${esc(displayName)}</td>
+      <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td class="qty-cell" data-idx="${idx}">
         <span class="qty-display">
@@ -1289,7 +2791,7 @@ function buildCartRow(p, idx) {
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
       <td><img class="part-img" src="${esc(imgSrc)}" onerror="this.style.display='none'"></td>
-      <td style="max-width:160px">${esc(displayName)}</td>
+      <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 1}</strong></td>
       <td>${p.storePrice ? esc(p.storePrice) : `<span style="color:#adb5bd">—</span>`}</td>
@@ -1305,7 +2807,7 @@ function showTransferWarning(skippedParts, isMove) {
     overlay.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:500;display:flex;align-items:center;justify-content:center";
 
     const rows = skippedParts.map(p => {
-      const name  = esc(p.pabEntry?.bl_part_name || p.name || p.partNo || "Unknown");
+      const name  = p.pabEntry?.bl_part_name || esc(p.name || p.partNo || "Unknown");
       const color = p.pabEntry?.bl_color_name || p.colorName || (p.colorId ? `Color ${p.colorId}` : "");
       return `<div style="padding:5px 0;border-bottom:1px solid #f3f4f6;font-size:13px">${name}${color ? ` <span style="color:#9ca3af;font-size:11px">[${esc(color)}]</span>` : ""}</div>`;
     }).join("");

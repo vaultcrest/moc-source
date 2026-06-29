@@ -164,12 +164,23 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
+- [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 complete:
+  - Phase 1: Project CRUD + `chrome.storage.local` schema (`projects`, allocations, estimatedShipping, scratchWantedListId)
+  - Phase 2: Setup view — configure wanted lists, BL store carts, LEGO cart, scratch list per project
+  - Phase 3: Detail view — wanted list pool (PAB/STD/BL/All tabs), LEGO cart section, per-cart BL sections, scratch space; over-allocation highlighting; part IDs link to BrickLink catalog
+  - Phase 4: Allocation moves — checkbox multi-select; move pool→LEGO/BL/scratch, section→section; BL-only parts blocked from LEGO cart; per-cart sort (7 options); unallocate single rows
+  - Phase 5: Save actions — LEGO cart diff+replace modal; scratch space save to linked list (or create new); pool save to single wanted list (diff modal) or combined new list (multi-source); pool part exclude/restore (soft-removes from pool, filtered from save)
+  - Grand total bar across all carts with per-cart BL subtotals, estimated shipping inputs for TBD stores, and vs-PAB net savings per BL cart (plain-language: "$X cheaper/more than PAB")
+  - Pool header shows total lots/pieces + allocated vs remaining breakdown
+  - Scroll position preserved when checking boxes
+  - Auto-allocation seeds LEGO cart from saved cart parts on first open and reset
 
 ## What's Next
 
-1. **Projects (Cart Jigsaw)** — 4th main section; named workspaces that aggregate wanted lists as a pool, allocate parts to LEGO PAB cart and BL store carts, track unallocated parts in a scratch space. Ephemeral until explicitly saved. Full spec in memory (`project_jigsaw_spec.md`). Build phases: CRUD → setup view → read-only detail → allocation moves → save actions → drag multi-select.
-2. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-3. **BrickLink store cart writeback** — BL API exists; would let the extension update a store cart to reflect project allocations rather than requiring manual reconciliation
+1. **Projects Phase 5 remaining** — BL store cart writeback (reduce allocated-away part qtys in the saved cart, remove if qty hits 0)
+2. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
+3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+4. **BrickLink store cart writeback** — BL API exists; would let the extension update a store cart to reflect project allocations rather than requiring manual reconciliation
 4. **BrickLink price column** — needs BrickLink API integration
 5. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
 6. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run

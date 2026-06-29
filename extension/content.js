@@ -30,7 +30,7 @@ function getCartName() {
 
 function getOrderSummary() {
   const summary = {};
-  const labels = { "Item Total": "itemTotal", "Shipping": "shipping", "Order Total": "orderTotal" };
+  const labels = { "Item Total": "itemTotal", "Shipping & Handling": "shipping", "Order Total": "orderTotal" };
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
     acceptNode: n => {
       const t = n.textContent.trim();
@@ -43,7 +43,7 @@ function getOrderSummary() {
     const key = Object.keys(labels).find(k => t.startsWith(k));
     if (!key) continue;
     let el = node.parentElement;
-    for (let i = 0; i < 4 && el; i++) {
+    for (let i = 0; i < 2 && el; i++) {
       const m = el.textContent.match(/(?:US )?\$([\d,]+\.?\d*)/);
       if (m) { summary[labels[key]] = `$${m[1]}`; break; }
       el = el.parentElement;
