@@ -165,6 +165,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
+- [x] BrickLink API key setting — encrypted storage of BL OAuth consumer key/secret/token/token secret in `chrome.storage.local` (AES-GCM via SubtleCrypto; key derived from the extension ID via PBKDF2, never transmitted)
 - [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 fully complete:
   - Phase 1: Project CRUD + `chrome.storage.local` schema (`projects`, allocations, estimatedShipping, scratchWantedListId)
   - Phase 2: Setup view — configure wanted lists, BL store carts, LEGO cart, scratch list per project
@@ -181,14 +182,13 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 ## What's Next
 
 1. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
-2. **BrickLink API key setting** — encrypted storage of BL OAuth credentials in `chrome.storage.local` (AES-GCM via SubtleCrypto); prerequisite for BL store API calls
-3. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
-4. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-5. **BrickLink price column** — needs BrickLink API integration
-6. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
-7. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
-8. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-9. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
+2. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
+3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+4. **BrickLink price column** — needs BrickLink API integration
+5. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
+6. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
+7. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+8. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
 
 ## Related Projects
 
