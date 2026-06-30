@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     smtp_user: str = ""
     smtp_password: str = ""
     smtp_from: str = "noreply@vaultcrest.com"
-    report_email: str = "service@vaultcrest.com"
+    report_email: str = "sean.m.sulliv@gmail.com"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
 
