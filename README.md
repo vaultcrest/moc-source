@@ -84,7 +84,9 @@ Response includes:
 
 Full deploy: `ansible-playbook site.yml` from `moc-source-infra/` (repos must be siblings on disk).
 
-**Email config** (`mocsource/config.py`): enrichment reports are sent via SMTP. `smtp_from` defaults to `noreply@vaultcrest.com`; `report_email` defaults to `sean.m.sulliv@gmail.com`. Override both in `inventory/group_vars/app/vars.yml`. Note: if `smtp_user` and the routing destination for `report_email` resolve to the same Gmail account, Gmail silently deduplicates the message — use a different destination address.
+**Quick deploy caveat:** the rsync-based quick deploy only copies `mocsource/` Python files — it does not update `/opt/mocsource/app/.env`. Changes to `smtp_*` / `report_email` / `SECRET_KEY` etc. require either a full Ansible run or a direct `sed` edit of `.env` on the server followed by `sudo systemctl restart mocsource`.
+
+**Email config** (`mocsource/config.py`): enrichment reports are sent via SMTP. `smtp_from` defaults to `noreply@vaultcrest.com`; `report_email` defaults to `sean.m.sulliv@gmail.com`. The scraper (`scripts/scrape_pab.py`) also sends via the same SMTP settings, reading them from the process environment directly. Note: if `smtp_user` and the routing destination for `report_email` resolve to the same Gmail account, Gmail silently deduplicates the message — use a different destination address.
 
 ### Static pages (`static/`)
 
@@ -128,7 +130,16 @@ DATABASE_URL=... python scripts/seed_colors.py
 
 ### PAB Scraper
 
-Loops 18 confirmed LEGO locales, upserts into `lego_element_prices` directly. Runs hourly via `mocsource-scrape-pab.timer` on app server.
+Loops 18 confirmed LEGO locales, upserts into `lego_element_prices` directly. Two systemd timers on app server:
+
+| Timer | Schedule | What it runs |
+|-------|----------|-------------|
+| `mocsource-scrape-pab.timer` | Daily at 02:00 | Full 18-locale price + stock update (~18 min) |
+| `mocsource-scrape-pab-oos.timer` | Hourly at :30 | OOS-only stock check (3 locales, ~2 min) |
+
+In the 2 AM hour both timers fire, producing two scraper emails ~14 minutes apart — this is expected.
+
+The scraper reads `REPORT_EMAIL` directly from the process environment (not from `Settings`). The quick-deploy rsync only copies Python files; to change `REPORT_EMAIL` or any other `.env` value on the server without a full Ansible run, update `/opt/mocsource/app/.env` directly and restart the service.
 
 Required headers: `Origin: https://www.lego.com`, `x-locale: {locale}`  
 Required query fix: no `$sku` variable, use `quantityInSet(sku: null)` hardcoded.
