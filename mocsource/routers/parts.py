@@ -1,5 +1,9 @@
+from datetime import datetime
+from typing import Optional
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -297,3 +301,24 @@ async def pab_price_by_element(
         currency_code=None,
         in_stock=None,
     )]
+
+
+class DataFreshness(BaseModel):
+    stock_checked_at: Optional[datetime]
+    prices_updated_at: Optional[datetime]
+
+
+@router.get("/pab/freshness", response_model=DataFreshness, tags=["pab"])
+async def pab_freshness(db: AsyncSession = Depends(get_db)):
+    """When stock was last checked (hourly OOS run) and prices last updated (daily full run)."""
+    result = await db.execute(text("""
+        SELECT
+            MAX(finished_at) FILTER (WHERE success = true)                   AS stock_checked_at,
+            MAX(finished_at) FILTER (WHERE mode = 'full' AND success = true) AS prices_updated_at
+        FROM scraper_runs
+    """))
+    row = result.mappings().one()
+    return DataFreshness(
+        stock_checked_at=row["stock_checked_at"],
+        prices_updated_at=row["prices_updated_at"],
+    )

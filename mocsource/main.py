@@ -35,6 +35,11 @@ app.include_router(parts.router)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
+@app.get("/", include_in_schema=False)
+async def index():
+    return FileResponse(STATIC_DIR / "index.html")
+
+
 @app.get("/health", tags=["meta"])
 async def health():
     return {"status": "ok"}

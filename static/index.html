@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MOC Source — Source your MOC. Cheaper. Faster.</title>
+  <meta name="description" content="MOC Source is a free browser extension for LEGO builders. Compare Pick a Brick and BrickLink Store prices side by side to find the cheapest place to buy every part.">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --green-dark:  #0d2818;
+      --green-mid:   #1a3d22;
+      --orange:      #e07b20;
+      --green-bright:#4caf50;
+      --white:       #ffffff;
+      --grey:        #9ca3af;
+      --card-bg:     #112010;
+    }
+
+    body {
+      background: var(--green-dark);
+      color: var(--white);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      line-height: 1.6;
+    }
+
+    a { color: inherit; text-decoration: none; }
+
+    /* ── Hero ── */
+    .hero {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+      padding: 60px 24px 40px;
+      background: linear-gradient(180deg, #0a1f12 0%, var(--green-dark) 100%);
+    }
+
+    .hero img.promo {
+      width: min(440px, 90vw);
+      border-radius: 12px;
+      margin-bottom: 36px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+
+    .hero h1 {
+      font-size: clamp(26px, 5vw, 42px);
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 16px;
+    }
+    .hero h1 .orange { color: var(--orange); }
+    .hero h1 .green  { color: var(--green-bright); }
+
+    .hero p {
+      font-size: clamp(15px, 2.5vw, 18px);
+      color: #c9d5c8;
+      max-width: 560px;
+      margin-bottom: 36px;
+    }
+
+    .cta-row {
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+
+    .btn-install {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      background: var(--orange);
+      color: var(--white);
+      font-size: 16px;
+      font-weight: 700;
+      padding: 14px 28px;
+      border-radius: 8px;
+      transition: filter 0.15s;
+    }
+    .btn-install:hover { filter: brightness(1.1); }
+    .btn-install img { width: 24px; height: 24px; }
+
+    .btn-ghost {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      border: 2px solid rgba(255,255,255,0.25);
+      color: #d1d5db;
+      font-size: 15px;
+      font-weight: 600;
+      padding: 13px 24px;
+      border-radius: 8px;
+      transition: border-color 0.15s, color 0.15s;
+    }
+    .btn-ghost:hover { border-color: rgba(255,255,255,0.5); color: var(--white); }
+
+    .free-badge {
+      margin-top: 14px;
+      font-size: 13px;
+      color: var(--grey);
+    }
+
+    /* ── Marquee banner ── */
+    .marquee-wrap {
+      padding: 0 24px 56px;
+      display: flex;
+      justify-content: center;
+    }
+    .marquee-wrap img {
+      width: min(860px, 100%);
+      border-radius: 10px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.5);
+    }
+
+    /* ── Section heading ── */
+    .section {
+      padding: 56px 24px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    .section-label {
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--orange);
+      margin-bottom: 10px;
+    }
+
+    .section h2 {
+      font-size: clamp(22px, 4vw, 32px);
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .section .sub {
+      color: #9db89a;
+      font-size: 16px;
+      max-width: 560px;
+      margin-bottom: 40px;
+    }
+
+    /* ── Screenshots ── */
+    .screenshots {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+
+    .screenshot-card {
+      background: var(--card-bg);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    .screenshot-card img {
+      width: 100%;
+      display: block;
+    }
+
+    .screenshot-card .caption {
+      padding: 14px 16px;
+      font-size: 13px;
+      color: #9db89a;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
+    .screenshot-card .caption strong {
+      display: block;
+      color: var(--white);
+      font-size: 14px;
+      margin-bottom: 4px;
+    }
+
+    /* ── How it works ── */
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 24px;
+    }
+
+    .step {
+      background: var(--card-bg);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 10px;
+      padding: 24px 20px;
+    }
+
+    .step-num {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: var(--orange);
+      color: var(--white);
+      font-weight: 800;
+      font-size: 16px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 14px;
+    }
+
+    .step h3 {
+      font-size: 15px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+
+    .step p {
+      font-size: 13px;
+      color: #9db89a;
+      line-height: 1.6;
+    }
+
+    /* ── Support ── */
+    .support-section {
+      padding: 56px 24px;
+      background: var(--card-bg);
+      border-top: 1px solid rgba(255,255,255,0.07);
+      border-bottom: 1px solid rgba(255,255,255,0.07);
+      text-align: center;
+    }
+
+    .support-section h2 {
+      font-size: 26px;
+      font-weight: 800;
+      margin-bottom: 12px;
+    }
+
+    .support-section p {
+      color: #9db89a;
+      font-size: 15px;
+      max-width: 480px;
+      margin: 0 auto 28px;
+    }
+
+    .support-links {
+      display: flex;
+      gap: 14px;
+      justify-content: center;
+      flex-wrap: wrap;
+    }
+
+    .btn-support {
+      padding: 12px 26px;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 700;
+      transition: filter 0.15s;
+    }
+    .btn-support:hover { filter: brightness(1.1); }
+    .btn-patreon { background: #ff424d; color: var(--white); }
+    .btn-paypal  { background: #0070ba; color: var(--white); }
+
+    /* ── Footer ── */
+    footer {
+      padding: 28px 24px;
+      text-align: center;
+      font-size: 12px;
+      color: var(--grey);
+      border-top: 1px solid rgba(255,255,255,0.07);
+    }
+
+    footer a { color: #6b9e6b; }
+    footer a:hover { text-decoration: underline; }
+
+    footer .footer-links {
+      display: flex;
+      gap: 20px;
+      justify-content: center;
+      flex-wrap: wrap;
+      margin-bottom: 10px;
+    }
+
+    .lego-notice {
+      font-size: 11px;
+      color: #4b5563;
+      max-width: 520px;
+      margin: 10px auto 0;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ── Hero ── -->
+  <section class="hero">
+    <img class="promo" src="/static/moc-source-promo.png" alt="MOC Source — Source your MOC. Cheaper. Faster.">
+    <h1>Find the <span class="orange">cheapest</span> path<br>to every brick. <span class="green">Faster.</span></h1>
+    <p>MOC Source is a free browser extension for LEGO builders. See LEGO Pick a Brick prices alongside BrickLink store prices — on the same page — and let the extension do the math.</p>
+    <div class="cta-row">
+      <a class="btn-install" href="https://chromewebstore.google.com/detail/moc-source/hoglacgnlglnbpeffbdndnhaokiojigh" target="_blank">
+        <img src="/static/icon128.png" alt="">
+        Add to Chrome — it's free
+      </a>
+      <a class="btn-ghost" href="https://github.com/vaultcrest/moc-source" target="_blank">View on GitHub</a>
+    </div>
+    <p class="free-badge">Free &amp; open source · No account required</p>
+  </section>
+
+  <!-- ── Marquee ── -->
+  <div class="marquee-wrap">
+    <img src="/static/moc-source%20marquee.png" alt="MOC Source feature overview">
+  </div>
+
+  <!-- ── Screenshots ── -->
+  <div class="section">
+    <p class="section-label">See it in action</p>
+    <h2>Works where you already shop</h2>
+    <p class="sub">MOC Source lives inside BrickLink — no copy-pasting, no switching tabs.</p>
+
+    <div class="screenshots">
+      <div class="screenshot-card">
+        <img src="/static/moc-source-wanted-list_1280.png" alt="Wanted list with PAB prices">
+        <div class="caption">
+          <strong>Wanted Lists</strong>
+          PAB prices appear inline next to every BrickLink price. Green badge = cheaper via LEGO.
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <img src="/static/moc-source-cart_1280.png" alt="BrickLink cart with PAB comparison">
+        <div class="caption">
+          <strong>Store Carts</strong>
+          See PAB vs store price per line item before you check out. Switch channels in one click.
+        </div>
+      </div>
+      <div class="screenshot-card">
+        <img src="/static/moc-source-popup_1280.png" alt="Extension settings popup">
+        <div class="caption">
+          <strong>Region-aware pricing</strong>
+          Prices shown in your local currency across 18 LEGO PAB regions.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── How it works ── -->
+  <div class="section" style="padding-top:0">
+    <p class="section-label">How it works</p>
+    <h2>Three steps. No friction.</h2>
+    <p class="sub">Install once, then shop on BrickLink the same way you always have.</p>
+
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Install the extension</h3>
+        <p>Add MOC Source to Chrome or Brave from the Web Store. No account, no sign-in required.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Open any BrickLink wanted list or cart</h3>
+        <p>MOC Source automatically fetches current PAB prices and injects them alongside BrickLink prices.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Buy at the best price</h3>
+        <p>Parts cheaper via LEGO PAB are highlighted. Use the built-in list manager to plan across multiple MOCs and carts.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Support ── -->
+  <div class="support-section">
+    <h2>MOC Source is free, forever.</h2>
+    <p>Server costs and development time are covered by the community. If MOC Source saves you money on a build, consider chipping in.</p>
+    <div class="support-links">
+      <a class="btn-support btn-patreon" href="https://www.patreon.com/c/MocSource" target="_blank">Support on Patreon</a>
+      <a class="btn-support btn-paypal"  href="https://www.paypal.com/ncp/payment/SAACTUBPTPBSS" target="_blank">Tip via PayPal</a>
+    </div>
+  </div>
+
+  <!-- ── Footer ── -->
+  <footer>
+    <div class="footer-links">
+      <a href="/privacy">Privacy Policy</a>
+      <a href="https://github.com/vaultcrest/moc-source" target="_blank">GitHub</a>
+      <a href="https://chromewebstore.google.com/detail/moc-source/hoglacgnlglnbpeffbdndnhaokiojigh" target="_blank">Chrome Web Store</a>
+      <a href="https://www.patreon.com/c/MocSource" target="_blank">Patreon</a>
+    </div>
+    <div>© 2026 Vaultcrest · MOC Source v0.3.0 · AGPL-3.0</div>
+    <p class="lego-notice">MOC Source is a community tool and is not authorized by or affiliated with the LEGO Group. LEGO® is a trademark of the LEGO Group.</p>
+  </footer>
+
+</body>
+</html>

@@ -801,6 +801,7 @@ async function renderProjectDetail(id, content) {
       const part      = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
       const name      = part?.pabEntry?.bl_part_name || part?.name || key;
       const color     = part?.pabEntry?.bl_color_name || part?.colorName || "";
+      const colorHex  = part?.pabEntry?.bl_color_hex;
       const pabPrice  = part?.pabEntry?.price_formatted || "—";
       const ch        = part?.pabEntry?.channel;
       const badge     = ch === "pab"
@@ -825,15 +826,15 @@ async function renderProjectDetail(id, content) {
       const isChecked = selSet?.has(key) ?? false;
       return `
         <div style="display:flex;align-items:center;gap:8px;padding:4px 12px;border-bottom:1px solid #f3f4f6;${rowBg}">
-          <input type="checkbox" class="section-row-check"
+          <label style="cursor:pointer;display:flex;align-items:center;align-self:stretch;padding:0 4px;margin:0 -4px"><input type="checkbox" class="section-row-check"
             data-section-type="${sectionType}"
             data-section-cart="${esc(sectionCartId ?? "")}"
             data-key="${esc(key)}"
             ${isChecked ? "checked" : ""}
-            style="cursor:pointer;flex-shrink:0">
+            style="cursor:pointer;flex-shrink:0"></label>
           <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(part?.partNo || key.split('_')[0])}#T=C&C=${esc(String(part?.colorId ?? ''))}" target="_blank" rel="noopener" style="font-size:11px;font-family:monospace;color:#6c757d;flex-shrink:0;width:54px;text-decoration:none;display:flex;align-items:center;align-self:stretch" title="View on BrickLink">${esc(part?.partNo || key.split('_')[0])}</a>
           ${img}
-          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="color:#9ca3af;font-size:11px">${esc(color)}</span></div>
+          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="display:inline-flex;align-items:center;gap:3px;color:#9ca3af;font-size:11px">${colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></div>
           ${storeCell}
           <div style="font-size:12px;color:#6c757d;flex-shrink:0;width:52px;text-align:right">${pabPrice}</div>
           <div style="flex-shrink:0;width:46px;text-align:center">${badge}</div>
@@ -1015,6 +1016,7 @@ async function renderProjectDetail(id, content) {
 
   function buildScratchSection(allocs) {
     let scratchEntries = poolParts
+      .filter(p => !currentAllocs[`${p.partNo}_${p.colorId}`]?.removed)
       .filter(p => allocRemaining(allocs, `${p.partNo}_${p.colorId}`, p.wantedQty) > 0)
       .map(p => ({ key: `${p.partNo}_${p.colorId}`, qty: allocRemaining(allocs, `${p.partNo}_${p.colorId}`, p.wantedQty), p }));
     const scratchPieces = scratchEntries.reduce((s, e) => s + e.qty, 0);
@@ -1070,29 +1072,30 @@ async function renderProjectDetail(id, content) {
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:24px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Qty</div>
       </div>`;
     const rows = scratchEntries.map(({ key, qty, p }) => {
-      const name  = p.pabEntry?.bl_part_name  || p.name      || "";
-      const color = p.pabEntry?.bl_color_name || p.colorName || "";
-      const price = p.pabEntry?.price_formatted || "—";
-      const ch    = p.pabEntry?.channel;
-      const badge = ch === "pab"
+      const name     = p.pabEntry?.bl_part_name  || p.name      || "";
+      const color    = p.pabEntry?.bl_color_name || p.colorName || "";
+      const colorHex = p.pabEntry?.bl_color_hex;
+      const price    = p.pabEntry?.price_formatted || "—";
+      const ch       = p.pabEntry?.channel;
+      const badge    = ch === "pab"
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
         : ch === "bap"
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#fef9c3;color:#ca8a04">STD</span>`
         : p.pabEntry
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#f3f4f6;color:#6c757d">BL</span>`
         : `<span style="color:#9ca3af">—</span>`;
-      const img   = p.imageUrl
+      const img      = p.imageUrl
         ? `<img src="${esc(p.imageUrl)}" style="width:36px;height:28px;object-fit:contain;flex-shrink:0">`
         : `<div style="width:36px;flex-shrink:0"></div>`;
       return `
         <div style="display:flex;align-items:center;gap:8px;padding:4px 12px;border-bottom:1px solid #f3f4f6">
-          <input type="checkbox" class="section-row-check"
+          <label style="cursor:pointer;display:flex;align-items:center;align-self:stretch;padding:0 4px;margin:0 -4px"><input type="checkbox" class="section-row-check"
             data-section-type="scratch" data-section-cart="" data-key="${esc(key)}"
             ${selectedScratchKeys.has(key) ? "checked" : ""}
-            style="cursor:pointer;flex-shrink:0">
+            style="cursor:pointer;flex-shrink:0"></label>
           <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo || '')}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="font-size:11px;font-family:monospace;color:#6c757d;flex-shrink:0;width:54px;text-decoration:none;display:flex;align-items:center;align-self:stretch" title="View on BrickLink">${esc(p.partNo || "")}</a>
           ${img}
-          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="color:#9ca3af;font-size:11px">${esc(color)}</span></div>
+          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="display:inline-flex;align-items:center;gap:3px;color:#9ca3af;font-size:11px">${colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></div>
           <div style="font-size:12px;color:#6c757d;flex-shrink:0;width:52px;text-align:right">${price}</div>
           <div style="flex-shrink:0;width:46px;text-align:center">${badge}</div>
           <div style="font-size:13px;font-weight:600;flex-shrink:0;width:24px;text-align:right">${qty}</div>
@@ -1928,6 +1931,25 @@ async function renderProjectDetail(id, content) {
       return;
     }
 
+    const deleteBtn = e.target.closest(".pool-delete-btn");
+    if (deleteBtn) {
+      const key = deleteBtn.dataset.key;
+      const { projects: allProjects = [] } = await chrome.storage.local.get("projects");
+      const proj = allProjects.find(p => p.id === id);
+      if (!proj) return;
+      if (!proj.allocations) proj.allocations = {};
+      proj.allocations[key] = { removed: true, legoQty: 0, storeQty: {} };
+      await chrome.storage.local.set({ projects: allProjects });
+      currentAllocs = proj.allocations;
+      selectedPoolKeys.delete(key);
+      renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+      refreshLegoSection();
+      for (const c of blCartList) refreshBlSection(c.id);
+      refreshScratch();
+      refreshGrandTotal();
+      return;
+    }
+
     const blSortDirBtn = e.target.closest(".bl-cart-sort-dir");
     if (blSortDirBtn) {
       const cid = blSortDirBtn.dataset.cartId;
@@ -2132,6 +2154,8 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
   const poolEl = content.querySelector("#pool-section");
   if (!poolEl) return;
 
+  parts = parts.filter(p => !allocations[`${p.partNo}_${p.colorId}`]?.removed);
+
   function remQty(p) {
     const key = `${p.partNo}_${p.colorId}`;
     const a   = allocations[key];
@@ -2206,11 +2230,12 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
 
   function buildRow(p, dimmed) {
     const key   = `${p.partNo}_${p.colorId}`;
-    const name  = p.pabEntry?.bl_part_name  || p.name      || "";
-    const color = p.pabEntry?.bl_color_name || p.colorName || "";
-    const price = p.pabEntry?.price_formatted || "—";
-    const ch    = p.pabEntry?.channel;
-    const badge = ch === "pab"
+    const name     = p.pabEntry?.bl_part_name  || p.name      || "";
+    const color    = p.pabEntry?.bl_color_name || p.colorName || "";
+    const colorHex = p.pabEntry?.bl_color_hex;
+    const price    = p.pabEntry?.price_formatted || "—";
+    const ch       = p.pabEntry?.channel;
+    const badge    = ch === "pab"
       ? `<span style="padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
       : ch === "bap"
       ? `<span style="padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700;background:#fef9c3;color:#ca8a04">STD</span>`
@@ -2219,34 +2244,41 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
     const rem     = remQty(p);
     const checked = selectedPoolKeys.has(key) && !dimmed;
     return `<tr${dimmed ? ' style="opacity:0.4"' : ""}>
-      <td style="padding:4px 8px">${dimmed ? "" : `<input type="checkbox" class="pool-row-check" data-key="${esc(key)}" ${checked ? "checked" : ""} style="cursor:pointer">`}</td>
+      <td style="padding:4px 8px${dimmed ? "" : ";cursor:pointer"}">${dimmed ? "" : `<input type="checkbox" class="pool-row-check" data-key="${esc(key)}" ${checked ? "checked" : ""} style="cursor:pointer">`}</td>
       <td style="padding:0"><a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo || '')}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="display:block;padding:4px 8px;font-size:12px;font-family:monospace;color:inherit;text-decoration:none" title="View on BrickLink">${esc(p.partNo || "")}${elemId ? `<br><span style="color:#9ca3af">${elemId}</span>` : ""}</a></td>
       <td>${p.imageUrl ? `<img src="${esc(p.imageUrl)}" style="width:60px;height:45px;object-fit:contain">` : ""}</td>
       <td>${esc(name)}</td>
-      <td>${esc(color)}</td>
+      <td><span style="display:inline-flex;align-items:center;gap:4px">${colorHex ? `<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></td>
       <td style="text-align:right;white-space:nowrap">
         <div style="font-size:11px;color:#6c757d">Wanted ${p.wantedQty}</div>
         <div style="font-size:11px;font-weight:600${rem < 0 ? ";color:#dc2626" : ""}">Assigned ${p.wantedQty - rem}</div>
       </td>
       <td>${price}</td>
       <td>${badge}</td>
-      <td style="padding:2px 6px"><button class="btn pool-exclude-btn" data-key="${esc(key)}" title="Remove from pool" style="font-size:11px;padding:1px 5px;color:#9ca3af;border-color:#e5e7eb">×</button></td>
+      <td style="padding:2px 6px;white-space:nowrap">
+        <button class="btn pool-exclude-btn" data-key="${esc(key)}" title="Exclude from pool" style="font-size:11px;padding:1px 5px;color:#9ca3af;border-color:#e5e7eb">×</button>
+        <button class="btn pool-delete-btn" data-key="${esc(key)}" title="Permanently remove from pool" style="font-size:11px;padding:1px 5px;color:#dc2626;border-color:#fca5a5;margin-left:3px">🗑</button>
+      </td>
     </tr>`;
   }
 
   function buildExcludedRow(p) {
-    const key   = `${p.partNo}_${p.colorId}`;
-    const name  = p.pabEntry?.bl_part_name  || p.name      || "";
-    const color = p.pabEntry?.bl_color_name || p.colorName || "";
+    const key      = `${p.partNo}_${p.colorId}`;
+    const name     = p.pabEntry?.bl_part_name  || p.name      || "";
+    const color    = p.pabEntry?.bl_color_name || p.colorName || "";
+    const colorHex = p.pabEntry?.bl_color_hex;
     return `<tr style="opacity:0.5">
       <td></td>
       <td style="padding:4px 8px;font-size:12px;font-family:monospace;color:#9ca3af">${esc(p.partNo || "")}</td>
       <td>${p.imageUrl ? `<img src="${esc(p.imageUrl)}" style="width:60px;height:45px;object-fit:contain;filter:grayscale(1)">` : ""}</td>
       <td style="text-decoration:line-through;color:#9ca3af">${esc(name)}</td>
-      <td style="color:#9ca3af">${esc(color)}</td>
+      <td style="color:#9ca3af"><span style="display:inline-flex;align-items:center;gap:4px">${colorHex ? `<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0;opacity:0.6"></span>` : ""}${esc(color)}</span></td>
       <td style="text-align:right;font-size:11px;color:#9ca3af">Wanted ${p.wantedQty}</td>
       <td></td><td></td>
-      <td style="padding:2px 6px"><button class="btn pool-restore-btn" data-key="${esc(key)}" title="Restore to pool" style="font-size:11px;padding:1px 5px;color:#2563eb;border-color:#bfdbfe">↩</button></td>
+      <td style="padding:2px 6px;white-space:nowrap">
+        <button class="btn pool-restore-btn" data-key="${esc(key)}" title="Restore to pool" style="font-size:11px;padding:1px 5px;color:#2563eb;border-color:#bfdbfe">↩</button>
+        <button class="btn pool-delete-btn" data-key="${esc(key)}" title="Permanently remove from pool" style="font-size:11px;padding:1px 5px;color:#dc2626;border-color:#fca5a5;margin-left:3px">🗑</button>
+      </td>
     </tr>`;
   }
 
@@ -2344,6 +2376,14 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
       renderProjectPool(content, parts, allocations, legoCart, blCartList, onMove, project);
     });
   }
+  poolEl.addEventListener("click", e => {
+    const td = e.target.closest("td");
+    if (!td) return;
+    const cb = td.querySelector(".pool-row-check");
+    if (!cb || e.target === cb) return;
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 
   for (const btn of poolEl.querySelectorAll(".move-btn")) {
     btn.addEventListener("click", () => onMove(btn.dataset.moveType, btn.dataset.moveCart || null));
@@ -2772,6 +2812,22 @@ function renderInfo(content) {
     <div class="page-title">Info</div>
 
     <div class="info-card">
+      <h3>What's New</h3>
+      <div style="font-size:12px;color:#6b7280;margin-bottom:8px">v0.3.0</div>
+      <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.8">
+        <li>PAB stock availability now checked <strong>hourly</strong> — out-of-stock and back-in-stock changes are detected within the hour</li>
+        <li>Full PAB prices refreshed <strong>daily</strong> across all 18 regions</li>
+        <li>Stock data sourced from regional warehouse groups: US&nbsp;&amp;&nbsp;Canada share inventory; EU, UK, AU, and NZ share inventory from LEGO's Poland distribution center</li>
+        <li>Cart Jigsaw: project workspace for splitting parts across PAB and BrickLink store carts</li>
+        <li>BrickLink store cart writeback — sync allocations back to your BL cart</li>
+        <li>Color swatches next to color names on all list views</li>
+        <li>BrickLink catalog links on all part ID cells</li>
+        <li>Larger checkbox hit areas on all list views</li>
+        <li>Pool part removal — permanently hide a part from the project pool and all cart views</li>
+      </ul>
+    </div>
+
+    <div class="info-card">
       <h3>Donation</h3>
       <p>MOC Source is free and open source, built by AFOLs for AFOLs. If it saves you time sourcing parts, consider supporting the server costs:</p>
       <div class="donate-links">
@@ -3116,11 +3172,15 @@ function buildLegoCartRow(p, idx) {
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
 
+  const partLink = (blPartNo && colorId)
+    ? `<a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(blPartNo)}#T=C&C=${esc(String(colorId))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(partNo)}</a>`
+    : esc(partNo);
+
   return `
     <tr data-idx="${idx}">
-      <td><input type="checkbox" class="row-check" data-idx="${idx}" style="cursor:pointer"></td>
+      <td style="cursor:pointer"><input type="checkbox" class="row-check" data-idx="${idx}" style="cursor:pointer"></td>
       <td style="font-family:monospace;font-size:13px">
-        ${esc(partNo)}
+        ${partLink}
         ${p.elementId ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.elementId}</div>` : ""}
       </td>
       <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(this.src!=='${legoImg}'){this.src='${legoImg}'}else{this.style.display='none'}"></td>
@@ -3142,9 +3202,9 @@ function buildWantedRow(p, idx) {
 
   return `
     <tr data-idx="${idx}">
-      <td><input type="checkbox" class="row-check" data-idx="${idx}" style="cursor:pointer"></td>
+      <td style="cursor:pointer"><input type="checkbox" class="row-check" data-idx="${idx}" style="cursor:pointer"></td>
       <td style="font-family:monospace;font-size:13px">
-        ${esc(p.partNo)}
+        <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo)}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(p.partNo)}</a>
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
       <td><img class="part-img" src="${esc(imgSrc)}" onerror="this.style.display='none'"></td>
@@ -3179,9 +3239,9 @@ function buildCartRow(p, idx) {
 
   return `
     <tr data-idx="${idx}"${rowStyle}>
-      <td><input type="checkbox" class="row-check" data-idx="${idx}" style="cursor:pointer"></td>
+      <td style="cursor:pointer"><input type="checkbox" class="row-check" data-idx="${idx}" style="cursor:pointer"></td>
       <td style="font-family:monospace;font-size:13px">
-        ${esc(p.partNo)}
+        <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo)}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(p.partNo)}</a>
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
       <td><img class="part-img" src="${esc(imgSrc)}" onerror="this.style.display='none'"></td>
@@ -3304,6 +3364,14 @@ function attachDetailListeners(content) {
   });
   content.addEventListener("change", e => {
     if (e.target.classList.contains("row-check")) syncSelectAll();
+  });
+  content.addEventListener("click", e => {
+    const td = e.target.closest("td");
+    if (!td) return;
+    const cb = td.querySelector("input.row-check");
+    if (!cb || e.target === cb) return;
+    cb.checked = !cb.checked;
+    cb.dispatchEvent(new Event("change", { bubbles: true }));
   });
 
   // ── Common: Remove Selected (hard delete from list) ───────────────────────────

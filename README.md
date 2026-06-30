@@ -181,14 +181,15 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 
 ## What's Next
 
-1. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
-2. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
-3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-4. **BrickLink price column** — needs BrickLink API integration
-5. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
-6. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
-7. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-8. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
+1. **Import wanted list or cart from XML** — import BrickLink wanted list or cart from exported XML file
+3. **Projects Phase 6** — Drag multi-select (drag checked group to target cart)
+4. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
+5. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+6. **BrickLink price column** — needs BrickLink API integration
+7. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
+8. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
+9. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+10. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
 
 ## Related Projects
 

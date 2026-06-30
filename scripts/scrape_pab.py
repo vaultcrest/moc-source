@@ -11,9 +11,11 @@ Usage:
 
 import argparse
 import os
+import smtplib
 import sys
 import time
 from datetime import datetime, timezone
+from email.mime.text import MIMEText
 
 import psycopg2
 import psycopg2.extras
@@ -29,6 +31,29 @@ LOCALES = [
     "en-ca", "ko-kr", "pl-pl", "sv-se", "en-nz", "cs-cz",
     "da-dk", "fi-fi", "nb-no", "es-es", "it-it", "pt-pt",
 ]
+
+# OOS status is 100% shared within each group (confirmed by DB analysis —
+# zero elements differ in in_stock across any pair of EU/AU/NZ/GB locales,
+# and US/CA are identical to each other). Scraping one representative per
+# group is sufficient to detect in-stock / out-of-stock transitions.
+LOCALE_GROUPS: dict[str, list[str]] = {
+    "na": ["en-us", "en-ca"],
+    "eu": [
+        "pl-pl", "de-de", "fr-fr", "nl-nl", "es-es", "it-it", "pt-pt",
+        "cs-cz", "da-dk", "fi-fi", "nb-no", "sv-se", "en-gb", "en-au", "en-nz",
+    ],
+    "kr": ["ko-kr"],
+}
+# Representative locale per group for OOS-check runs.
+# Poland chosen for EU — LEGO's primary PAB distribution warehouse is in Poland.
+OOS_LOCALES = ["en-us", "pl-pl", "ko-kr"]
+
+
+def get_group_siblings(locale: str) -> list[str]:
+    for group in LOCALE_GROUPS.values():
+        if locale in group:
+            return [loc for loc in group if loc != locale]
+    return []
 
 PAB_URL = "https://www.lego.com/api/graphql/PickABrickQuery"
 
@@ -79,19 +104,26 @@ fragment ElementLeaf on SearchResultElement {
 """
 
 PER_PAGE = 400
-INTER_PAGE_DELAY = 0.5   # seconds between pages
-INTER_LOCALE_DELAY = 2.0  # seconds between locales
+INTER_PAGE_DELAY = 1.5   # seconds between pages
+INTER_LOCALE_DELAY = 5.0  # seconds between locales
 
 # ─── LEGO fetch ──────────────────────────────────────────────────────────────
 
 def _post_pab(body: dict, headers: dict) -> list[dict]:
     resp = curl_requests.post(PAB_URL, json=body, headers=headers, impersonate="chrome124", timeout=60)
+    if resp.status_code == 429 or resp.status_code == 1015 or "rate limit" in resp.text.lower():
+        raise Exception(f"RATE_LIMITED HTTP {resp.status_code}: {resp.text[:200]}")
     if resp.status_code != 200:
         raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
     return resp.json()["data"]["searchElements"]["results"]
 
 
-def fetch_locale(locale: str) -> list[dict]:
+def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False) -> tuple[list[dict], list[str]]:
+    """
+    Returns (all_results, cached_sibling_ids).
+    all_results: all elements including cached siblings merged with fresh pass 1 data.
+    cached_sibling_ids: sibling IDs whose channel came from DB (logged only).
+    """
     headers = {
         "Origin": "https://www.lego.com",
         "Referer": f"https://www.lego.com/{locale}/pick-and-build/pick-a-brick",
@@ -102,6 +134,7 @@ def fetch_locale(locale: str) -> list[dict]:
     # ── Pass 1: paginated full scrape ──────────────────────────────────────────
     top_level: dict[str, dict] = {}   # id → item (top-level results, channel is accurate)
     sibling_ids: list[str] = []       # ids that only appeared as siblings
+    sibling_raw: dict[str, dict] = {} # id → raw sibling object (has availability + price)
     page = 1
 
     while True:
@@ -125,6 +158,7 @@ def fetch_locale(locale: str) -> list[dict]:
             for sib in item.get("siblings", []):
                 if sib["id"] not in top_level:
                     sibling_ids.append(sib["id"])
+                    sibling_raw[sib["id"]] = sib  # save availability + price for cache merge
 
         if len(results) < PER_PAGE:
             break
@@ -134,11 +168,53 @@ def fetch_locale(locale: str) -> list[dict]:
     # ── Pass 2: re-query siblings by element ID so each appears as a top-level
     # result with its own deliveryChannel (siblings in pass 1 don't expose it).
     new_sibling_ids = [sid for sid in sibling_ids if sid not in top_level]
+
+    # Cache only delivery channel (pab/bap) from DB — never 'oos'.
+    # Availability and price always come fresh from pass 1 sibling data,
+    # so OOS transitions and restocks are detected on every run.
+    # Parts returning from OOS are never cached (channel='oos' excluded) so
+    # they get a full LEGO re-query and pick up their real delivery channel.
+    cached_sibling_ids: list[str] = []
+    actually_unknown = new_sibling_ids
+
+    if conn and new_sibling_ids and (locale != "en-us" or use_sibling_cache):
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT element_id::text, channel
+                    FROM lego_element_prices
+                    WHERE locale = %s
+                      AND element_id = ANY(%s)
+                      AND channel NOT IN ('unknown', 'oos')
+                      AND channel IS NOT NULL
+                """, (locale, [int(sid) for sid in new_sibling_ids]))
+                cached_channels = {str(row[0]): row[1] for row in cur.fetchall()}
+
+            for sid, channel in cached_channels.items():
+                if sid not in top_level:
+                    sib = sibling_raw.get(sid, {})
+                    top_level[sid] = {
+                        "id": sid,
+                        "deliveryChannel": channel,
+                        "availability": sib.get("availability") or "AVAILABLE",
+                        "price": sib.get("price") or {},
+                    }
+                    cached_sibling_ids.append(sid)
+
+            actually_unknown = [sid for sid in new_sibling_ids if sid not in top_level]
+            if cached_sibling_ids:
+                print(f"  [{locale}] {len(cached_sibling_ids)} siblings: channel cached, "
+                      f"avail/price fresh from pass 1; {len(actually_unknown)} need LEGO query", flush=True)
+        except Exception as e:
+            print(f"  [{locale}] DB cache query failed ({e}), re-querying all siblings", file=sys.stderr)
+            cached_sibling_ids = []
+            actually_unknown = new_sibling_ids
+
     BATCH = 900  # IDs per query string (LEGO accepts up to ~900)
-    for b_start in range(0, len(new_sibling_ids), BATCH):
-        batch = new_sibling_ids[b_start:b_start + BATCH]
+    for b_start in range(0, len(actually_unknown), BATCH):
+        batch = actually_unknown[b_start:b_start + BATCH]
         query_str = " ".join(batch)
-        print(f"  [{locale}] sibling lookup {b_start+1}–{b_start+len(batch)} of {len(new_sibling_ids)} ...", flush=True)
+        print(f"  [{locale}] sibling lookup {b_start+1}–{b_start+len(batch)} of {len(actually_unknown)} ...", flush=True)
         sib_page = 1
         while True:
             try:
@@ -163,8 +239,9 @@ def fetch_locale(locale: str) -> list[dict]:
             time.sleep(INTER_PAGE_DELAY)
 
     all_results = list(top_level.values())
-    print(f"  [{locale}] fetched {len(all_results)} elements total ({len(new_sibling_ids)} siblings re-queried)", flush=True)
-    return all_results
+    print(f"  [{locale}] fetched {len(all_results)} elements total "
+          f"({len(cached_sibling_ids)} DB cache, {len(actually_unknown)} LEGO API)", flush=True)
+    return all_results, cached_sibling_ids
 
 
 # ─── Transform ───────────────────────────────────────────────────────────────
@@ -291,6 +368,48 @@ def write_elements_en_us(cur, rows: list[dict], now: datetime) -> int:
     return len(values)
 
 
+# ─── Email report ────────────────────────────────────────────────────────────
+
+def send_scraper_report(locales_done: int, total_locales: int, total_prices: int,
+                        total_elements: int, errors: list[str], duration_s: float) -> None:
+    smtp_host     = os.environ.get("SMTP_HOST", "")
+    smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user     = os.environ.get("SMTP_USER", "")
+    smtp_password = os.environ.get("SMTP_PASSWORD", "")
+    smtp_from     = os.environ.get("SMTP_FROM", "noreply@vaultcrest.com")
+    report_email  = os.environ.get("REPORT_EMAIL", "")
+    if not smtp_host or not report_email:
+        return
+
+    status  = "OK" if not errors else f"{len(errors)} error(s)"
+    subject = f"[MOC Source] PAB Scraper: {status} — {locales_done}/{total_locales} locales, {total_prices:,} rows"
+    mins, secs = divmod(int(duration_s), 60)
+    body = (
+        f"PAB scraper run complete.\n\n"
+        f"Locales scraped : {locales_done}/{total_locales}\n"
+        f"Price rows      : {total_prices:,}\n"
+        f"Element rows    : {total_elements:,}\n"
+        f"Duration        : {mins}m {secs}s\n"
+    )
+    if errors:
+        body += "\nErrors:\n" + "\n".join(f"  • {e}" for e in errors)
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject
+    msg["From"]    = smtp_from
+    msg["To"]      = report_email
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.sendmail(smtp_from, [report_email], msg.as_string())
+        print(f"Run report emailed to {report_email}", flush=True)
+    except Exception as e:
+        print(f"Failed to send report email: {e}", file=sys.stderr)
+
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def get_db_url() -> str:
@@ -306,22 +425,56 @@ def main():
     parser = argparse.ArgumentParser(description="Scrape PAB inventory to PostgreSQL")
     parser.add_argument("--locale", help="Scrape a single locale only (e.g. en-us)")
     parser.add_argument("--dry-run", action="store_true", help="Fetch but do not write to DB")
+    parser.add_argument(
+        "--mode", choices=["full", "oos"], default="full",
+        help="full: all 18 locales, prices + availability (daily). "
+             "oos: 3 representative locales only, propagates in_stock to sibling locales (hourly).",
+    )
     args = parser.parse_args()
 
-    locales = [args.locale] if args.locale else LOCALES
+    if args.mode == "oos":
+        locales = OOS_LOCALES
+    else:
+        locales = [args.locale] if args.locale else LOCALES
     now = datetime.now(timezone.utc)
+    run_start_time = time.monotonic()
 
     conn = None if args.dry_run else psycopg2.connect(get_db_url())
 
     total_prices = 0
     total_elements = 0
     run_start = now  # all writes in this run have updated_at >= now
+    errors: list[str] = []
+    locales_done = 0
+    run_id: int | None = None
+
+    if conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO scraper_runs (mode, started_at) VALUES (%s, %s) RETURNING id",
+                (args.mode, now),
+            )
+            run_id = cur.fetchone()[0]
+        conn.commit()
 
     try:
         for i, locale in enumerate(locales):
             print(f"\n[{i+1}/{len(locales)}] Scraping {locale} ...", flush=True)
 
-            raw = fetch_locale(locale)
+            try:
+                raw, cached_ids = fetch_locale(
+                    locale,
+                    conn if not args.dry_run else None,
+                    use_sibling_cache=(args.mode == "oos"),
+                )
+            except Exception as e:
+                msg = f"{locale}: fetch failed — {e}"
+                print(f"  ERROR: {msg}", file=sys.stderr)
+                errors.append(msg)
+                if i < len(locales) - 1:
+                    time.sleep(INTER_LOCALE_DELAY)
+                continue
+
             rows = [r for item in raw if (r := parse_item(item, locale)) is not None]
             print(f"  [{locale}] parsed {len(rows)} valid rows", flush=True)
 
@@ -330,9 +483,10 @@ def main():
             else:
                 locale_start = run_start
                 with conn.cursor() as cur:
-                    if locale == "en-us":
+                    if locale == "en-us" and args.mode == "full":
                         # Full upsert: updates pricing + channel on existing rows,
-                        # and creates any brand-new elements LEGO has added since last seed
+                        # and creates any brand-new elements LEGO has added since last seed.
+                        # Skipped in OOS mode — channel data is refreshed by the daily full run.
                         n2 = write_elements_en_us(cur, rows, now)
                         total_elements += n2
                         print(f"  [{locale}] upserted {n2} lego_elements rows", flush=True)
@@ -353,10 +507,32 @@ def main():
                 conn.commit()
                 print(f"  [{locale}] committed {n} price rows", flush=True)
 
+                # OOS mode: propagate in_stock from this representative locale
+                # to all sibling locales in the same group. Prices stay from
+                # the last full run — only stock status is synced here.
+                if args.mode == "oos":
+                    siblings = get_group_siblings(locale)
+                    if siblings:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                UPDATE lego_element_prices target
+                                SET in_stock = source.in_stock,
+                                    updated_at = %(now)s
+                                FROM lego_element_prices source
+                                WHERE source.locale = %(rep)s
+                                  AND target.element_id = source.element_id
+                                  AND target.locale = ANY(%(siblings)s)
+                            """, {"now": now, "rep": locale, "siblings": siblings})
+                            propagated = cur.rowcount
+                        conn.commit()
+                        print(f"  [{locale}] propagated in_stock → {propagated} rows "
+                              f"across {len(siblings)} sibling locales", flush=True)
+
+            locales_done += 1
             if i < len(locales) - 1:
                 time.sleep(INTER_LOCALE_DELAY)
 
-        if not args.dry_run and conn and len(locales) > 1:
+        if not args.dry_run and conn and len(locales) > 1 and args.mode == "full":
             # After ALL locales: elements not seen anywhere this run have left the PAB
             # catalog entirely — mark their canonical channel as 'oos'.
             # (Must run after all locales so cross-locale-only elements aren't falsely marked.)
@@ -368,10 +544,26 @@ def main():
             conn.commit()
 
     finally:
+        if conn and run_id:
+            finished = datetime.now(timezone.utc)
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE scraper_runs
+                    SET finished_at = %s, locales_done = %s,
+                        prices_upserted = %s, errors_count = %s, success = %s
+                    WHERE id = %s
+                """, (finished, locales_done, total_prices, len(errors), len(errors) == 0, run_id))
+            conn.commit()
         if conn:
             conn.close()
 
-    print(f"\nDone. {total_prices} price rows upserted, {total_elements} element rows updated.")
+    duration_s = time.monotonic() - run_start_time
+    print(f"\nDone. {total_prices:,} price rows upserted, {total_elements:,} element rows updated. "
+          f"({int(duration_s//60)}m {int(duration_s%60)}s)")
+
+    if not args.dry_run:
+        send_scraper_report(locales_done, len(locales), total_prices, total_elements,
+                            errors, duration_s)
 
 
 if __name__ == "__main__":
