@@ -44,6 +44,21 @@ async function fetchPabPrice(partNo, colorId) {
   }
 }
 
+async function fetchPabPricesForPart(partNo) {
+  const locale = await getLocale();
+  const key = `prices:${locale}:${partNo}`;
+  if (priceCache.has(key)) return priceCache.get(key);
+  try {
+    const res = await fetch(`${API_BASE}/api/v1/parts/pab/prices/${partNo}?locale=${locale}`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    priceCache.set(key, data);
+    return data;
+  } catch {
+    return [];
+  }
+}
+
 async function fetchPabPriceByElement(elementId) {
   const locale = await getLocale();
   const key = `element:${locale}:${elementId}`;
@@ -121,6 +136,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
   if (msg.type === "GET_PAB_PRICE_BY_ELEMENT") {
     fetchPabPriceByElement(msg.elementId).then(sendResponse);
+    return true;
+  }
+  if (msg.type === "GET_PAB_PRICES_FOR_PART") {
+    fetchPabPricesForPart(msg.partNo).then(sendResponse);
     return true;
   }
   if (msg.type === "OPEN_MOC_SOURCE") {

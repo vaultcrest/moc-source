@@ -213,6 +213,54 @@ async def pab_price(
     )]
 
 
+@router.get("/pab/prices/{part_no}", response_model=list[LocalePriceResult], tags=["pab"])
+async def pab_all_prices_for_part(
+    part_no: str,
+    locale: str = Query("en-us"),
+    db: AsyncSession = Depends(get_db),
+):
+    """All in-stock PAB color/price combinations for a part number. Used by catalog page injection."""
+    from ..models import BricklinkMapping, Color, LegoElementPrice
+    from sqlalchemy import desc
+
+    def stmt(loc: str):
+        return (
+            select(
+                LegoElementPrice.element_id,
+                LegoElement.design_id,
+                LegoElement.lego_name,
+                BricklinkMapping.part_no.label("bl_part_no"),
+                BricklinkMapping.part_name.label("bl_part_name"),
+                BricklinkMapping.color_id.label("bl_color_id"),
+                Color.bl_name.label("bl_color_name"),
+                Color.hex.label("bl_color_hex"),
+                Color.lego_id.label("lego_color_id"),
+                Color.lego_name.label("lego_color_name"),
+                LegoElementPrice.locale,
+                LegoElementPrice.channel,
+                LegoElementPrice.price_cents,
+                LegoElementPrice.price_formatted,
+                LegoElementPrice.currency_code,
+                LegoElementPrice.in_stock,
+            )
+            .join(BricklinkMapping, BricklinkMapping.element_id == LegoElementPrice.element_id)
+            .join(LegoElement, LegoElement.element_id == LegoElementPrice.element_id)
+            .outerjoin(Color, Color.bl_id == BricklinkMapping.color_id)
+            .where(BricklinkMapping.part_no == part_no)
+            .where(LegoElementPrice.locale == loc)
+            .where(LegoElementPrice.channel.in_(["pab", "bap"]))
+            .where(LegoElementPrice.in_stock == True)
+            .order_by(desc(LegoElementPrice.price_cents))
+        )
+
+    result = await db.execute(stmt(locale))
+    rows = result.mappings().all()
+    if not rows and locale != "en-us":
+        result = await db.execute(stmt("en-us"))
+        rows = result.mappings().all()
+    return [LocalePriceResult(**dict(r)) for r in rows]
+
+
 @router.get("/element/{element_id}/price", response_model=list[LocalePriceResult], tags=["pab"])
 async def pab_price_by_element(
     element_id: int,

@@ -769,3 +769,101 @@ enforcePageSize();
 setupBuyPage();
 setupObserver();
 run();
+
+// ─── Catalog item page PAB price injection ───────────────────────────────────
+
+function isCatalogPage() {
+  return location.pathname.startsWith("/v2/catalog/catalogitem.page");
+}
+
+function parseCatalogUrl() {
+  const params  = new URLSearchParams(location.search);
+  const partNo  = params.get("P");
+  const hash    = new URLSearchParams(location.hash.replace(/^#/, ""));
+  const cParam  = hash.get("C");
+  // C=0 means "Not Applicable" or no color — treat same as absent
+  const colorId = cParam && cParam !== "0" ? parseInt(cParam, 10) : null;
+  return { partNo, colorId };
+}
+
+function findCatalogInjectTarget() {
+  // Target: "Item Consists Of" column
+  for (const el of document.querySelectorAll("b, strong, span, td, th, div")) {
+    if (/^item\s+consists\s+of$/i.test(el.textContent.trim())) {
+      return el.closest("td") ?? el.parentElement;
+    }
+  }
+  // Fallback: "Item Info" column
+  for (const el of document.querySelectorAll("b, strong, span, td, th, div")) {
+    if (/^item\s+info$/i.test(el.textContent.trim())) {
+      return el.closest("td") ?? el.parentElement;
+    }
+  }
+  return document.querySelector("h1")?.parentElement ?? null;
+}
+
+function renderPabBadge(entry, noColor) {
+  const hex    = entry.bl_color_hex ? `#${entry.bl_color_hex}` : null;
+  const swatch = hex
+    ? `<span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${hex};border:1px solid rgba(0,0,0,0.2);vertical-align:middle;margin-right:4px;flex-shrink:0"></span>`
+    : "";
+  const channelLabel = entry.channel === "pab" ? "Bestseller" : "Standard";
+  const channelColor = entry.channel === "pab" ? "#15803d" : "#1d4ed8";
+  const colorLine    = noColor
+    ? `<div style="font-size:12px;color:#6b7280">N/A</div>`
+    : entry.bl_color_name
+    ? `<div style="display:flex;align-items:center;font-size:12px;color:#374151">${swatch}${entry.bl_color_name}</div>`
+    : "";
+  return `
+    <div id="moc-pab-badge" style="display:block;
+      background:#f0fdf4;border:1px solid #bbf7d0;border-radius:6px;
+      padding:6px 10px;font-family:sans-serif;margin-top:8px;line-height:1.7">
+      <div style="font-size:14px;font-weight:700;color:#111">${entry.price_formatted || "—"}${noColor ? `<span style="font-size:11px;font-weight:400;color:#6b7280;margin-left:5px">max price</span>` : ""}</div>
+      <div style="font-size:12px;font-weight:600;color:${channelColor}">${channelLabel}</div>
+      ${colorLine}
+      <div style="font-size:11px;color:#9ca3af">via MOC Source</div>
+    </div>`;
+}
+
+async function injectCatalogPabPrice() {
+  if (!isCatalogPage()) return;
+
+  document.getElementById("moc-pab-badge")?.remove();
+
+  const { partNo, colorId } = parseCatalogUrl();
+  if (!partNo) return;
+
+  let entry = null;
+  let noColor = false;
+
+  if (colorId) {
+    entry = await chrome.runtime.sendMessage({ type: "GET_PAB_PRICE", partNo, colorId });
+    if (!entry || !entry.channel) return;
+  } else {
+    noColor = true;
+    const all = await chrome.runtime.sendMessage({ type: "GET_PAB_PRICES_FOR_PART", partNo });
+    if (!all || !all.length) return;
+    entry = all[0]; // highest price first (API orders by price_cents desc)
+  }
+
+  if (!entry || !entry.channel) return;
+
+  // Retry finding the target up to 5 times (page may still be rendering)
+  let target = null;
+  for (let i = 0; i < 5; i++) {
+    target = findCatalogInjectTarget();
+    if (target) break;
+    await new Promise(r => setTimeout(r, 300));
+  }
+  if (!target) return;
+
+  const wrapper = document.createElement("div");
+  wrapper.innerHTML = renderPabBadge(entry, noColor);
+  target.appendChild(wrapper.firstElementChild);
+}
+
+if (isCatalogPage()) {
+  window.addEventListener("hashchange", () => injectCatalogPabPrice());
+  const delay = document.readyState === "loading" ? 800 : 300;
+  setTimeout(() => injectCatalogPabPrice(), delay);
+}

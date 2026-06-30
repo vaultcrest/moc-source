@@ -8,7 +8,8 @@
     "https://*.bricklink.com/*",
     "https://store.bricklink.com/*",
     "https://api.moc-source.com/*",
-    "https://www.lego.com/*"
+    "https://www.lego.com/*",
+    "https://www.bricklink.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -24,6 +25,7 @@
       "matches": [
         "https://www.bricklink.com/v2/wanted/*",
         "https://www.bricklink.com/v2/globalcart.page*",
+        "https://www.bricklink.com/v2/catalog/catalogitem.page*",
         "https://store.bricklink.com/*"
       ],
       "js": ["content.js"],
