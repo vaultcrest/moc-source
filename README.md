@@ -33,11 +33,14 @@ Manifest V3 Chrome/Brave extension. Clicking the toolbar icon opens `index.html`
 | BrickLink buy page modal (`/v2/wanted/buy.page`) | Inside store price cell |
 | BrickLink store listing (`store.bricklink.com/#/shop`) | Between price and Add to Cart |
 | BrickLink store cart (`store.bricklink.com/#/cart`) | Inside price cell |
+| BrickLink catalog item (`/v2/catalog/catalogitem.page`) | Inside "Item Consists Of" column |
 
 Badge types:
 - Green **PAB** = Pick a Brick (fast shipping)
 - Amber **STD** = Bricks and Pieces (30+ day shipping)
 - Grey **PAB: N/A** = not available on LEGO direct
+
+Catalog badge behaviour: shows the price for the selected color tab; if no color is selected (`C=0` or no `C` param in the URL hash) shows the highest available PAB price across all colors with a "max price" label and "N/A" for the color line. Listens to `hashchange` so it updates as the user switches color tabs.
 
 **"Save to MOC Source" button** injected on:
 - Wanted list pages — next to the list name (`h2.tight`); deduplicates by name on re-import
@@ -80,6 +83,8 @@ Response includes:
 **Rebrickable enrichment** (`rebrickable_client.py`, `enrichment.py`): When a BL part+color combo is not in the DB, the endpoint returns what it knows (name, color) and schedules a background task. The task cross-references Rebrickable — trying the primary part number then any known alternates from `bricklink_alternates` — to find LEGO element IDs, then upserts them into `lego_elements` + `bricklink_mappings`. The next request for the same part returns the full element ID. BL→RB color mapping is fetched once per process and cached in memory. Sends an enrichment email report if SMTP is configured.
 
 Full deploy: `ansible-playbook site.yml` from `moc-source-infra/` (repos must be siblings on disk).
+
+**Email config** (`mocsource/config.py`): enrichment reports are sent via SMTP. `smtp_from` defaults to `noreply@vaultcrest.com`; `report_email` defaults to `sean.m.sulliv@gmail.com`. Override both in `inventory/group_vars/app/vars.yml`. Note: if `smtp_user` and the routing destination for `report_email` resolve to the same Gmail account, Gmail silently deduplicates the message — use a different destination address.
 
 ### Static pages (`static/`)
 
@@ -159,7 +164,8 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Multi-region pricing — 18 locales in DB, API `?locale=` param, extension reads pabRegion setting
 - [x] Hourly scraper running on app server
 - [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible
-- [x] Chrome Web Store — extension published (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
+- [x] Chrome Web Store — extension v0.3.0 published (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
+- [x] BrickLink catalog badge — injected into "Item Consists Of" column; shows color-specific PAB price or max price across all colors (no-color case)
 - [x] Privacy page at https://api.moc-source.com/privacy
 - [x] Extension icon — Vaultcrest brick shield
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
