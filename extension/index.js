@@ -943,15 +943,25 @@ async function renderProjectDetail(id, content) {
   }
 
   function buildBlSection(cart, allocs) {
-    const allocatedKeys = new Set(
-      Object.entries(allocs)
-        .filter(([, a]) => (a.storeQty?.[cart.id] ?? 0) > 0)
-        .map(([key]) => key)
-    );
-    // One row per actual cart lot so multiple listings of the same part at different prices are shown individually
-    const blAllocs = (cart.parts ?? [])
-      .filter(cp => allocatedKeys.has(`${cp.partNo}_${cp.colorId}`))
-      .map(cp => ({ key: `${cp.partNo}_${cp.colorId}`, qty: cp.qty ?? 1, cartPart: cp }));
+    // Build one row per lot, but only up to the allocated qty for each part+color.
+    // Takes cheapest lots first so expensive extras don't appear when allocQty < total cart qty.
+    const blAllocs = [];
+    for (const [key, alloc] of Object.entries(allocs)) {
+      const allocQty = alloc.storeQty?.[cart.id] ?? 0;
+      if (allocQty <= 0) continue;
+      const [partNo, colorId] = key.split("_");
+      const matchingLots = (cart.parts ?? [])
+        .filter(cp => cp.partNo === partNo && String(cp.colorId) === String(colorId))
+        .map(cp => ({ cp, price: parseStorePrice(cp.storePrice) ?? Infinity }))
+        .sort((a, b) => a.price - b.price);
+      let remaining = allocQty;
+      for (const { cp } of matchingLots) {
+        if (remaining <= 0) break;
+        const take = Math.min(remaining, cp.qty ?? 1);
+        blAllocs.push({ key, qty: take, cartPart: cp });
+        remaining -= take;
+      }
+    }
     const allocPcs   = blAllocs.reduce((s, e) => s + e.qty, 0);
     const selSet     = selectedBlKeys.get(cart.id) ?? new Set();
     const selCount   = blAllocs.filter(e => selSet.has(e.key)).length;
