@@ -1494,21 +1494,48 @@ async function renderProjectDetail(id, content) {
 
   function showBlCartSave(cart) {
     const poolKeys = new Set(poolParts.map(p => `${p.partNo}_${p.colorId}`));
-    const changes = [];
-    for (const cp of (cart.parts ?? [])) {
-      const key = `${cp.partNo}_${cp.colorId}`;
-      if (!poolKeys.has(key)) continue;
-      const newQty  = currentAllocs[key]?.storeQty?.[cart.id] ?? 0;
-      const oldQty  = cp.qty ?? 1;
-      if (newQty === oldQty) continue;
-      const pp      = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-      const name      = pp?.pabEntry?.bl_part_name || pp?.name || cp.partNo;
-      const colorName = pp?.pabEntry?.bl_color_name || String(cp.colorId);
-      changes.push({ partNo: cp.partNo, colorId: cp.colorId, name, colorName, oldQty, newQty });
+
+    // Compute per-lot new quantities. Sort cheapest-first so we keep the best lots
+    // and remove expensive extras when the same part has multiple listings.
+    const allocLeft = {};
+    for (const [key, alloc] of Object.entries(currentAllocs)) {
+      const q = alloc.storeQty?.[cart.id] ?? 0;
+      if (q > 0) allocLeft[key] = q;
     }
+    const cartParts = cart.parts ?? [];
+    const sorted = cartParts
+      .map((cp, idx) => ({ cp, idx, key: `${cp.partNo}_${cp.colorId}`, price: parseStorePrice(cp.storePrice) ?? Infinity }))
+      .sort((a, b) => a.price - b.price);
+    const lotNewQty = new Map(); // original index -> newQty
+    const allocLeftCopy = { ...allocLeft };
+    for (const { cp, idx, key } of sorted) {
+      if (!poolKeys.has(key)) { lotNewQty.set(idx, cp.qty ?? 1); continue; }
+      const remaining = allocLeftCopy[key] ?? 0;
+      const oldQty = cp.qty ?? 1;
+      const newQty = Math.min(oldQty, remaining);
+      allocLeftCopy[key] = Math.max(0, remaining - oldQty);
+      lotNewQty.set(idx, newQty);
+    }
+
+    const changes = [];
+    cartParts.forEach((cp, idx) => {
+      const key = `${cp.partNo}_${cp.colorId}`;
+      if (!poolKeys.has(key)) return;
+      const oldQty = cp.qty ?? 1;
+      const newQty = lotNewQty.get(idx) ?? 0;
+      if (newQty === oldQty) return;
+      const pp = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+      changes.push({
+        partNo: cp.partNo, colorId: cp.colorId, storePrice: cp.storePrice,
+        name: pp?.pabEntry?.bl_part_name || pp?.name || cp.partNo,
+        colorName: pp?.pabEntry?.bl_color_name || String(cp.colorId),
+        oldQty, newQty
+      });
+    });
+
     const removed      = changes.filter(c => c.newQty === 0);
     const reduced      = changes.filter(c => c.newQty > 0);
-    const nonPoolCount = (cart.parts ?? []).filter(cp => !poolKeys.has(`${cp.partNo}_${cp.colorId}`)).length;
+    const nonPoolCount = cartParts.filter(cp => !poolKeys.has(`${cp.partNo}_${cp.colorId}`)).length;
     const noChanges    = changes.length === 0;
     const fmt    = c => `<div style="padding:2px 0;font-size:12px">${esc(c.name)}<span style="color:#9ca3af;margin-left:6px">${esc(c.colorName)}</span></div>`;
     const fmtRed = c => `<div style="padding:2px 0;font-size:12px">${esc(c.name)} <span style="color:#9ca3af">${esc(c.colorName)}</span> <span style="color:#9ca3af">${c.oldQty} → <strong>${c.newQty}</strong></span></div>`;
@@ -1544,15 +1571,15 @@ async function renderProjectDetail(id, content) {
         const stored = carts.find(c => c.id === cart.id);
         if (stored) {
           stored.parts = (stored.parts ?? [])
-            .filter(cp => {
+            .filter((cp, idx) => {
               const key = `${cp.partNo}_${cp.colorId}`;
               if (!poolKeys.has(key)) return true;
-              return (currentAllocs[key]?.storeQty?.[cart.id] ?? 0) > 0;
+              return (lotNewQty.get(idx) ?? 0) > 0;
             })
-            .map(cp => {
+            .map((cp, idx) => {
               const key = `${cp.partNo}_${cp.colorId}`;
               if (!poolKeys.has(key)) return cp;
-              return { ...cp, qty: currentAllocs[key]?.storeQty?.[cart.id] ?? cp.qty };
+              return { ...cp, qty: lotNewQty.get(idx) ?? cp.qty };
             });
           stored.partsCount = stored.parts.length;
           await chrome.storage.local.set({ carts });
@@ -1560,9 +1587,10 @@ async function renderProjectDetail(id, content) {
         }
         if (changes.length > 0) {
           const { pendingBlCartWriteback = {} } = await chrome.storage.local.get("pendingBlCartWriteback");
-          // Key by storeUrl when available (looked up by URL in content.js), fall back to cart.id
           const writebackKey = cart.storeUrl || cart.id;
-          pendingBlCartWriteback[writebackKey] = changes.map(c => ({ partNo: c.partNo, colorId: c.colorId, newQty: c.newQty, name: c.name, colorName: c.colorName }));
+          // Include storePrice so the content script can match the exact lot when the same
+          // part+color appears multiple times at different prices
+          pendingBlCartWriteback[writebackKey] = changes.map(c => ({ partNo: c.partNo, colorId: c.colorId, storePrice: c.storePrice, newQty: c.newQty, name: c.name, colorName: c.colorName }));
           await chrome.storage.local.set({ pendingBlCartWriteback });
         }
         modal.remove();

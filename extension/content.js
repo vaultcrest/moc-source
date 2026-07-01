@@ -1,6 +1,12 @@
 // ─── State ───────────────────────────────────────────────────────────────────
 
-const rowPrices = new Map(); // row element → price in dollars (number)
+const rowPrices   = new Map(); // row element → PAB/STD price in dollars (number)
+const rowChannels = new Map(); // row element → "pab" | "bap" | "na"
+
+function pabPageUrl(locale, elementId) {
+  const base = `https://www.lego.com/${locale || "en-us"}/pick-and-build/pick-a-brick`;
+  return elementId ? `${base}?query=${elementId}` : base;
+}
 
 // ─── Import helpers ──────────────────────────────────────────────────────────
 
@@ -101,7 +107,21 @@ function collectCartParts() {
       const text = clone.textContent.trim();
       if (text) storePrice = text;
     }
-    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice });
+    // Detect condition (New vs Used) from the cart item DOM
+    let condition = "N";
+    const condEl = article.querySelector("[class*='condition' i], [class*='Condition'], .lot-condition");
+    if (condEl) {
+      condition = /used/i.test(condEl.textContent) ? "U" : "N";
+    } else {
+      // Fallback: scan article text but only look at small descriptive spans to avoid false positives
+      const descSpans = article.querySelectorAll("span, div.item-condition, .description");
+      for (const el of descSpans) {
+        const t = el.textContent.trim();
+        if (/^used$/i.test(t)) { condition = "U"; break; }
+        if (/^new$/i.test(t)) { condition = "N"; break; }
+      }
+    }
+    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice, condition });
   }
   return parts;
 }
@@ -173,6 +193,13 @@ function injectBadge(row, pabEntry) {
     badge.style.color = "#6c757d";
   }
 
+  if (pabEntry && pabEntry.channel) {
+    const url = pabPageUrl(pabEntry.locale, pabEntry.element_id);
+    badge.style.cursor = "pointer";
+    badge.title = "Open in LEGO Pick a Brick";
+    badge.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); window.open(url, "_blank"); });
+  }
+
   // Wanted list   → inside .wl-col-price
   // Store cart    → inside div.price-col
   // Store listing → before div.addToCart
@@ -190,9 +217,158 @@ function injectBadge(row, pabEntry) {
     row.appendChild(badge);
   }
 
+  rowChannels.set(row, pabEntry?.channel ?? "na");
   if (pabEntry && pabEntry.price_cents) {
     rowPrices.set(row, pabEntry.price_cents / 100);
   }
+}
+
+function injectFillWantedQtyButton() {
+  if (location.hostname !== "store.bricklink.com") return;
+  if (!location.hash.startsWith("#/shop")) return;
+  if (document.querySelector(".moc-fill-wanted-btn")) return;
+
+  // Only active when browsing a store filtered by a wanted list
+  const oIdx = location.hash.indexOf("?o=");
+  if (oIdx === -1) return;
+  let hashO = {};
+  try { hashO = JSON.parse(decodeURIComponent(location.hash.slice(oIdx + 3))); } catch {
+    try { hashO = JSON.parse(location.hash.slice(oIdx + 3)); } catch {}
+  }
+  if (!hashO.bOnWantedList) return;
+
+  const container = document.querySelector("div.view-items.store-items");
+  if (!container) return;
+
+  const btn = document.createElement("button");
+  btn.className = "moc-fill-wanted-btn";
+  btn.textContent = "Fill Wanted Qtys";
+  btn.style.cssText = "display:inline-block;padding:6px 14px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:500;margin-bottom:10px;";
+
+  btn.addEventListener("click", async () => {
+    const { blCondition = "U" } = await chrome.storage.sync.get({ blCondition: "U" });
+    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
+    const articles = [...document.querySelectorAll("article.item.component.table-row")];
+
+    // Returns the article with the lowest store price in a Map<article, price|null>.
+    // Falls back to the first entry when all prices are unknown.
+    function cheapestIn(map) {
+      let bestArt = null, bestPrice = Infinity;
+      for (const [art, price] of map) {
+        const p = (price != null) ? price : Infinity;
+        if (bestArt === null || p < bestPrice) { bestArt = art; bestPrice = p; }
+      }
+      return { art: bestArt, price: bestPrice };
+    }
+
+    // Pass 1: group valid articles by part+color key.
+    // Skips rows already in cart (re-filling them triggers a BL cart error).
+    // Stores the extracted store price per article for cheapest-lot selection in pass 2.
+    const byPart = new Map(); // partKey → { N: Map<article, price|null>, U: Map<article, price|null> }
+    for (const article of articles) {
+      const stockEl  = article.querySelector(".buy p strong span");
+      const wantedEl = article.querySelector(".in-wanted-list .wanted-condition > span:first-child .text");
+      const input    = article.querySelector("input.addToCartQty");
+      if (!stockEl || !wantedEl || !input) continue;
+      if ((parseInt(stockEl.textContent.trim(), 10) || 0) <= 0) continue;
+      if ((parseInt(wantedEl.textContent.trim(), 10) || 0) <= 0) continue;
+
+      const cartQtyEl = article.querySelector(".cart-qty");
+      const alreadyInCart = cartQtyEl
+        ? (parseInt((cartQtyEl.textContent.match(/(\d+)/) || [])[1] || "0", 10) || 0)
+        : 0;
+      if (alreadyInCart > 0) continue;
+
+      const condEl = article.querySelector("[class*='condition' i], [class*='Condition'], .lot-condition");
+      let cond = "N";
+      if (condEl) {
+        cond = /used/i.test(condEl.textContent) ? "U" : "N";
+      } else {
+        const c = article.cloneNode(true);
+        c.querySelectorAll(".in-wanted-list, div.addToCart, .moc-source-badge").forEach(el => el.remove());
+        if (/\bused\b/i.test(c.textContent)) cond = "U";
+      }
+
+      // Extract store price so pass 2 can pick cheapest when multiple lots exist
+      const cl = article.cloneNode(true);
+      cl.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
+      const pm = cl.textContent.match(/\$([\d,]+\.[\d]{2})/);
+      const storePrice = pm ? parseFloat(pm[1].replace(/,/g, "")) : null;
+
+      const img = article.querySelector("img[src*='ItemImage/PT/']");
+      const m = img?.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+      const partKey = m ? `${m[2]}:${m[1]}` : article.dataset.id || Math.random().toString();
+
+      if (!byPart.has(partKey)) byPart.set(partKey, { N: new Map(), U: new Map() });
+      byPart.get(partKey)[cond].set(article, storePrice);
+    }
+
+    // Pass 2: pick one lot per part — the cheapest within the preferred condition,
+    // but cross to the other condition if it's strictly cheaper.
+    // Falls back to the other condition when the preferred one has no lots in this store.
+    const toFill = new Set();
+    for (const { N: newArts, U: usedArts } of byPart.values()) {
+      const bestNew  = cheapestIn(newArts);
+      const bestUsed = cheapestIn(usedArts);
+      let pick = null;
+      if (blCondition === "N") {
+        if (bestNew.art && bestUsed.art)  pick = bestUsed.price < bestNew.price ? bestUsed.art : bestNew.art;
+        else                              pick = bestNew.art ?? bestUsed.art;
+      } else {
+        if (bestNew.art && bestUsed.art)  pick = bestNew.price < bestUsed.price ? bestNew.art : bestUsed.art;
+        else                              pick = bestUsed.art ?? bestNew.art;
+      }
+      if (pick) toFill.add(pick);
+    }
+
+    let filled = 0, alreadyFull = 0, pabSkipped = 0, condSkipped = 0;
+
+    for (const article of articles) {
+      const stockEl  = article.querySelector(".buy p strong span");
+      const wantedEl = article.querySelector(".in-wanted-list .wanted-condition > span:first-child .text");
+      const input    = article.querySelector("input.addToCartQty");
+      if (!stockEl || !wantedEl || !input) continue;
+
+      // Already in cart — skip to avoid BL cart error
+      const cartQtyEl = article.querySelector(".cart-qty");
+      const alreadyInCart = cartQtyEl
+        ? (parseInt((cartQtyEl.textContent.match(/(\d+)/) || [])[1] || "0", 10) || 0)
+        : 0;
+      if (alreadyInCart > 0) { alreadyFull++; continue; }
+
+      if (!toFill.has(article)) { condSkipped++; continue; }
+
+      const storeStock = parseInt(stockEl.textContent.trim(), 10) || 0;
+      const wantedQty  = parseInt(wantedEl.textContent.trim(), 10) || 0;
+      if (storeStock <= 0 || wantedQty <= 0) continue;
+
+      // Skip if store price >= PAB price — only for PAB channel items.
+      // STD (BAP) items always added regardless of price.
+      const pabPrice = rowPrices.get(article);
+      if (pabPrice !== undefined && rowChannels.get(article) === "pab") {
+        const c = article.cloneNode(true);
+        c.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
+        const m = c.textContent.match(/\$([\d,]+\.[\d]{2})/);
+        const storePrice = m ? parseFloat(m[1].replace(/,/g, "")) : null;
+        if (storePrice !== null && storePrice >= pabPrice) { pabSkipped++; continue; }
+      }
+
+      const qty = Math.min(wantedQty, storeStock);
+      nativeSetter.call(input, String(qty));
+      input.dispatchEvent(new Event("input",  { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      filled++;
+    }
+
+    const parts = [`✓ ${filled} set`];
+    if (alreadyFull  > 0) parts.push(`${alreadyFull} already in cart`);
+    if (condSkipped  > 0) parts.push(`${condSkipped} skipped`);
+    if (pabSkipped   > 0) parts.push(`${pabSkipped} PAB ≤ store`);
+    btn.textContent = parts.join(" · ");
+    setTimeout(() => { btn.textContent = "Fill Wanted Qtys"; }, 3000);
+  });
+
+  container.insertAdjacentElement("beforebegin", btn);
 }
 
 function injectFillButton() {
@@ -286,10 +462,12 @@ function injectCartImportButton() {
     const { carts = [] } = await chrome.storage.local.get("carts");
     const name = getCartName();
     const existingIdx = carts.findIndex(c => c.name === name);
+    const storeUsername = location.pathname.replace(/^\/+/, "").split("/")[0] || null;
     const entry = {
       id: existingIdx !== -1 ? carts[existingIdx].id : uid(),
       name,
       storeUrl: `${location.origin}${location.pathname}#/cart`,
+      storeUsername,
       partsCount: parts.length,
       importedAt: Date.now(),
       orderSummary: getOrderSummary(),
@@ -317,12 +495,34 @@ function injectCartImportButton() {
 
 // ─── Auto page-size ──────────────────────────────────────────────────────────
 
-function enforcePageSize() {
+async function enforcePageSize() {
   if (!location.pathname.startsWith("/v2/wanted/search.page")) return;
+  const { wantedListPageSize = 10000 } = await chrome.storage.sync.get({ wantedListPageSize: 10000 });
   const url = new URL(location.href);
-  if (url.searchParams.get("pageSize") === "10000") return;
-  url.searchParams.set("pageSize", "10000");
+  if (url.searchParams.get("pageSize") === String(wantedListPageSize)) return;
+  url.searchParams.set("pageSize", String(wantedListPageSize));
   location.replace(url.toString());
+}
+
+async function enforceStorePageSize() {
+  return; // disabled — pgSize injection was corrupting the hash / fighting BL pagination
+  if (location.hostname !== "store.bricklink.com") return;
+  if (!location.hash.startsWith("#/shop")) return;
+  const { storePageSize = 500 } = await chrome.storage.sync.get({ storePageSize: 500 });
+  const hash = location.hash;
+  const oIdx = hash.indexOf("?o=");
+  let o = {};
+  if (oIdx !== -1) {
+    try { o = JSON.parse(decodeURIComponent(hash.slice(oIdx + 3))); } catch {
+      try { o = JSON.parse(hash.slice(oIdx + 3)); } catch {}
+    }
+  }
+  if (o.pgSize === storePageSize) return;
+  o.pgSize = storePageSize;
+  const basePath = oIdx !== -1 ? hash.slice(0, oIdx) : hash;
+  const newUrl = new URL(location.href);
+  newUrl.hash = basePath.slice(1) + "?o=" + encodeURIComponent(JSON.stringify(o));
+  location.replace(newUrl.toString());
 }
 
 // ─── Buy page auto-settings ──────────────────────────────────────────────────
@@ -553,8 +753,9 @@ function buildXmlUploadOverlay(xml, defaultName) {
 
       const added = d2.n4ItemQty ?? itemsToUpload.length;
       const listId = d2.wantedMoreID ?? (isNew ? null : wantedMoreID);
+      const { wantedListPageSize: uploadPageSize = 10000 } = await chrome.storage.sync.get({ wantedListPageSize: 10000 });
       const listUrl = listId
-        ? `/v2/wanted/search.page?wantedMoreID=${listId}&pageSize=10000`
+        ? `/v2/wanted/search.page?wantedMoreID=${listId}&pageSize=${uploadPageSize}`
         : "/v2/wanted/list.page";
 
       el.innerHTML = `
@@ -613,12 +814,20 @@ async function applyBlCartWriteback() {
   const articles = [...document.querySelectorAll("article.store-cart-item")];
   const toRemove = [], toUpdate = [];
 
-  for (const { partNo, colorId, newQty } of changes) {
+  for (const { partNo, colorId, storePrice, newQty } of changes) {
+    // When storePrice is provided, match the specific lot — same part+color can appear
+    // multiple times at different prices when a store lists them individually
     const article = articles.find(a => {
       const img = a.querySelector("img[src*='ItemImage/PT/']");
       if (!img) return false;
       const m = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
-      return m && parseInt(m[1], 10) === colorId && m[2] === partNo;
+      if (!m || parseInt(m[1], 10) !== colorId || m[2] !== partNo) return false;
+      if (!storePrice) return true;
+      const priceCell = a.querySelector("div.price-col");
+      if (!priceCell) return true;
+      const clone = priceCell.cloneNode(true);
+      clone.querySelectorAll(".moc-source-badge").forEach(el => el.remove());
+      return clone.textContent.trim() === storePrice;
     });
     if (!article) continue;
     if (newQty === 0) {
@@ -737,6 +946,7 @@ async function run() {
   console.log(`[MOC Source] Processing ${rows.length} new rows`);
   injectImportButton();
   injectCartImportButton();
+  injectFillWantedQtyButton();
 
   for (const { row, partNo, colorId } of rows) {
     const pabEntry = await chrome.runtime.sendMessage({
@@ -859,7 +1069,12 @@ async function injectCatalogPabPrice() {
 
   const wrapper = document.createElement("div");
   wrapper.innerHTML = renderPabBadge(entry, noColor);
-  target.appendChild(wrapper.firstElementChild);
+  const badgeEl = wrapper.firstElementChild;
+  const url = pabPageUrl(entry.locale, entry.element_id);
+  badgeEl.style.cursor = "pointer";
+  badgeEl.title = "Open in LEGO Pick a Brick";
+  badgeEl.addEventListener("click", () => window.open(url, "_blank"));
+  target.appendChild(badgeEl);
 }
 
 if (isCatalogPage()) {
