@@ -175,7 +175,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Multi-region pricing — 18 locales in DB, API `?locale=` param, extension reads pabRegion setting
 - [x] Hourly scraper running on app server
 - [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible
-- [x] Chrome Web Store — extension v0.3.1 published (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
+- [x] Chrome Web Store — extension v0.4.0 submitted (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`); v0.3.1 approved
 - [x] BrickLink catalog badge — injected into "Item Consists Of" column; shows color-specific PAB price or max price across all colors (no-color case)
 - [x] PAB badges are clickable — clicking any PAB/STD badge opens that element on lego.com Pick a Brick in the user's region (`?query={element_id}`); N/A badges are not linked
 - [x] Privacy page at https://api.moc-source.com/privacy
@@ -184,6 +184,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
 - [x] BrickLink API key setting — encrypted storage of BL OAuth consumer key/secret/token/token secret in `chrome.storage.local` (AES-GCM via SubtleCrypto; key derived from the extension ID via PBKDF2, never transmitted)
+- [x] BrickLink market price API — `GET_BL_MARKET_PRICE` handler in background.js; OAuth 1.0a signing (HMAC-SHA1) for BL store API; session-scoped price cache; foundation for BL price column UI
 - [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 fully complete:
   - Phase 1: Project CRUD + `chrome.storage.local` schema (`projects`, allocations, estimatedShipping, scratchWantedListId)
   - Phase 2: Setup view — configure wanted lists, BL store carts, LEGO cart, scratch list per project
@@ -199,13 +200,14 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
   - Phase 6: **⚡ Auto Allocate** — prominent green bar between grand total and pool; reads all BL store cart prices + PAB prices and allocates every pool part to its cheapest source in one click; "Domestic PAB only (skip STD)" checkbox appears automatically if any pool part has a STD/BAP channel entry; LEGO section shows allocations even without a linked LEGO cart (Save/Open buttons hidden until configured)
   - Scratch space definition: strictly zero-allocation parts only (legoQty = 0 AND all storeQty = 0); partially-allocated parts belong to the section they're allocated to, not scratch
 - [x] **Fill Wanted Qtys button** (BL store shop page, `store.bricklink.com/#/shop?bOnWantedList=1`): fills qty inputs for cheapest matching lot per part; condition preference New/Used (default Used); cross-condition cheapest-lot: if opposite condition is strictly cheaper, picks it regardless of preference; skips rows already in cart (avoids BL cart error); skips lots priced ≥ PAB (PAB channel only); status line shows filled / already-in-cart / skipped / PAB≤store counts
+- [x] **Wanted list qty edit overhaul** — inline Want/Have edit no longer closes immediately; root causes fixed: `mousedown` `preventDefault` stops browser stealing focus before click handler runs; blur-based save replaces stale document click listeners; `pendingQtyEditIdx` carries re-open intent through re-render so clicking a different cell switches to it in one click
 
 ## What's Next
 
 1. **Import wanted list or cart from XML** — import BrickLink wanted list or cart from exported XML file
-2. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
-3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-4. **BrickLink price column** — needs BrickLink API integration
+2. **BrickLink price column** — backend OAuth done (`GET_BL_MARKET_PRICE`); UI display in detail view remaining
+3. **Pre-finalization missed deals scanner** — "Check for savings" button in project view; queries BL API for pool parts across all project stores; compares against PAB prices; surfaces per-part and total savings from switching allocations
+4. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
 5. **Color swatches** — BrickLink color ID → hex map for color dot in detail view
 6. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
 7. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
