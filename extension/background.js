@@ -1,4 +1,118 @@
 const API_BASE = "https://api.moc-source.com";
+const BL_API_BASE = "https://api.bricklink.com/api/store/v1";
+
+// ─── BrickLink OAuth 1.0a ────────────────────────────────────────────────────
+
+const blPriceCache = new Map(); // key: `${partNo}:${colorId}`, session-scoped
+
+function _pct(s) {
+  return encodeURIComponent(String(s))
+    .replace(/[!'()*]/g, c => "%" + c.charCodeAt(0).toString(16).toUpperCase());
+}
+
+async function blOAuthHeader(method, url, creds) {
+  const { consumerKey, consumerSecret, token, tokenSecret } = creds;
+  const nonce = [...crypto.getRandomValues(new Uint8Array(16))]
+    .map(b => b.toString(16).padStart(2, "0")).join("");
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+
+  const params = {
+    oauth_consumer_key:     consumerKey,
+    oauth_nonce:            nonce,
+    oauth_signature_method: "HMAC-SHA1",
+    oauth_timestamp:        timestamp,
+    oauth_token:            token,
+    oauth_version:          "1.0",
+  };
+
+  // Strip query string from URL for base string; include query params in params object
+  const [baseUrl, qs] = url.split("?");
+  const oauthParams = { ...params };
+  if (qs) {
+    for (const pair of qs.split("&")) {
+      const [k, v] = pair.split("=");
+      oauthParams[decodeURIComponent(k)] = decodeURIComponent(v ?? "");
+    }
+  }
+
+  const sortedParams = Object.entries(oauthParams)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${_pct(k)}=${_pct(v)}`)
+    .join("&");
+
+  const baseString = [method.toUpperCase(), _pct(baseUrl), _pct(sortedParams)].join("&");
+  const signingKey = `${_pct(consumerSecret)}&${_pct(tokenSecret)}`;
+
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", enc.encode(signingKey), { name: "HMAC", hash: "SHA-1" }, false, ["sign"]
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, enc.encode(baseString));
+  params.oauth_signature = btoa(String.fromCharCode(...new Uint8Array(sig)));
+
+  return "OAuth " + Object.entries(params)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, v]) => `${_pct(k)}="${_pct(v)}"`)
+    .join(", ");
+}
+
+async function decryptBLCredentials() {
+  const { blCredentials } = await chrome.storage.local.get("blCredentials");
+  if (!blCredentials) return null;
+  try {
+    const enc = new TextEncoder();
+    const raw = enc.encode(chrome.runtime.id);
+    const base = await crypto.subtle.importKey("raw", raw, "PBKDF2", false, ["deriveKey"]);
+    const key  = await crypto.subtle.deriveKey(
+      { name: "PBKDF2", salt: enc.encode("moc-source-bl"), iterations: 100000, hash: "SHA-256" },
+      base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]
+    );
+    const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
+    const plain = await crypto.subtle.decrypt(
+      { name: "AES-GCM", iv: fromB64(blCredentials.iv) }, key, fromB64(blCredentials.ciphertext)
+    );
+    return JSON.parse(new TextDecoder().decode(plain));
+  } catch { return null; }
+}
+
+async function fetchBLPriceGuide(partNo, colorId, condition) {
+  const cacheKey = `${partNo}:${colorId}:${condition}`;
+  if (blPriceCache.has(cacheKey)) return blPriceCache.get(cacheKey);
+
+  const creds = await decryptBLCredentials();
+  if (!creds?.consumerKey) { blPriceCache.set(cacheKey, null); return null; }
+
+  const url = `${BL_API_BASE}/items/part/${encodeURIComponent(partNo)}/price?guide_type=stock&new_or_used=${condition}&color_id=${encodeURIComponent(colorId)}`;
+  try {
+    const auth = await blOAuthHeader("GET", url, creds);
+    const res  = await fetch(url, { headers: { Authorization: auth } });
+    if (!res.ok) { blPriceCache.set(cacheKey, null); return null; }
+    const body = await res.json();
+    if (body.meta?.code !== 200) { blPriceCache.set(cacheKey, null); return null; }
+    blPriceCache.set(cacheKey, body.data);
+    return body.data;
+  } catch { blPriceCache.set(cacheKey, null); return null; }
+}
+
+async function fetchBLMarketPrice(partNo, colorId, condition) {
+  if (condition === "A") {
+    // Return whichever condition has the lower min_price
+    const [newData, usedData] = await Promise.all([
+      fetchBLPriceGuide(partNo, colorId, "N"),
+      fetchBLPriceGuide(partNo, colorId, "U"),
+    ]);
+    if (!newData && !usedData) return null;
+    if (!newData) return { ...usedData, condition: "U" };
+    if (!usedData) return { ...newData, condition: "N" };
+    const newMin  = parseFloat(newData.min_price)  || Infinity;
+    const usedMin = parseFloat(usedData.min_price) || Infinity;
+    return usedMin < newMin
+      ? { ...usedData, condition: "U" }
+      : { ...newData,  condition: "N" };
+  }
+  const data = await fetchBLPriceGuide(partNo, colorId, condition);
+  return data ? { ...data, condition } : null;
+}
 
 chrome.action.onClicked.addListener(() => {
   chrome.tabs.create({ url: chrome.runtime.getURL("index.html") });
@@ -130,6 +244,10 @@ async function openLegoTransfer(items, channel) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "GET_BL_MARKET_PRICE") {
+    fetchBLMarketPrice(msg.partNo, msg.colorId, msg.condition || "N").then(sendResponse);
+    return true;
+  }
   if (msg.type === "GET_PAB_PRICE") {
     fetchPabPrice(msg.partNo, msg.colorId).then(sendResponse);
     return true;

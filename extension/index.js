@@ -304,6 +304,7 @@ let currentTab = "all";
 let currentSort = "name_color";
 let currentSortDir = "asc";
 let currentPabRegion = "en-us";
+let pendingQtyEditIdx = null;
 let currentProjectTab = "all";
 let poolSort    = "name_color";
 let poolSortDir = "asc";
@@ -3352,7 +3353,10 @@ async function renderListDetail(listType, listId, content) {
       });
     }));
   }
-  renderDetailView(content);
+  // Skip re-render if user is actively editing a qty cell — save/cancel will re-render
+  if (!content.querySelector(".qty-edit")) {
+    renderDetailView(content);
+  }
 }
 
 function isCart()      { return currentDetail.listType === "carts"; }
@@ -3839,6 +3843,14 @@ function attachDetailListeners(content) {
   content.addEventListener("change", e => {
     if (e.target.classList.contains("row-check")) syncSelectAll();
   });
+  // Prevent blur-on-mousedown from firing before the click handler runs.
+  // Without this, clicking a qty-cell fires blur on the active input (moving focus to body)
+  // before our click handler sets pendingQtyEditIdx, so the blur save sees no pending cell.
+  content.addEventListener("mousedown", e => {
+    const cell = e.target.closest(".qty-cell");
+    if (!cell || cell.querySelector(".qty-edit")) return;
+    e.preventDefault();
+  });
   content.addEventListener("click", e => {
     const td = e.target.closest("td");
     if (!td) return;
@@ -4012,7 +4024,15 @@ function attachDetailListeners(content) {
   // ── Wanted list / LEGO cart ──────────────────────────────────────────────────
   if (!isCart()) {
     for (const cell of content.querySelectorAll(".qty-cell")) {
-      cell.addEventListener("click", () => openQtyEdit(cell, content));
+      cell.addEventListener("click", e => {
+        e.stopPropagation();
+        if (cell.querySelector(".qty-edit")) return;
+        // If another cell is being edited, mark this one to re-open after its save re-renders
+        if (content.querySelector(".qty-edit")) {
+          pendingQtyEditIdx = parseInt(cell.dataset.idx, 10);
+        }
+        openQtyEdit(cell, content);
+      });
     }
     for (const btn of content.querySelectorAll(".part-del-btn")) {
       btn.addEventListener("click", async () => {
@@ -4215,6 +4235,13 @@ function attachDetailListeners(content) {
   content.querySelector(".tab-all-blwl-btn")?.addEventListener("click", async () => {
     await queueBlUpload(blWlItems(filteredParts(), "all"));
   });
+
+  if (pendingQtyEditIdx !== null) {
+    const idx = pendingQtyEditIdx;
+    pendingQtyEditIdx = null;
+    const pendingCell = content.querySelector(`.qty-cell[data-idx="${idx}"]`);
+    if (pendingCell) openQtyEdit(pendingCell, content);
+  }
 }
 
 function openQtyEdit(cell, content) {
@@ -4230,7 +4257,10 @@ function openQtyEdit(cell, content) {
   const haveInput = cell.querySelector(".have-input");
   wantInput.focus();
 
+  let done = false;
   async function save() {
+    if (done || !cell.isConnected) return;
+    done = true;
     const want = Math.max(0, parseInt(wantInput.value, 10) || 0);
     const have = Math.max(0, parseInt(haveInput.value, 10) || 0);
     currentDetail.parts[idx].want = want;
@@ -4241,14 +4271,19 @@ function openQtyEdit(cell, content) {
   }
 
   for (const input of [wantInput, haveInput]) {
-    input.addEventListener("keydown", e => { if (e.key === "Enter") save(); if (e.key === "Escape") renderDetailView(content); });
-  }
-  // Small delay so this click doesn't immediately re-trigger save via blur
-  setTimeout(() => {
-    document.addEventListener("click", function onOutside(e) {
-      if (!cell.contains(e.target)) { document.removeEventListener("click", onOutside); save(); }
+    input.addEventListener("keydown", e => {
+      if (e.key === "Enter") save();
+      if (e.key === "Escape") { done = true; pendingQtyEditIdx = null; renderDetailView(content); }
     });
-  }, 50);
+    input.addEventListener("blur", () => {
+      setTimeout(() => {
+        if (cell.contains(document.activeElement)) return;
+        // If focus moved outside all qty-cells, user clicked away — cancel any pending re-open
+        if (!document.activeElement?.closest?.(".qty-cell")) pendingQtyEditIdx = null;
+        save();
+      }, 10);
+    });
+  }
 }
 
 async function savePartsToStorage() {
