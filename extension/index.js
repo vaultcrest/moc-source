@@ -2180,31 +2180,38 @@ async function renderProjectDetail(id, content) {
       const legoEligible = pabCents && (!domesticOnly || channel === "pab");
       const legoPrice = legoEligible ? pabCents / 100 : Infinity;
 
-      // Cheapest BL store carrying this part
-      let bestStorePrice = Infinity;
-      let bestCartId = null;
-      let bestCartQty = 0;
+      // Collect every individual lot across all BL store carts, sorted cheapest first.
+      // This lets us split allocation across carts when one cart's cheapest lot runs out.
+      const allLots = [];
       for (const cart of blCartList) {
-        const cp = (cart.parts ?? []).find(c =>
-          c.partNo === poolPart.partNo && String(c.colorId) === String(poolPart.colorId)
-        );
-        if (!cp) continue;
-        const sp = parseStorePrice(cp.storePrice);
-        if (sp == null) continue;
-        if (sp < bestStorePrice) {
-          bestStorePrice = sp;
-          bestCartId = cart.id;
-          bestCartQty = cp.qty ?? 1;
+        for (const cp of (cart.parts ?? [])) {
+          if (cp.partNo !== poolPart.partNo || String(cp.colorId) !== String(poolPart.colorId)) continue;
+          const sp = parseStorePrice(cp.storePrice);
+          if (sp == null) continue;
+          allLots.push({ cartId: cart.id, qty: cp.qty ?? 1, price: sp });
         }
       }
+      allLots.sort((a, b) => a.price - b.price);
 
-      if (legoPrice === Infinity && bestCartId === null) continue;
+      if (legoPrice === Infinity && !allLots.length) continue;
 
-      if (legoPrice <= bestStorePrice) {
-        proj.allocations[key] = { legoQty: poolPart.wantedQty, storeQty: {} };
+      // Greedily fill from cheapest lots, stopping when LEGO becomes cheaper
+      let remaining = poolPart.wantedQty;
+      const storeQty = {};
+      for (const lot of allLots) {
+        if (remaining <= 0) break;
+        if (lot.price >= legoPrice) break;
+        const take = Math.min(remaining, lot.qty);
+        storeQty[lot.cartId] = (storeQty[lot.cartId] ?? 0) + take;
+        remaining -= take;
+      }
+
+      if (remaining > 0 && legoPrice < Infinity) {
+        proj.allocations[key] = { legoQty: remaining, storeQty };
+      } else if (Object.keys(storeQty).length) {
+        proj.allocations[key] = { legoQty: 0, storeQty };
       } else {
-        const qty = Math.min(poolPart.wantedQty, bestCartQty);
-        proj.allocations[key] = { legoQty: 0, storeQty: { [bestCartId]: qty } };
+        proj.allocations[key] = { legoQty: poolPart.wantedQty, storeQty: {} };
       }
     }
 
@@ -2487,14 +2494,28 @@ async function renderProjectDetail(id, content) {
       for (const poolPart of poolParts) {
         const key = `${poolPart.partNo}_${poolPart.colorId}`;
         if (proj.allocations[key]) continue;
+        // Collect all lots across all carts, cheapest first
+        const allLots = [];
         for (const cart of blCartList) {
-          const cartPart = (cart.parts ?? []).find(cp =>
-            cp.partNo === poolPart.partNo && String(cp.colorId) === String(poolPart.colorId)
-          );
-          if (!cartPart) continue;
-          proj.allocations[key] = { legoQty: 0, storeQty: { [cart.id]: Math.min(poolPart.wantedQty, cartPart.qty ?? 1) } };
+          for (const cp of (cart.parts ?? [])) {
+            if (cp.partNo !== poolPart.partNo || String(cp.colorId) !== String(poolPart.colorId)) continue;
+            const sp = parseStorePrice(cp.storePrice);
+            if (sp == null) continue;
+            allLots.push({ cartId: cart.id, qty: cp.qty ?? 1, price: sp });
+          }
+        }
+        allLots.sort((a, b) => a.price - b.price);
+        if (allLots.length) {
+          let remaining = poolPart.wantedQty;
+          const storeQty = {};
+          for (const lot of allLots) {
+            if (remaining <= 0) break;
+            const take = Math.min(remaining, lot.qty);
+            storeQty[lot.cartId] = (storeQty[lot.cartId] ?? 0) + take;
+            remaining -= take;
+          }
+          proj.allocations[key] = { legoQty: 0, storeQty };
           dirty = true;
-          break;
         }
         // Not matched to any BL cart — check LEGO cart by elementId
         if (!proj.allocations[key] && legoCart) {
