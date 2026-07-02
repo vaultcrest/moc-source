@@ -811,13 +811,9 @@ async function applyBlCartWriteback() {
     return;
   }
 
-  const articles = [...document.querySelectorAll("article.store-cart-item")];
-  const toRemove = [], toUpdate = [];
-
-  for (const { partNo, colorId, storePrice, newQty } of changes) {
-    // When storePrice is provided, match the specific lot — same part+color can appear
-    // multiple times at different prices when a store lists them individually
-    const article = articles.find(a => {
+  // Re-query live DOM on every call — BL React re-renders after each save
+  function findArticle(partNo, colorId, storePrice) {
+    return [...document.querySelectorAll("article.store-cart-item")].find(a => {
       const img = a.querySelector("img[src*='ItemImage/PT/']");
       if (!img) return false;
       const m = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
@@ -829,110 +825,137 @@ async function applyBlCartWriteback() {
       clone.querySelectorAll(".moc-source-badge").forEach(el => el.remove());
       return clone.textContent.trim() === storePrice;
     });
-    if (!article) continue;
-    if (newQty === 0) {
-      toRemove.push(article);
-    } else {
-      toUpdate.push({ article, newQty });
-    }
   }
 
-  if (toRemove.length === 0 && toUpdate.length === 0) return;
+  const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
-  // Apply qty changes immediately (auto-saves on blur in BL's cart)
-  let qtyCount = 0;
-  for (const { article, newQty } of toUpdate) {
-    const input = article.querySelector("input[type='number']");
-    if (input && parseInt(input.value, 10) !== newQty) {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
-      setter.call(input, String(newQty));
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-      input.dispatchEvent(new FocusEvent("blur", { bubbles: true }));
-      qtyCount++;
-    }
-  }
+  // Resolve live DOM quantities — compare actual cart state vs allocation target
+  const allQtyChanges = changes.filter(c => c.newQty > 0).map(c => {
+    const article = findArticle(c.partNo, c.colorId, c.storePrice);
+    const liveQty = article ? (parseInt(article.querySelector("input[type='number']")?.value, 10) || 0) : null;
+    return { ...c, liveQty };
+  });
+  // Items already at target qty or not in DOM are skipped
+  const qtyChanges = allQtyChanges.filter(c => c.liveQty !== null && c.liveQty !== c.newQty);
+  const removals   = changes.filter(c => c.newQty === 0);
+  if (qtyChanges.length === 0 && removals.length === 0) return;
 
-  // Build item metadata map from stored change metadata
-  const labelMap = new Map();
-  for (const c of changes) {
-    labelMap.set(`${c.partNo}_${c.colorId}`, {
-      name:      c.name      || c.partNo,
-      colorName: c.colorName || String(c.colorId),
-      newQty:    c.newQty,
-    });
-  }
+  // ── Single combined modal for both qty changes and removals ───────────────
+  const qtyHtml = qtyChanges.length ? `
+    <div style="margin-bottom:${removals.length ? "12px" : "0"}">
+      <div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty Changed (${qtyChanges.length})</div>
+      ${qtyChanges.map(c => `<div style="padding:2px 0;font-size:12px;display:flex;gap:8px">
+        <span style="flex:1">${c.name || c.partNo} <span style="color:#9ca3af">${c.colorName || String(c.colorId)}</span></span>
+        <span style="color:#9ca3af;white-space:nowrap">${c.liveQty} → <strong style="color:#fff">${c.newQty}</strong></span>
+      </div>`).join("")}
+    </div>` : "";
 
-  // Show modal summarising what was applied and listing items to remove
+  const removeHtml = removals.length ? `
+    <div>
+      <div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removals.length})</div>
+      ${removals.map(c => {
+        const qty = parseInt(findArticle(c.partNo, c.colorId, c.storePrice)
+                      ?.querySelector("input[type='number']")?.value || "0", 10) || "?";
+        return `<div style="padding:2px 0;font-size:12px;display:flex;gap:8px">
+          <span style="min-width:28px;text-align:right;color:#9ca3af;font-size:12px;flex-shrink:0">×${qty}</span>
+          <span style="flex:1">${c.name || c.partNo}</span>
+          <span style="color:#9ca3af;font-size:12px;flex-shrink:0">${c.colorName || String(c.colorId)}</span>
+        </div>`;
+      }).join("")}
+    </div>` : "";
+
   const overlay = document.createElement("div");
   overlay.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,0.55);display:flex;align-items:center;justify-content:center";
-
-  const qtyPart    = qtyCount    ? `${qtyCount} qty change${qtyCount !== 1 ? "s" : ""} applied` : "";
-  const removePart = toRemove.length ? `${toRemove.length} item${toRemove.length !== 1 ? "s" : ""} to remove` : "";
-  const summary    = [qtyPart, removePart].filter(Boolean).join(" · ");
-
-  const removeListHtml = toRemove.map(article => {
-    const img = article.querySelector("img[src*='ItemImage/PT/']");
-    const m   = img?.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
-    const key = m ? `${m[2]}_${m[1]}` : "";
-    const meta = labelMap.get(key);
-    const name      = meta?.name      || (m ? m[2] : "Unknown part");
-    const colorName = meta?.colorName || (m ? m[1] : "");
-    const qty       = parseInt(article.querySelector("input[type='number']")?.value || "0", 10) || "?";
-    return `<li style="padding:5px 0;border-bottom:1px solid #2a3142;font-size:13px;display:flex;gap:8px;align-items:baseline">
-      <span style="min-width:28px;text-align:right;color:#9ca3af;font-size:12px;flex-shrink:0">×${qty}</span>
-      <span style="flex:1">${name}</span>
-      <span style="color:#9ca3af;font-size:12px;flex-shrink:0">${colorName}</span>
-    </li>`;
-  }).join("");
-
   overlay.innerHTML = `
     <div style="background:#1e2330;color:#fff;border-radius:8px;padding:24px;min-width:380px;max-width:520px;max-height:80vh;display:flex;flex-direction:column;gap:16px;box-shadow:0 8px 32px rgba(0,0,0,0.5)">
-      <div style="font-weight:700;font-size:15px">MOC Source — Cart Update</div>
-      <div style="font-size:13px;color:#9ca3af">${summary}</div>
-      ${toRemove.length ? `
-        <div style="flex:1;overflow-y:auto;max-height:340px">
-          <div style="font-size:12px;color:#6b7280;margin-bottom:6px;font-weight:600">ITEMS TO REMOVE (${toRemove.length})</div>
-          <ul style="margin:0;padding:0;list-style:none">${removeListHtml}</ul>
-        </div>
-        <button id="moc-remove-all-btn" style="background:#dc2626;border:none;color:#fff;padding:8px 16px;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600;width:100%">Remove all ${toRemove.length} items from cart</button>
-      ` : ""}
-      <button id="moc-close-btn" style="background:transparent;border:1px solid rgba(255,255,255,0.25);color:#9ca3af;padding:6px 16px;border-radius:5px;cursor:pointer;font-size:12px">${toRemove.length ? "Cancel" : "Done"}</button>
+      <div style="font-weight:700;font-size:15px">MOC Source — Update Cart</div>
+      <div style="flex:1;overflow-y:auto;max-height:380px">${qtyHtml}${removeHtml}</div>
+      <button id="moc-apply-btn" style="background:#dc2626;border:none;color:#fff;padding:8px 16px;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600;width:100%">Apply all changes</button>
+      <button id="moc-cancel-btn" style="background:transparent;border:1px solid rgba(255,255,255,0.25);color:#9ca3af;padding:6px 16px;border-radius:5px;cursor:pointer;font-size:12px">Cancel</button>
     </div>`;
 
   document.body.appendChild(overlay);
-  overlay.querySelector("#moc-close-btn").addEventListener("click", async () => {
-    // If no removes pending (qty-only or user confirmed all done), clear the writeback
-    if (!overlay.querySelector("#moc-remove-all-btn")) {
-      delete pendingBlCartWriteback[writebackKey];
-      await chrome.storage.local.set({ pendingBlCartWriteback });
-    }
-    overlay.remove();
-  });
+  overlay.querySelector("#moc-cancel-btn").addEventListener("click", () => overlay.remove());
 
-  const removeAllBtn = overlay.querySelector("#moc-remove-all-btn");
-  if (removeAllBtn) {
-    removeAllBtn.addEventListener("click", async () => {
-      removeAllBtn.disabled = true;
-      // Signal content_main.js (MAIN world) to override window.confirm
+  overlay.querySelector("#moc-apply-btn").addEventListener("click", async () => {
+    const applyBtn  = overlay.querySelector("#moc-apply-btn");
+    const cancelBtn = overlay.querySelector("#moc-cancel-btn");
+    applyBtn.disabled  = true;
+    cancelBtn.disabled = true;
+
+    // Step 1: qty changes — sequential with re-lookup and delay to let BL save each
+    let qtyDone = 0;
+    for (const { partNo, colorId, storePrice, newQty } of qtyChanges) {
+      const article = findArticle(partNo, colorId, storePrice);
+      if (!article) continue;
+      const input = article.querySelector("input[type='number']");
+      if (!input || parseInt(input.value, 10) === newQty) continue;
+      // focus() + native blur() fires real focusout — what React 17+ delegates onBlur through
+      input.focus();
+      nativeSetter.call(input, String(newQty));
+      input.dispatchEvent(new Event("input",  { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      input.blur();
+      qtyDone++;
+      applyBtn.textContent = `Updating quantities… ${qtyDone} / ${qtyChanges.length}`;
+      await new Promise(r => setTimeout(r, 600));
+    }
+
+    // Step 2: removals — sequential with re-lookup
+    if (removals.length > 0) {
       window.dispatchEvent(new CustomEvent("moc:confirm-override"));
-      let done = 0;
-      for (const article of toRemove) {
-        const link = [...article.querySelectorAll("a, button")].find(el => /^remove$/i.test(el.textContent.trim()));
+      let remDone = 0;
+      for (const { partNo, colorId, storePrice } of removals) {
+        const article = findArticle(partNo, colorId, storePrice);
+        if (!article) { remDone++; applyBtn.textContent = `Removing… ${remDone} / ${removals.length}`; continue; }
+        const link = [...article.querySelectorAll("a, button, [role='button']")]
+          .find(el => /remove/i.test(el.textContent.trim()) && !/remove all/i.test(el.textContent));
         if (link) {
           link.click();
-          done++;
-          removeAllBtn.textContent = `Removing… ${done}/${toRemove.length}`;
-          await new Promise(r => setTimeout(r, 150));
+          remDone++;
+          applyBtn.textContent = `Removing… ${remDone} / ${removals.length}`;
+          await new Promise(r => setTimeout(r, 300));
         }
       }
       window.dispatchEvent(new CustomEvent("moc:confirm-restore"));
-      // Clear pending writeback now that removal is complete
-      delete pendingBlCartWriteback[writebackKey];
-      await chrome.storage.local.set({ pendingBlCartWriteback });
-      overlay.remove();
-    });
-  }
+    }
+
+    // Click BL's "Update Cart" button to commit all changes to the server
+    const updateCartBtn = [...document.querySelectorAll("button.bl-btn.primaryBlue")]
+      .find(b => /update cart/i.test(b.textContent));
+    if (updateCartBtn) {
+      applyBtn.textContent = "Saving to BL…";
+      updateCartBtn.click();
+      await new Promise(r => setTimeout(r, 1500));
+    }
+
+    // Update the stored cart snapshot so "Save Cart ↓" won't re-generate the same diff
+    const { carts = [] } = await chrome.storage.local.get("carts");
+    const cartIdx = carts.findIndex(c => c.storeUrl === writebackKey || c.id === writebackKey);
+    if (cartIdx !== -1) {
+      const cart = carts[cartIdx];
+      for (const { partNo, colorId, storePrice, newQty } of qtyChanges) {
+        const part = cart.parts?.find(p =>
+          String(p.partNo) === String(partNo) &&
+          String(p.colorId) === String(colorId) &&
+          p.storePrice === storePrice
+        );
+        if (part) part.qty = newQty;
+      }
+      // Remove lots that were deleted
+      cart.parts = cart.parts?.filter(p => !removals.some(r =>
+        String(r.partNo) === String(p.partNo) &&
+        String(r.colorId) === String(p.colorId) &&
+        r.storePrice === p.storePrice
+      ));
+      carts[cartIdx] = cart;
+      await chrome.storage.local.set({ carts });
+    }
+
+    delete pendingBlCartWriteback[writebackKey];
+    await chrome.storage.local.set({ pendingBlCartWriteback });
+    overlay.remove();
+  });
 }
 
 // ─── Main ────────────────────────────────────────────────────────────────────
