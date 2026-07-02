@@ -175,7 +175,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Multi-region pricing — 18 locales in DB, API `?locale=` param, extension reads pabRegion setting
 - [x] Hourly scraper running on app server
 - [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible
-- [x] Chrome Web Store — extension v0.4.1 submitted (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`); v0.4.0 approved
+- [x] Chrome Web Store — extension v0.4.2 in progress; v0.4.1 submitted; v0.4.0 approved (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
 - [x] BrickLink catalog badge — injected into "Item Consists Of" column; shows color-specific PAB price or max price across all colors (no-color case)
 - [x] PAB badges are clickable — clicking any PAB/STD badge opens that element on lego.com Pick a Brick in the user's region (`?query={element_id}`); N/A badges are not linked
 - [x] Privacy page at https://api.moc-source.com/privacy
@@ -202,6 +202,12 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] **Fill Wanted Qtys button** (BL store shop page, `store.bricklink.com/#/shop?bOnWantedList=1`): fills qty inputs for cheapest matching lot per part; condition preference New/Used (default Used); cross-condition cheapest-lot: if opposite condition is strictly cheaper, picks it regardless of preference; skips rows already in cart (avoids BL cart error); skips lots priced ≥ PAB (PAB channel only); status line shows filled / already-in-cart / skipped / PAB≤store counts
 - [x] **Wanted list qty edit overhaul** — inline Want/Have edit no longer closes immediately; root causes fixed: `mousedown` `preventDefault` stops browser stealing focus before click handler runs; blur-based save replaces stale document click listeners; `pendingQtyEditIdx` carries re-open intent through re-render so clicking a different cell switches to it in one click
 - [x] **Color swatches** — BrickLink color ID → hex map; color dot shown on all part listings in detail view
+- [x] **v0.4.2 Projects fixes & polish:**
+  - Fix: "Return to Pool" now works correctly — removed `pruneStaleAllocations` Pass 2 (auto-fill) which was immediately re-allocating returned parts; `onSectionMove`/`onUnallocate` do direct targeted re-renders instead of calling `refresh()` to avoid re-triggering auto-allocation
+  - Feature: "→ LEGO Cart" move button added to each BL store section and scratch space; shows non-PAB warning listing skipped parts if any; LEGO Cart is an allocation bucket (button always shown regardless of whether a LEGO cart list is linked)
+  - Fix: vs-PAB savings no longer overstates when BL-only parts are in the same store — `blPabTotal` tracks PAB-comparable store cost separately so comparison is apples-to-apples
+  - UI: Channel badges unified to **PAB** (green `#16a34a`) / **STD** (amber `#ca8a04`) across all surfaces — detail view badge, BL store ☑ buttons, LEGO section tabs, pool/project tabs, summary rows, catalog page badge
+  - UI: Savings label simplified to **PAB Savings $X.XX** (was verbose "BL $X vs PAB $Y · save $Z")
 
 ## What's Next
 

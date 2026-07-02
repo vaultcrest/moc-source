@@ -134,8 +134,8 @@ function legoCartSummary(parts) {
        <span>Pieces <strong>${pcs}</strong></span>
      </div>`;
   return `<div style="padding:12px 16px;background:#fff;border:1px solid #e5e7eb;border-radius:6px;margin-bottom:12px">
-    ${row("PAB Bestseller", pab.length, pabPcs)}
-    ${row("PAB Standard",  bap.length, bapPcs)}
+    ${row("PAB", pab.length, pabPcs)}
+    ${row("STD", bap.length, bapPcs)}
     ${row("<strong>Total</strong>", parts.length, pabPcs + bapPcs)}
   </div>`;
 }
@@ -188,7 +188,7 @@ function summaryPanel(parts, cart) {
       <div style="background:#fff;border:1px solid #e1e4e8;border-radius:8px;padding:4px 20px 8px;margin-bottom:14px;font-size:16px">
         ${["pab","bap","bl"].map(k => {
           const d = cats[k]; if (!d.lots) return "";
-          const lbl = k === "pab" ? "PAB Bestseller" : k === "bap" ? "PAB Standard" : "BrickLink";
+          const lbl = k === "pab" ? "PAB" : k === "bap" ? "STD" : "BrickLink";
           const pl  = k === "bl" ? "Price" : "Price";
           const pr  = d.hasPrice ? `$${d.price.toFixed(2)}` : "—";
           return `<div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid #f3f4f6">
@@ -280,8 +280,8 @@ function summaryPanel(parts, cart) {
         <div style="width:${BL_W};flex-shrink:0;text-align:center;font-size:11px;color:#6c757d;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Transfer to BL</div>
         <div style="width:${PAB_W};flex-shrink:0;text-align:center;font-size:11px;color:#6c757d;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Transfer to PAB</div>
       </div>
-      ${row("PAB Bestseller", cats.pab, "Price",      "pab", "pab")}
-      ${row("PAB Standard",   cats.bap, "Price",      "bap", "bap")}
+      ${row("PAB", cats.pab, "Price", "pab", "pab")}
+      ${row("STD", cats.bap, "Price", "bap", "bap")}
       ${row("BrickLink",      cats.bl,  blPriceLabel,  "bl",  null)}
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0 2px">
         <span style="font-weight:700;width:130px;flex-shrink:0">Total</span>
@@ -671,39 +671,6 @@ async function renderProjectDetail(id, content) {
       }
     }
 
-    // Pass 2: fill — for each pool part that has unallocated (scratch) qty,
-    // fill back into carts that have capacity, trusting the user to adjust intent.
-    // Deduplicate by cart+key so multiple lots of the same part don't each trigger a fill.
-    const pass2Seen = new Set();
-    for (const cart of cartList) {
-      for (const cartPart of (cart.parts ?? [])) {
-        const key = `${cartPart.partNo}_${cartPart.colorId}`;
-        const seenKey = `${cart.id}|${key}`;
-        if (pass2Seen.has(seenKey)) continue;
-        pass2Seen.add(seenKey);
-        const poolPart = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-        if (!poolPart) continue;
-        const a = allocs[key];
-        if (a?.excluded) continue;
-        const currentAlloc = allocs[key]?.storeQty?.[cart.id] ?? 0;
-        const totalCartQty = (cart.parts ?? [])
-          .filter(cp => cp.partNo === cartPart.partNo && String(cp.colorId) === String(cartPart.colorId))
-          .reduce((s, cp) => s + (cp.qty ?? 1), 0);
-        if (currentAlloc >= totalCartQty) continue;
-        // Recompute scratch from current (post-pass-1) allocs so multi-cart parts don't double-fill
-        const totalAllocated = (allocs[key]?.legoQty ?? 0) +
-          Object.values(allocs[key]?.storeQty ?? {}).reduce((s, v) => s + v, 0);
-        const scratchQty = poolPart.wantedQty - totalAllocated;
-        if (scratchQty <= 0) continue;
-        const fillQty = Math.min(totalCartQty - currentAlloc, scratchQty);
-        if (fillQty <= 0) continue;
-        if (!allocs[key]) allocs[key] = { legoQty: 0, storeQty: {} };
-        if (!allocs[key].storeQty) allocs[key].storeQty = {};
-        allocs[key].storeQty[cart.id] = currentAlloc + fillQty;
-        changed++;
-      }
-    }
-
     return changed;
   }
 
@@ -902,7 +869,7 @@ async function renderProjectDetail(id, content) {
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
         <span>Parts: <strong>${legoPartsKnown ? `$${legoParts.toFixed(2)}` : `~$${legoParts.toFixed(2)}`}</strong></span>
         ${legoBsParts > 0 ? `<span style="color:#15803d">BS: <strong>$${legoBsParts.toFixed(2)}</strong></span>` : ""}
-        ${legoStdParts > 0 ? `<span style="color:#1d4ed8">STD: <strong>$${legoStdParts.toFixed(2)}</strong></span>` : ""}
+        ${legoStdParts > 0 ? `<span style="color:#ca8a04">STD: <strong>$${legoStdParts.toFixed(2)}</strong></span>` : ""}
         ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>$7.00</strong> <span style="color:#9ca3af;font-weight:400">(under $14 order)</span></span>` : ""}
         ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : `$${legShip.toFixed(2)}`}</strong></span>` : ""}
         ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${legoGrand.toFixed(2)}` : `~$${legoGrand.toFixed(2)}`}</span>` : ""}
@@ -936,8 +903,8 @@ async function renderProjectDetail(id, content) {
       ${legoSummary}
       <div style="display:flex;border-bottom:1px solid #e1e4e8;background:#fafbfc">
         <button class="lego-tab-btn" data-lego-tab="all" style="${tabStyle("all","#f3f4f6")}">All (${allLegoAllocs.length})</button>
-        <button class="lego-tab-btn" data-lego-tab="pab" style="${tabStyle("pab","#dcfce7")}">Bestseller (${bsCount})</button>
-        <button class="lego-tab-btn" data-lego-tab="bap" style="${tabStyle("bap","#dbeafe")}">Standard (${stdCount})</button>
+        <button class="lego-tab-btn" data-lego-tab="pab" style="${tabStyle("pab","#dcfce7")}">PAB (${bsCount})</button>
+        <button class="lego-tab-btn" data-lego-tab="bap" style="${tabStyle("bap","#fef3c7")}">STD (${stdCount})</button>
       </div>
       ${buildSectionActionBar(selCount, "lego", "", targets)}
       ${buildAllocRows(legoAllocs, "lego", "", selectedLegoKeys)}`;
@@ -967,13 +934,13 @@ async function renderProjectDetail(id, content) {
     const selSet     = selectedBlKeys.get(cart.id) ?? new Set();
     const selCount   = blAllocs.filter(e => selSet.has(e.key)).length;
     const targets    = [
-      ...(legoCart ? [{ type: "lego", cartId: "",      label: "→ LEGO Cart" }] : []),
       ...blCartList.filter(c => c.id !== cart.id).map(c => ({ type: "bl", cartId: c.id, label: `→ ${esc(c.name)}` })),
+      { type: "lego", cartId: "", label: "→ LEGO Cart" },
       { type: "pool", cartId: "", label: "Return to pool" }
     ];
     // Cost summary
     let blTotal = 0, blTotalKnown = true;
-    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0;
+    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0;
     for (const { key, qty, cartPart } of blAllocs) {
       const part     = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
       const blPrice  = parseStorePrice(cartPart?.storePrice);
@@ -983,8 +950,9 @@ async function renderProjectDetail(id, content) {
         const pabCents = part?.pabEntry?.price_cents;
         // BL-only parts (no PAB price) are neutral — excluded from PAB comparison
         if (pabCents != null) {
-          pabPartsTotal    += (pabCents / 100) * qty;
-          pabNetPartsOnly  += (pabCents / 100 - blPrice) * qty;
+          pabPartsTotal   += (pabCents / 100) * qty;
+          pabNetPartsOnly += (pabCents / 100 - blPrice) * qty;
+          blPabTotal      += blPrice * qty;
         }
         pabNetLots++;
       }
@@ -1001,8 +969,11 @@ async function renderProjectDetail(id, content) {
     const shipKnown    = !shipIsTbd || (estBlShipping[cart.id] != null);
     const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${blTotal.toFixed(2)}` : null;
     const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${(blTotal + effShip).toFixed(2)}` : null;
-    const pabNetStr    = pabNetLots > 0 && pabPartsTotal > 0
-      ? `$${Math.abs(pabNetTotal).toFixed(2)} ${pabNetTotal > 0 ? "cheaper than PAB" : pabNetTotal < 0 ? "more than PAB" : "same as PAB"}`
+    // Show PAB-comparable store subtotal when BL-only parts are present, so the savings
+    // figure isn't confusingly close to the full cart total.
+    const hasBLOnly    = blPabTotal < blTotal - 0.001;
+    const pabNetStr    = pabNetLots > 0 && pabPartsTotal > 0 && pabNetTotal !== 0
+      ? `PAB Savings $${Math.abs(pabNetTotal).toFixed(2)}`
       : null;
     const pabNetColor  = pabNetTotal > 0 ? "#16a34a" : pabNetTotal < 0 ? "#dc2626" : "#6b7280";
     const blSummary    = blTotalStr ? `
@@ -1011,7 +982,7 @@ async function renderProjectDetail(id, content) {
         ${shipIsTbd
           ? `<label style="display:flex;align-items:center;gap:4px;color:#6c757d">Est. ship: <input type="number" class="bl-est-ship" data-cart-id="${esc(cart.id)}" min="0" step="0.01" value="${estShipVal}" placeholder="0.00" style="width:68px;padding:1px 5px;border:1px solid #d1d5db;border-radius:3px;font-size:12px;color:#374151"></label>`
           : `<span>Shipping: <strong>${rawShip}</strong></span>`}
-        ${pabNetStr ? `<span title="Part price savings vs buying PAB-available parts from LEGO direct (excl. shipping &amp; taxes)">vs PAB: <strong style="color:${pabNetColor}">${esc(pabNetStr)}</strong></span>` : ""}
+        ${pabNetStr ? `<span style="color:${pabNetColor};font-weight:600">${esc(pabNetStr)}</span>` : ""}
         ${blGrandStr ? `<span style="margin-left:auto;font-weight:700">Total: ${blGrandStr}</span>` : ""}
       </div>` : "";
     const selBtnStyle = "font-size:11px;padding:2px 7px;background:#fff;border:1px solid #d1d5db;color:#374151";
@@ -1037,8 +1008,8 @@ async function renderProjectDetail(id, content) {
         <select class="bl-cart-sort" data-cart-id="${esc(cart.id)}" style="font-size:11px;padding:2px 4px;border:1px solid #d1d5db;border-radius:3px;color:#374151;margin-left:6px">${sortOpts}</select>
         <button class="btn bl-cart-sort-dir" data-cart-id="${esc(cart.id)}" style="${selBtnStyle};padding:2px 5px">${cartSortDir === "desc" ? "↓" : "↑"}</button>
         <div style="flex:1"></div>
-        <button class="btn bl-sel-channel" data-cart-id="${esc(cart.id)}" data-channel="pab" style="${selBtnStyle};background:#f0fdf4;border-color:#86efac" title="Select all Bestseller parts">☑ Bestseller</button>
-        <button class="btn bl-sel-channel" data-cart-id="${esc(cart.id)}" data-channel="bap" style="${selBtnStyle};background:#eff6ff;border-color:#93c5fd" title="Select all Standard parts">☑ Standard</button>
+        <button class="btn bl-sel-channel" data-cart-id="${esc(cart.id)}" data-channel="pab" style="${selBtnStyle};background:#f0fdf4;border-color:#86efac" title="Select all PAB parts">☑ PAB</button>
+        <button class="btn bl-sel-channel" data-cart-id="${esc(cart.id)}" data-channel="bap" style="${selBtnStyle};background:#fef9c3;border-color:#fcd34d" title="Select all STD parts">☑ STD</button>
         <button class="btn bl-sel-pab-cheaper" data-cart-id="${esc(cart.id)}" style="${selBtnStyle}" title="Select all where store price exceeds PAB price">☑ PAB cheaper</button>
         <button class="btn open-cart-btn" data-type="carts" data-id="${esc(cart.id)}" style="font-size:12px">Open ↗</button>
       </div>
@@ -1060,7 +1031,7 @@ async function renderProjectDetail(id, content) {
     const scratchPieces = scratchEntries.reduce((s, e) => s + e.qty, 0);
     const selCount      = scratchEntries.filter(e => selectedScratchKeys.has(e.key)).length;
     const targets       = [
-      ...(legoCart ? [{ type: "lego", cartId: "", label: "→ LEGO Cart" }] : []),
+      { type: "lego", cartId: "", label: "→ LEGO Cart" },
       ...blCartList.map(c => ({ type: "bl", cartId: c.id, label: `→ ${esc(c.name)}` }))
     ];
     const header = `
@@ -1183,7 +1154,20 @@ async function renderProjectDetail(id, content) {
   async function onMove(targetType, cartId) {
     if (!selectedPoolKeys.size) return;
     if (targetType === "lego") {
-      for (const key of [...selectedPoolKeys]) if (!isPabEligible(key)) selectedPoolKeys.delete(key);
+      const nonPab = [...selectedPoolKeys].filter(key => !isPabEligible(key));
+      for (const key of nonPab) selectedPoolKeys.delete(key);
+      if (nonPab.length) {
+        const names = nonPab.slice(0, 8).map(key => {
+          const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+          return `• ${part?.pabEntry?.bl_part_name || part?.name || key}`;
+        });
+        const extra = nonPab.length > 8 ? `\n+ ${nonPab.length - 8} more` : "";
+        if (!selectedPoolKeys.size) {
+          alert(`None of the selected parts are available on LEGO PAB/BAP:\n${names.join("\n")}${extra}`);
+          return;
+        }
+        if (!confirm(`${nonPab.length} selected part(s) are not on LEGO PAB/BAP and will be skipped:\n${names.join("\n")}${extra}\n\nMove the ${selectedPoolKeys.size} PAB/BAP part(s) to LEGO Cart?`)) return;
+      }
       if (!selectedPoolKeys.size) return;
     }
     if (targetType === "bl") {
@@ -1231,7 +1215,20 @@ async function renderProjectDetail(id, content) {
     if (!selKeys.length) return;
 
     if (tgtType === "lego") {
+      const nonPab = selKeys.filter(key => !isPabEligible(key));
       selKeys = selKeys.filter(isPabEligible);
+      if (nonPab.length) {
+        const names = nonPab.slice(0, 8).map(key => {
+          const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+          return `• ${part?.pabEntry?.bl_part_name || part?.name || key}`;
+        });
+        const extra = nonPab.length > 8 ? `\n+ ${nonPab.length - 8} more` : "";
+        if (!selKeys.length) {
+          alert(`None of the selected parts are available on LEGO PAB/BAP:\n${names.join("\n")}${extra}`);
+          return;
+        }
+        if (!confirm(`${nonPab.length} selected part(s) are not on LEGO PAB/BAP and will be skipped:\n${names.join("\n")}${extra}\n\nMove the ${selKeys.length} PAB/BAP part(s) to LEGO Cart?`)) return;
+      }
       if (!selKeys.length) return;
     }
     if (tgtType === "bl") {
@@ -1289,7 +1286,14 @@ async function renderProjectDetail(id, content) {
     if (srcType === "lego")    selectedLegoKeys.clear();
     else if (srcType === "bl") selectedBlKeys.get(srcCartId)?.clear();
     else                       selectedScratchKeys.clear();
-    await refresh();
+    // Re-render directly (skip pruneStaleAllocations — its Pass 2 would re-fill parts
+    // just returned to pool, since the part is still in the cart with unallocated qty).
+    currentAllocs = proj.allocations;
+    renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+    refreshLegoSection();
+    for (const c of blCartList) refreshBlSection(c.id);
+    refreshScratch();
+    refreshGrandTotal();
   }
 
   async function onUnallocate(targetType, cartId, key) {
@@ -1304,7 +1308,12 @@ async function renderProjectDetail(id, content) {
     const a = proj.allocations[key];
     if ((a.legoQty ?? 0) === 0 && !Object.keys(a.storeQty ?? {}).length) delete proj.allocations[key];
     await chrome.storage.local.set({ projects: allProjects });
-    await refresh();
+    currentAllocs = proj.allocations;
+    renderProjectPool(content, poolParts, currentAllocs, legoCart, blCartList, onMove, project);
+    refreshLegoSection();
+    for (const c of blCartList) refreshBlSection(c.id);
+    refreshScratch();
+    refreshGrandTotal();
   }
 
   function setHtmlPreserveScroll(el, html) {
@@ -1326,8 +1335,8 @@ async function renderProjectDetail(id, content) {
   function buildGrandTotal() {
     let grand = 0, grandKnown = true;
     // pabPartsTotal: what those BL-allocated parts would cost on LEGO direct (PAB-available only)
-    // blAllinTotal:  BL parts + all store shipping
-    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0;
+    // blAllPartsTotal: BL store cost of all allocated parts (PAB + BL-only); blPabTotal: PAB-comparable only
+    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0, blAllPartsTotal = 0;
     const cartRows = [];
 
     for (const cart of blCartList) {
@@ -1342,10 +1351,12 @@ async function renderProjectDetail(id, content) {
         const pr   = parseStorePrice(cp?.storePrice);
         if (pr != null) {
           total += pr * qty;
+          blAllPartsTotal += pr * qty;
           const pabCents = part?.pabEntry?.price_cents;
           if (pabCents != null) {
             pabPartsTotal   += (pabCents / 100) * qty;
             pabNetPartsOnly += (pabCents / 100 - pr) * qty;
+            blPabTotal      += pr * qty;
           }
           pabNetLots++;
         } else {
@@ -1383,13 +1394,18 @@ async function renderProjectDetail(id, content) {
     if (!cartRows.length) return "";
 
     // vs-PAB: pure part-price delta for PAB-eligible BL-allocated parts (no shipping, no LEGO fees)
-    const pabNetTotal  = pabNetPartsOnly;
-    const pabSavedStr   = pabNetLots > 0 && pabPartsTotal > 0 ? `$${Math.abs(pabNetTotal).toFixed(2)} ${pabNetTotal > 0 ? "saved vs PAB" : pabNetTotal < 0 ? "more than PAB" : "same as PAB"}` : null;
+    // BL-only parts contribute $0 savings; show the PAB-comparable subtotals when BL-only parts
+    // are present so the savings figure isn't confusingly close to the full store total.
+    const pabNetTotal   = pabNetPartsOnly;
+    const hasBLOnly     = blPabTotal < blAllPartsTotal - 0.001;
+    const pabSavedStr   = pabNetLots > 0 && pabPartsTotal > 0 && pabNetTotal !== 0
+      ? `PAB Savings $${Math.abs(pabNetTotal).toFixed(2)}`
+      : null;
     const pabSavedColor = pabNetTotal > 0 ? "#16a34a" : pabNetTotal < 0 ? "#dc2626" : "#6b7280";
     return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px">
       <span style="font-size:13px;font-weight:700;color:#0369a1">Grand Total</span>
       ${cartRows.join("")}
-      ${pabSavedStr ? `<span style="font-size:12px;color:#374151" title="Part price savings vs buying PAB-available parts from LEGO direct (excl. shipping &amp; taxes)">vs PAB: <strong style="color:${pabSavedColor}">${esc(pabSavedStr)}</strong></span>` : ""}
+      ${pabSavedStr ? `<span style="font-size:12px;color:${pabSavedColor};font-weight:600">${esc(pabSavedStr)}</span>` : ""}
       <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1">${grandKnown ? "" : "~"}$${grand.toFixed(2)}</span>
     </div>`;
   }
@@ -1990,8 +2006,8 @@ async function renderProjectDetail(id, content) {
         `<button class="btn scan-filter-btn" data-section="${section}" data-ch="${ch}" style="font-size:11px;padding:2px 7px${color ? `;color:${color}` : ""}">${label}</button>`;
       return `
         <div style="display:flex;gap:5px;align-items:center;flex-wrap:wrap;margin:4px 0 6px">
-          ${fBtn("☑ Bestseller", "pab", "#16a34a")}
-          ${fBtn("☑ Standard",   "bap", "#d97706")}
+          ${fBtn("☑ PAB", "pab", "#16a34a")}
+          ${fBtn("☑ STD", "bap", "#ca8a04")}
           ${fBtn("☑ BL only",    "bl",  "#6b7280")}
           ${fBtn("☑ All",        "all")}
           <button class="btn scan-action-btn" data-section="${section}" style="margin-left:auto;font-size:11px;padding:2px 10px;background:#1e2330;color:#fff" ${actionDisabled}>${actionLabel}</button>
@@ -2639,17 +2655,15 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
   const selCount     = filtered.filter(p => selectedPoolKeys.has(`${p.partNo}_${p.colorId}`)).length;
 
   const tabBar = ["all","pab","std","bl"].map(k => {
-    const label = { all: "All", pab: "Bestseller", std: "Standard", bl: "BrickLink" }[k];
+    const label = { all: "All", pab: "PAB", std: "STD", bl: "BrickLink" }[k];
     return `<button class="tab${tab === k ? " active" : ""}" data-project-tab="${k}">${label} (${counts[k]})</button>`;
   }).join("");
 
   const moveTargets = [
-    legoCart
-      ? `<button class="btn move-btn" data-move-type="lego" data-move-cart="" style="font-size:12px;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">→ LEGO Cart</button>`
-      : "",
+    `<button class="btn move-btn" data-move-type="lego" data-move-cart="" style="font-size:12px;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">→ LEGO Cart</button>`,
     ...(blCartList ?? []).map(c =>
       `<button class="btn move-btn" data-move-type="bl" data-move-cart="${esc(c.id)}" style="font-size:12px">→ ${esc(c.name)}</button>`)
-  ].filter(Boolean).join(" ");
+  ].join(" ");
 
   const actionBar = selCount > 0 ? `
     <div style="display:flex;align-items:center;gap:8px;padding:7px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;flex-wrap:wrap">
@@ -3455,7 +3469,7 @@ function renderDetailView(content) {
   const parts = filteredParts();
   const cart = isCart();
 
-  const tabLabels = { all: "All", pab: "Bestseller", std: "Standard", na: "BrickLink", flagged: "To Remove" };
+  const tabLabels = { all: "All", pab: "PAB", std: "STD", na: "BrickLink", flagged: "To Remove" };
   const showStd = currentPabRegion === "en-us" || currentPabRegion === "en-ca";
   const legocart = isLegoCart();
   const tabKeys = legocart
@@ -3628,8 +3642,8 @@ function pabCells(p) {
   if (!p.pabEntry)                  return ["—", '<span style="color:#adb5bd;font-size:11px">N/A</span>'];
   if (p.pabEntry.channel == null)   return ["—", '<span style="background:#f8f9fa;border:1px solid #dee2e6;color:#6c757d;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:600">BrickLink</span>'];
   const badge = p.pabEntry.channel === "pab"
-    ? '<span style="background:#ffc107;color:#000;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:600">Bestseller</span>'
-    : '<span style="background:#0d6efd;color:#fff;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:600">Standard</span>';
+    ? '<span style="background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:700">PAB</span>'
+    : '<span style="background:#fef9c3;color:#ca8a04;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:700">STD</span>';
   return [p.pabEntry.price_formatted, badge];
 }
 

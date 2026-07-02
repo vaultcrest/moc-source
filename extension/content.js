@@ -1040,8 +1040,8 @@ function renderPabBadge(entry, noColor) {
   const swatch = hex
     ? `<span style="display:inline-block;width:11px;height:11px;border-radius:2px;background:${hex};border:1px solid rgba(0,0,0,0.2);vertical-align:middle;margin-right:4px;flex-shrink:0"></span>`
     : "";
-  const channelLabel = entry.channel === "pab" ? "Bestseller" : "Standard";
-  const channelColor = entry.channel === "pab" ? "#15803d" : "#1d4ed8";
+  const channelLabel = entry.channel === "pab" ? "PAB" : "STD";
+  const channelColor = entry.channel === "pab" ? "#15803d" : "#ca8a04";
   const colorLine    = noColor
     ? `<div style="font-size:12px;color:#6b7280">N/A</div>`
     : entry.bl_color_name
