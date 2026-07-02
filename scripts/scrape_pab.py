@@ -368,6 +368,30 @@ def write_elements_en_us(cur, rows: list[dict], now: datetime) -> int:
     return len(values)
 
 
+# ─── Cloudflare cache purge ──────────────────────────────────────────────────
+
+def purge_cf_cache() -> None:
+    zone_id = os.environ.get("CLOUDFLARE_ZONE_ID", "")
+    token   = os.environ.get("CLOUDFLARE_API_TOKEN", "")
+    if not zone_id or not token:
+        return
+    import urllib.request, json as _json
+    url     = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
+    payload = _json.dumps({"purge_everything": True}).encode()
+    req     = urllib.request.Request(url, data=payload, method="POST")
+    req.add_header("Authorization", f"Bearer {token}")
+    req.add_header("Content-Type", "application/json")
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = _json.loads(resp.read())
+        if result.get("success"):
+            print("Cloudflare cache purged.", flush=True)
+        else:
+            print(f"CF purge failed: {result.get('errors')}", flush=True)
+    except Exception as e:
+        print(f"CF purge error: {e}", flush=True)
+
+
 # ─── Email report ────────────────────────────────────────────────────────────
 
 def send_scraper_report(locales_done: int, total_locales: int, total_prices: int,
@@ -564,6 +588,7 @@ def main():
     if not args.dry_run:
         send_scraper_report(locales_done, len(locales), total_prices, total_elements,
                             errors, duration_s)
+        purge_cf_cache()
 
 
 if __name__ == "__main__":

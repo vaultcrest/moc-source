@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     # Rebrickable
     rebrickable_api_key: str = ""
 
+    # Cloudflare cache purge
+    cloudflare_zone_id: str = ""
+    cloudflare_api_token: str = ""
+
     # Email reporting (for enrichment reports)
     smtp_host: str = ""
     smtp_port: int = 587

@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,6 +43,7 @@ async def pab_price(
     part_no: str,
     color_id: int,
     background_tasks: BackgroundTasks,
+    response: Response,
     locale: str = Query("en-us", description="BCP-47 locale code, e.g. en-us, de-de, en-gb"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -51,6 +52,7 @@ async def pab_price(
     Queries lego_element_prices for the requested locale so the extension can
     display region-correct pricing. Falls back to en-us if the locale has no data.
     """
+    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=60"
     from ..models import BricklinkMapping, Color, LegoElementPrice
 
     def price_stmt(loc: str):
@@ -216,10 +218,12 @@ async def pab_price(
 @router.get("/pab/prices/{part_no}", response_model=list[LocalePriceResult], tags=["pab"])
 async def pab_all_prices_for_part(
     part_no: str,
+    response: Response,
     locale: str = Query("en-us"),
     db: AsyncSession = Depends(get_db),
 ):
     """All in-stock PAB color/price combinations for a part number. Used by catalog page injection."""
+    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=60"
     from ..models import BricklinkMapping, Color, LegoElementPrice
     from sqlalchemy import desc
 
@@ -264,10 +268,12 @@ async def pab_all_prices_for_part(
 @router.get("/element/{element_id}/price", response_model=list[LocalePriceResult], tags=["pab"])
 async def pab_price_by_element(
     element_id: int,
+    response: Response,
     locale: str = Query("en-us"),
     db: AsyncSession = Depends(get_db),
 ):
     """Price + BL metadata lookup by LEGO element_id for LEGO cart items."""
+    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=60"
     from ..models import BricklinkMapping, Color, LegoElementPrice
 
     def price_stmt(loc: str):
