@@ -148,7 +148,7 @@ function summaryPanel(parts, cart) {
   };
 
   for (const p of parts) {
-    const qty = cart ? (p.qty ?? 1) : (p.want ?? 1);
+    const qty = cart ? (p.qty ?? 1) : (p.want ?? p.qty ?? 1);
     const ch = effectiveChannel(p);
     if (ch === "pab") {
       cats.pab.lots++;

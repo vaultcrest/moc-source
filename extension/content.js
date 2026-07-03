@@ -914,7 +914,13 @@ async function applyBlCartWriteback() {
           link.click();
           remDone++;
           applyBtn.textContent = `Removing… ${remDone} / ${removals.length}`;
-          await new Promise(r => setTimeout(r, 300));
+          await new Promise(r => {
+            const ob = new MutationObserver(() => {
+              if (!document.contains(article)) { ob.disconnect(); r(); }
+            });
+            ob.observe(document.body, { childList: true, subtree: true });
+            setTimeout(() => { ob.disconnect(); r(); }, 500);
+          });
         }
       }
       window.dispatchEvent(new CustomEvent("moc:confirm-restore"));
