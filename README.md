@@ -208,6 +208,8 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
   - Fix: vs-PAB savings no longer overstates when BL-only parts are in the same store — `blPabTotal` tracks PAB-comparable store cost separately so comparison is apples-to-apples
   - UI: Channel badges unified to **PAB** (green `#16a34a`) / **STD** (amber `#ca8a04`) across all surfaces — detail view badge, BL store ☑ buttons, LEGO section tabs, pool/project tabs, summary rows, catalog page badge
   - UI: Savings label simplified to **PAB Savings $X.XX** (was verbose "BL $X vs PAB $Y · save $Z")
+- [x] **Project LEGO Cart transfer buttons** — "Transfer: PAB / STD / ALL" buttons in the LEGO Cart section header on the project page; STD button only shown when BAP-channel items exist; uses `legoCart.parts` as primary source (same as LEGO Cart list view), falls back to pool allocations when no saved cart is linked
+- [x] **LEGO cart transfer reliability fixes** — transfer batches capped at 50 items (was 300); 400ms pause between batches prevents Cloudflare 1015 rate limiting; `MAX_LINE_ITEMS_REACHED` response bails the loop early; CSV download and Transfer All now read correct qty from `p.qty` instead of `(want - have)` formula (which always returned 1 for LEGO cart parts)
 
 ## What's Next
 
