@@ -4219,13 +4219,14 @@ function attachDetailListeners(content) {
       const channel = btn.dataset.channel; // "pab", "bap", or "both"
       const items = currentDetail.parts
         .filter(p => {
-          const ch = p.pabEntry?.channel;
-          return p.pabEntry?.element_id && (channel === "both" ? (ch === "pab" || ch === "bap") : ch === channel);
+          const eid = isLegoCart() ? p.elementId       : p.pabEntry?.element_id;
+          const ch  = isLegoCart() ? p.channel         : p.pabEntry?.channel;
+          return eid && (channel === "both" ? (ch === "pab" || ch === "bap") : ch === channel);
         })
         .map(p => ({
-          elementId: p.pabEntry.element_id,
+          elementId: isLegoCart() ? p.elementId        : p.pabEntry.element_id,
           qty: Math.max(1, isLegoCart() ? (p.qty ?? p.quantity ?? 1) : (p.want ?? 1) - (p.have ?? 0)),
-          channel: p.pabEntry.channel,
+          channel:   isLegoCart() ? p.channel          : p.pabEntry.channel,
         }))
         .filter(i => i.qty > 0);
 
@@ -4244,12 +4245,14 @@ function attachDetailListeners(content) {
     btn.addEventListener("click", () => {
       const rows = [["name", "elementId", "quantity"]];
       for (const p of currentDetail.parts) {
-        if (!p.pabEntry?.element_id) continue;
-        if (p.pabEntry.channel !== "pab" && p.pabEntry.channel !== "bap") continue;
+        const eid = isLegoCart() ? p.elementId       : p.pabEntry?.element_id;
+        const ch  = isLegoCart() ? p.channel         : p.pabEntry?.channel;
+        if (!eid) continue;
+        if (ch !== "pab" && ch !== "bap") continue;
         const qty = Math.max(1, isLegoCart() ? (p.qty ?? p.quantity ?? 1) : (p.want ?? 1) - (p.have ?? 0));
         if (qty <= 0) continue;
-        const name = (p.pabEntry.lego_name || p.pabEntry.bl_part_name || "").replace(/"/g, '""');
-        rows.push([`"${name}"`, p.pabEntry.element_id, qty]);
+        const name = (isLegoCart() ? p.name : (p.pabEntry?.lego_name || p.pabEntry?.bl_part_name || "")).replace(/"/g, '""');
+        rows.push([`"${name}"`, eid, qty]);
       }
       const csv = rows.map(r => r.join(",")).join("\n");
       const listName = (currentDetail.list?.name || "pab-parts").replace(/[/\\?%*:|"<>]/g, "-").trim();
