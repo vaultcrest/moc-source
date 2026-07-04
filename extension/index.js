@@ -3655,6 +3655,9 @@ function buildLegoCartRow(p, idx) {
   const imgSrc   = colorId && blPartNo
     ? `https://img.bricklink.com/ItemImage/PT/${colorId}/${blPartNo}.t1.png`
     : legoImg;
+  const pnSrc    = colorId && blPartNo
+    ? `https://img.bricklink.com/ItemImage/PN/${colorId}/${blPartNo}.png`
+    : null;
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
 
@@ -3669,7 +3672,7 @@ function buildLegoCartRow(p, idx) {
         ${partLink}
         ${p.elementId ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.elementId}</div>` : ""}
       </td>
-      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(this.src!=='${legoImg}'){this.src='${legoImg}'}else{this.style.display='none'}"></td>
+      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(!this.dataset.e){this.dataset.e=1;this.src='${pnSrc||legoImg}'}else if(this.src!=='${legoImg}'){this.src='${legoImg}'}else{this.style.display='none'}"></td>
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 0}</strong></td>
@@ -3680,7 +3683,8 @@ function buildLegoCartRow(p, idx) {
 }
 
 function buildWantedRow(p, idx) {
-  const imgSrc = p.imageUrl || `https://img.bricklink.com/ItemImage/PT/${p.colorId}/${p.partNo}.t1.png`;
+  const imgSrc   = p.imageUrl || `https://img.bricklink.com/ItemImage/PT/${p.colorId}/${p.partNo}.t1.png`;
+  const pnImgSrc = `https://img.bricklink.com/ItemImage/PN/${p.colorId}/${p.partNo}.png`;
   const need = Math.max(0, (p.want ?? 1) - (p.have ?? 0));
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
@@ -3693,7 +3697,7 @@ function buildWantedRow(p, idx) {
         <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo)}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(p.partNo)}</a>
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
-      <td><img class="part-img" src="${esc(imgSrc)}" onerror="this.style.display='none'"></td>
+      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(!this.dataset.e&&this.src.includes('/PT/')){this.dataset.e=1;this.src='${pnImgSrc}'}else{this.style.display='none'}"></td>
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td class="qty-cell" data-idx="${idx}">
@@ -3711,7 +3715,8 @@ function buildWantedRow(p, idx) {
 }
 
 function buildCartRow(p, idx) {
-  const imgSrc = p.imageUrl || `https://img.bricklink.com/ItemImage/PT/${p.colorId}/${p.partNo}.t1.png`;
+  const imgSrc   = p.imageUrl || `https://img.bricklink.com/ItemImage/PT/${p.colorId}/${p.partNo}.t1.png`;
+  const pnImgSrc = `https://img.bricklink.com/ItemImage/PN/${p.colorId}/${p.partNo}.png`;
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
   const flagged = p.flagged;
@@ -3730,7 +3735,7 @@ function buildCartRow(p, idx) {
         <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo)}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(p.partNo)}</a>
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
-      <td><img class="part-img" src="${esc(imgSrc)}" onerror="this.style.display='none'"></td>
+      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(!this.dataset.e&&this.src.includes('/PT/')){this.dataset.e=1;this.src='${pnImgSrc}'}else{this.style.display='none'}"></td>
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 1}</strong></td>
