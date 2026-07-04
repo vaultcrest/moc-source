@@ -175,20 +175,36 @@ async function addToCart(auth, locale, items, cartType) {
 
 // ─── Transfer orchestration ───────────────────────────────────────────────────
 
-// Sends all items to one cart type in a single request and returns counts.
+// Sends items to one cart type in batches of 150 (LEGO's per-type limit).
+// 3-second pause between batches avoids Cloudflare rate limits.
 async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, totalAll) {
-  try {
-    await addToCart(auth, locale, toAdd, cartType);
-    showOverlay(`${label}…`, doneOffset + toAdd.length, totalAll);
-    return { added: toAdd.length, failed: 0, lastError: null, limitReached: false };
-  } catch (e) {
-    const limitReached = e.message.includes("MAX_LINE_ITEMS_REACHED");
-    const lastError = limitReached
-      ? `Your LEGO ${label} cart is full — remove some items on lego.com then try again.`
-      : e.message;
-    console.warn(`MOC Source: ${label} add failed:`, e.message);
-    return { added: 0, failed: toAdd.length, lastError, limitReached };
+  const BATCH = 150;
+  let added = 0, failed = 0, lastError = null, limitReached = false;
+  for (let i = 0; i < toAdd.length; i += BATCH) {
+    const batch = toAdd.slice(i, i + BATCH);
+    try {
+      await addToCart(auth, locale, batch, cartType);
+      added += batch.length;
+    } catch (e) {
+      lastError = e.message;
+      console.warn(`MOC Source: ${label} batch failed:`, e.message);
+      if (e.message.includes("MAX_LINE_ITEMS_REACHED")) {
+        limitReached = true;
+        lastError = `Your LEGO ${label} cart is full — remove some items on lego.com then try again.`;
+        failed += toAdd.length - i - added;
+        break;
+      }
+      failed += batch.length;
+      break;
+    }
+    showOverlay(
+      failed ? `${label}… (${failed} failed)` : `${label}…`,
+      doneOffset + added + failed,
+      totalAll
+    );
+    if (i + BATCH < toAdd.length) await new Promise(r => setTimeout(r, 3000));
   }
+  return { added, failed, lastError, limitReached };
 }
 
 async function runTransfer(items, locale, channel, auth) {
