@@ -883,7 +883,16 @@ async function renderProjectDetail(id, content) {
       ["channel",     "Channel"],
     ].map(([v, l]) => `<option value="${v}"${legoSectionSort === v ? " selected" : ""}>${l}</option>`).join("");
     return `
-      <div class="section-header"><span>LEGO Cart</span></div>
+      <div class="section-header">
+        <span>LEGO Cart</span>
+        ${allLegoAllocs.length > 0 ? `
+          <div style="display:flex;align-items:center;gap:4px">
+            <span style="font-size:11px;color:#6c757d;font-weight:400;margin-right:2px">Transfer:</span>
+            <button class="lego-proj-transfer-btn btn" data-channel="pab" style="font-size:11px;padding:2px 8px;background:#dcfce7;color:#15803d;border-color:#86efac">PAB</button>
+            ${stdCount > 0 ? `<button class="lego-proj-transfer-btn btn" data-channel="bap" style="font-size:11px;padding:2px 8px;background:#fef9c3;color:#a16207;border-color:#fde047">STD</button>` : ""}
+            <button class="lego-proj-transfer-btn btn" data-channel="both" style="font-size:11px;padding:2px 8px">ALL</button>
+          </div>` : ""}
+      </div>
       <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #e1e4e8">
         <div style="flex:1">
           ${legoCart
@@ -2424,6 +2433,33 @@ async function renderProjectDetail(id, content) {
     if (e.target.classList.contains("proj-configure-link")) { renderProjectSetup(id, content); return; }
     const openBtn = e.target.closest(".open-cart-btn");
     if (openBtn) navigate(`list/${openBtn.dataset.type}/${openBtn.dataset.id}`);
+  });
+
+  content.addEventListener("click", async e => {
+    const transferBtn = e.target.closest(".lego-proj-transfer-btn");
+    if (!transferBtn) return;
+    const channel = transferBtn.dataset.channel;
+    const allLegoAllocs = Object.entries(currentAllocs)
+      .filter(([, a]) => (a.legoQty ?? 0) > 0)
+      .map(([key, a]) => ({ key, qty: a.legoQty }));
+    const items = allLegoAllocs
+      .filter(({ key }) => {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        const ch = part?.pabEntry?.channel;
+        return part?.pabEntry?.element_id && (channel === "both" ? (ch === "pab" || ch === "bap") : ch === channel);
+      })
+      .map(({ key, qty }) => {
+        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+        return { elementId: part.pabEntry.element_id, qty, channel: part.pabEntry.channel };
+      })
+      .filter(i => i.qty > 0);
+    if (!items.length) return;
+    const origLabel = transferBtn.textContent;
+    transferBtn.disabled = true;
+    transferBtn.textContent = "Opening…";
+    await chrome.runtime.sendMessage({ type: "QUEUE_TRANSFER", items, channel });
+    transferBtn.textContent = "Sent!";
+    setTimeout(() => { transferBtn.disabled = false; transferBtn.textContent = origLabel; }, 3000);
   });
 
   content.addEventListener("change", e => {
