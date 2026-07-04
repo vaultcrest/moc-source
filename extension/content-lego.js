@@ -199,6 +199,7 @@ async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, tota
       doneOffset + added + failed,
       totalAll
     );
+    if (i + BATCH < toAdd.length) await new Promise(r => setTimeout(r, 400));
   }
   return { added, failed, lastError, limitReached };
 }
