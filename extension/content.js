@@ -61,7 +61,7 @@ function getOrderSummary() {
 function collectWantedListParts() {
   const parts = [];
   for (const img of document.querySelectorAll("img.wl-item-img")) {
-    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+    const match = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
     if (!match) continue;
     const row = img.closest(".table-row");
     if (!row) continue;
@@ -90,9 +90,9 @@ function collectWantedListParts() {
 function collectCartParts() {
   const parts = [];
   for (const article of document.querySelectorAll("article.store-cart-item")) {
-    const img = article.querySelector("img[src*='ItemImage/PT/']");
+    const img = article.querySelector("img[src*='ItemImage/PT/'], img[src*='ItemImage/PN/']");
     if (!img) continue;
-    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+    const match = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
     if (!match) continue;
     const colorId = parseInt(match[1], 10);
     const partNo = match[2];
@@ -133,7 +133,7 @@ function extractRows() {
 
   // Wanted list (www.bricklink.com/v2/wanted/) — images have class wl-item-img, row is .table-row
   for (const img of document.querySelectorAll("img.wl-item-img")) {
-    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+    const match = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
     if (!match) continue;
     const row = img.closest(".table-row");
     if (!row || row.dataset.mocSourceDone) continue;
@@ -141,8 +141,8 @@ function extractRows() {
   }
 
   // Cart (store.bricklink.com/#/cart) — row is article.store-cart-item
-  for (const img of document.querySelectorAll("article.store-cart-item img[src*='ItemImage/PT/']")) {
-    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+  for (const img of document.querySelectorAll("article.store-cart-item img[src*='ItemImage/PT/'], article.store-cart-item img[src*='ItemImage/PN/']")) {
+    const match = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
     if (!match) continue;
     const row = img.closest("article.store-cart-item");
     if (!row || row.dataset.mocSourceDone) continue;
@@ -150,8 +150,8 @@ function extractRows() {
   }
 
   // Store listing (store.bricklink.com/#/shop) — row is article.component
-  for (const img of document.querySelectorAll("article.component img[src*='ItemImage/PT/']")) {
-    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+  for (const img of document.querySelectorAll("article.component img[src*='ItemImage/PT/'], article.component img[src*='ItemImage/PN/']")) {
+    const match = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
     if (!match) continue;
     const row = img.closest("article.component");
     if (!row || row.dataset.mocSourceDone) continue;
@@ -159,8 +159,8 @@ function extractRows() {
   }
 
   // Buy page store selection modal — div.cart-item-row
-  for (const img of document.querySelectorAll("div.cart-item-row img[src*='ItemImage/PT/']")) {
-    const match = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+  for (const img of document.querySelectorAll("div.cart-item-row img[src*='ItemImage/PT/'], div.cart-item-row img[src*='ItemImage/PN/']")) {
+    const match = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
     if (!match) continue;
     const row = img.closest("div.cart-item-row");
     if (!row || row.dataset.mocSourceDone) continue;
@@ -295,8 +295,8 @@ function injectFillWantedQtyButton() {
       const pm = cl.textContent.match(/\$([\d,]+\.[\d]{2})/);
       const storePrice = pm ? parseFloat(pm[1].replace(/,/g, "")) : null;
 
-      const img = article.querySelector("img[src*='ItemImage/PT/']");
-      const m = img?.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+      const img = article.querySelector("img[src*='ItemImage/PT/'], img[src*='ItemImage/PN/']");
+      const m = img?.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
       const partKey = m ? `${m[2]}:${m[1]}` : article.dataset.id || Math.random().toString();
 
       if (!byPart.has(partKey)) byPart.set(partKey, { N: new Map(), U: new Map() });
@@ -814,9 +814,9 @@ async function applyBlCartWriteback() {
   // Re-query live DOM on every call — BL React re-renders after each save
   function findArticle(partNo, colorId, storePrice) {
     return [...document.querySelectorAll("article.store-cart-item")].find(a => {
-      const img = a.querySelector("img[src*='ItemImage/PT/']");
+      const img = a.querySelector("img[src*='ItemImage/PT/'], img[src*='ItemImage/PN/']");
       if (!img) return false;
-      const m = img.src.match(/\/ItemImage\/PT\/(\d+)\/([^.]+)\.t\d\.png/);
+      const m = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
       if (!m || parseInt(m[1], 10) !== colorId || m[2] !== partNo) return false;
       if (!storePrice) return true;
       const priceCell = a.querySelector("div.price-col");
