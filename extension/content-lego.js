@@ -177,8 +177,8 @@ async function addToCart(auth, locale, items, cartType) {
 
 // Sends a batch of ElementInput items to one cart type and returns counts.
 async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, totalAll) {
-  const BATCH = 300;
-  let added = 0, failed = 0, lastError = null;
+  const BATCH = 50;
+  let added = 0, failed = 0, lastError = null, limitReached = false;
   for (let i = 0; i < toAdd.length; i += BATCH) {
     const batch = toAdd.slice(i, i + BATCH);
     try {
@@ -187,6 +187,11 @@ async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, tota
     } catch (e) {
       lastError = e.message;
       console.warn(`MOC Source: ${label} batch failed:`, e.message);
+      if (e.message.includes("MAX_LINE_ITEMS_REACHED")) {
+        limitReached = true;
+        failed += toAdd.length - i - added;
+        break;
+      }
       failed += batch.length;
     }
     showOverlay(
@@ -195,7 +200,7 @@ async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, tota
       totalAll
     );
   }
-  return { added, failed, lastError };
+  return { added, failed, lastError, limitReached };
 }
 
 async function runTransfer(items, locale, channel, auth) {

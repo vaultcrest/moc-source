@@ -2439,20 +2439,22 @@ async function renderProjectDetail(id, content) {
     const transferBtn = e.target.closest(".lego-proj-transfer-btn");
     if (!transferBtn) return;
     const channel = transferBtn.dataset.channel;
-    const allLegoAllocs = Object.entries(currentAllocs)
-      .filter(([, a]) => (a.legoQty ?? 0) > 0)
-      .map(([key, a]) => ({ key, qty: a.legoQty }));
-    const items = allLegoAllocs
-      .filter(({ key }) => {
-        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-        const ch = part?.pabEntry?.channel;
-        return part?.pabEntry?.element_id && (channel === "both" ? (ch === "pab" || ch === "bap") : ch === channel);
-      })
-      .map(({ key, qty }) => {
-        const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-        return { elementId: part.pabEntry.element_id, qty, channel: part.pabEntry.channel };
-      })
-      .filter(i => i.qty > 0);
+    // Use legoCart.parts when saved (same source as the LEGO cart list view).
+    // Fall back to pool allocations if no cart is linked or cart has no saved parts.
+    const sourceParts = legoCart?.parts?.length
+      ? legoCart.parts.filter(p =>
+          p.elementId && (channel === "both" ? (p.channel === "pab" || p.channel === "bap") : p.channel === channel)
+        ).map(p => ({ elementId: p.elementId, qty: p.qty ?? 1, channel: p.channel }))
+      : Object.entries(currentAllocs)
+          .filter(([, a]) => (a.legoQty ?? 0) > 0)
+          .map(([key, a]) => {
+            const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
+            const ch = part?.pabEntry?.channel;
+            if (!part?.pabEntry?.element_id) return null;
+            if (channel !== "both" && ch !== channel) return null;
+            return { elementId: part.pabEntry.element_id, qty: a.legoQty, channel: ch };
+          }).filter(Boolean);
+    const items = sourceParts.filter(i => i.qty > 0);
     if (!items.length) return;
     const origLabel = transferBtn.textContent;
     transferBtn.disabled = true;
