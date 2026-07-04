@@ -176,7 +176,7 @@ async function addToCart(auth, locale, items, cartType) {
 // ─── Transfer orchestration ───────────────────────────────────────────────────
 
 // Sends items to one cart type in batches of 150 (LEGO's per-type limit).
-// 3-second pause between batches avoids Cloudflare rate limits.
+// 10-second pause between batches keeps requests well under CF rate limits.
 async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, totalAll) {
   const BATCH = 150;
   let added = 0, failed = 0, lastError = null, limitReached = false;
@@ -197,12 +197,8 @@ async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, tota
       failed += batch.length;
       break;
     }
-    showOverlay(
-      failed ? `${label}… (${failed} failed)` : `${label}…`,
-      doneOffset + added + failed,
-      totalAll
-    );
-    if (i + BATCH < toAdd.length) await new Promise(r => setTimeout(r, 3000));
+    showOverlay(`${label}…`, doneOffset + added, totalAll);
+    if (i + BATCH < toAdd.length) await new Promise(r => setTimeout(r, 10000));
   }
   return { added, failed, lastError, limitReached };
 }
@@ -229,72 +225,38 @@ async function runTransfer(items, locale, channel, auth) {
     const pabItems = items.filter(i => i.channel === "pab");
     const bapItems = items.filter(i => i.channel === "bap");
     const total = items.length;
-    let added = 0, skipped = 0, failed = 0, lastError = null;
+    let added = 0, failed = 0, lastError = null;
 
     for (const [channelItems, cartType, label, offset] of [
       [pabItems, "pab", "Bestseller", 0],
       [bapItems, "bap", "Standard",   pabItems.length],
     ]) {
       if (!channelItems.length) continue;
-      let existing = new Set();
-      try {
-        const cart = await readCart(auth, locale, cartType);
-        existing = new Set(cart.map(i => String(i.designId ?? i.sku)));
-      } catch (e) { console.warn("MOC Source: cart read skipped:", e.message); }
-      const toAdd = channelItems.filter(i => !existing.has(String(i.elementId)))
-        .map(i => ({ sku: String(i.elementId), quantity: i.qty }));
-      skipped += channelItems.length - toAdd.length;
-      if (toAdd.length) {
-        showOverlay(`Adding ${label} parts…`, offset, total);
-        const r = await pushToCart(auth, locale, toAdd, cartType, label, offset, total);
-        added += r.added; failed += r.failed;
-        if (r.lastError) lastError = r.lastError;
-      }
+      const toAdd = channelItems.map(i => ({ sku: String(i.elementId), quantity: i.qty }));
+      showOverlay(`Adding ${label} parts…`, offset, total);
+      const r = await pushToCart(auth, locale, toAdd, cartType, label, offset, total);
+      added += r.added; failed += r.failed;
+      if (r.lastError) lastError = r.lastError;
     }
 
     const parts = [];
     if (added > 0) parts.push(`${added} lot${added !== 1 ? "s" : ""} added`);
-    if (skipped > 0) parts.push(`${skipped} already in cart`);
     if (failed > 0) parts.push(`${failed} failed`);
     const msg = failed > 0 ? `${parts.join(", ")}.\n${lastError ?? ""}` : `Done! ${parts.join(", ")}.`;
     showOverlay(msg, items.length, items.length, failed > 0, true);
     transferInProgress = false;
-    return { ok: failed === 0, added, skipped, failed };
+    return { ok: failed === 0, added, failed };
   }
 
   const cartType = channel === "bap" ? "bap" : "pab";
   const label = cartType === "pab" ? "Bestseller" : "Standard";
-  const total = items.length;
-
-  let existingSkus = new Set();
-  try {
-    const cart = await readCart(auth, locale, cartType);
-    existingSkus = new Set(cart.map(i => String(i.designId ?? i.sku)));
-  } catch (e) {
-    console.warn("MOC Source: cart read skipped:", e.message);
-  }
-
-  const toAdd = items
-    .filter(i => !existingSkus.has(String(i.elementId)))
-    .map(i => ({ sku: String(i.elementId), quantity: i.qty }));
-
-  const skipped = items.length - toAdd.length;
-
-  if (toAdd.length === 0) {
-    const msg = skipped > 0
-      ? `All ${skipped} lot${skipped !== 1 ? "s" : ""} already in your LEGO cart.`
-      : "Nothing to transfer.";
-    showOverlay(msg, total, total, false, true);
-    transferInProgress = false;
-    return { ok: true, added: 0, skipped };
-  }
+  const toAdd = items.map(i => ({ sku: String(i.elementId), quantity: i.qty }));
 
   showOverlay(`Adding ${label} parts…`, 0, toAdd.length);
   const { added, failed, lastError } = await pushToCart(auth, locale, toAdd, cartType, label, 0, toAdd.length);
 
   const parts = [];
   if (added > 0) parts.push(`${added} lot${added !== 1 ? "s" : ""} added`);
-  if (skipped > 0) parts.push(`${skipped} already in cart`);
   if (failed > 0) parts.push(`${failed} failed`);
   const msg = failed > 0
     ? `${parts.join(", ")}.\n${lastError ?? ""}`
