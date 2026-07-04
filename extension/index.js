@@ -116,7 +116,7 @@ function blWlItems(parts, channel) {
     .map(p => ({
       partNo:   p.partNo   || p.pabEntry?.design_id,
       colorId:  p.colorId  ?? p.pabEntry?.bl_color_id,
-      qty:      Math.max(1, isLegoCart() ? (p.qty ?? 1) : (p.want ?? 1) - (p.have ?? 0)),
+      qty:      Math.max(1, isLegoCart() ? (p.qty ?? p.quantity ?? 1) : (p.want ?? 1) - (p.have ?? 0)),
       maxPrice: p.pabEntry?.price_cents ? (p.pabEntry.price_cents / 100).toFixed(4) : null,
     }))
     .filter(i => i.partNo && i.colorId && i.qty > 0);
@@ -2444,7 +2444,7 @@ async function renderProjectDetail(id, content) {
     const sourceParts = legoCart?.parts?.length
       ? legoCart.parts.filter(p =>
           p.elementId && (channel === "both" ? (p.channel === "pab" || p.channel === "bap") : p.channel === channel)
-        ).map(p => ({ elementId: p.elementId, qty: p.qty ?? 1, channel: p.channel }))
+        ).map(p => ({ elementId: p.elementId, qty: p.qty ?? p.quantity ?? 1, channel: p.channel }))
       : Object.entries(currentAllocs)
           .filter(([, a]) => (a.legoQty ?? 0) > 0)
           .map(([key, a]) => {
@@ -4224,7 +4224,7 @@ function attachDetailListeners(content) {
         })
         .map(p => ({
           elementId: p.pabEntry.element_id,
-          qty: Math.max(1, isLegoCart() ? (p.qty ?? 1) : (p.want ?? 1) - (p.have ?? 0)),
+          qty: Math.max(1, isLegoCart() ? (p.qty ?? p.quantity ?? 1) : (p.want ?? 1) - (p.have ?? 0)),
           channel: p.pabEntry.channel,
         }))
         .filter(i => i.qty > 0);
@@ -4246,7 +4246,7 @@ function attachDetailListeners(content) {
       for (const p of currentDetail.parts) {
         if (!p.pabEntry?.element_id) continue;
         if (p.pabEntry.channel !== "pab" && p.pabEntry.channel !== "bap") continue;
-        const qty = Math.max(1, (p.want ?? 1) - (p.have ?? 0));
+        const qty = Math.max(1, isLegoCart() ? (p.qty ?? p.quantity ?? 1) : (p.want ?? 1) - (p.have ?? 0));
         if (qty <= 0) continue;
         const name = (p.pabEntry.lego_name || p.pabEntry.bl_part_name || "").replace(/"/g, '""');
         rows.push([`"${name}"`, p.pabEntry.element_id, qty]);
