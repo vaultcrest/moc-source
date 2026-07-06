@@ -11,7 +11,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from .config import settings
 from .database import AsyncSessionLocal
-from .models import BricklinkMapping, LegoElement
+from .models import BricklinkMapping, Color, LegoElement
 from .rebrickable_client import find_elements, get_bl_to_rb_color_map, lookup_element_mapping
 
 log = logging.getLogger(__name__)
@@ -104,9 +104,15 @@ async def enrich_bl_part_bg(
         part_no, bl_color_id, resolved_via, newly_added, skipped,
     )
 
+    color_name: str | None = None
+    async with AsyncSessionLocal() as db:
+        color_row = await db.get(Color, bl_color_id)
+        if color_row:
+            color_name = color_row.bl_name
+
     await asyncio.to_thread(
         _send_enrichment_email,
-        part_no, bl_color_id, resolved_via, alternates,
+        part_no, bl_color_id, color_name, resolved_via, alternates,
         part_name, newly_added, skipped,
     )
 
@@ -114,6 +120,7 @@ async def enrich_bl_part_bg(
 def _send_enrichment_email(
     part_no: str,
     bl_color_id: int,
+    color_name: str | None,
     resolved_via: str,
     alternates: list[str],
     part_name: str | None,
@@ -123,11 +130,12 @@ def _send_enrichment_email(
     if not settings.smtp_host or not settings.report_email:
         return
 
+    color_label = f"{color_name} (ID {bl_color_id})" if color_name else str(bl_color_id)
     lines = [
         "MOC Source — Rebrickable Enrichment Report",
         "=" * 50,
         f"BL Part:      {part_no}",
-        f"BL Color ID:  {bl_color_id}",
+        f"BL Color:     {color_label}",
         f"Part Name:    {part_name or '(unknown)'}",
         f"Alternates:   {', '.join(alternates) or 'none'}",
         f"Resolved via: {resolved_via or '(none)'}",
@@ -139,7 +147,7 @@ def _send_enrichment_email(
     ]
 
     msg = MIMEText("\n".join(lines))
-    msg["Subject"] = f"[MOC Source] Enrichment: {part_no} / BL color {bl_color_id} → {len(newly_added)} new elements"
+    msg["Subject"] = f"[MOC Source] Enrichment: {part_no} / {color_label} → {len(newly_added)} new elements"
     msg["From"] = settings.smtp_from
     msg["To"] = settings.report_email
 
