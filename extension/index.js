@@ -140,6 +140,51 @@ function legoCartSummary(parts) {
   </div>`;
 }
 
+const LEGO_CART_LOT_LIMIT = 200;
+const LEGO_CART_QTY_LIMIT = 999;
+
+// CSP-safe image fallback: replaces inline onerror= handlers.
+// data-fb1 = first fallback src, data-fb2 = second (LEGO only).
+document.addEventListener("error", e => {
+  const img = e.target;
+  if (!(img instanceof HTMLImageElement) || !img.classList.contains("part-img")) return;
+  if (!img.dataset.e) {
+    img.dataset.e = "1";
+    if (img.dataset.fb1) { img.src = img.dataset.fb1; return; }
+  } else if (!img.dataset.e2 && img.dataset.fb2) {
+    img.dataset.e2 = "1";
+    img.src = img.dataset.fb2; return;
+  }
+  img.style.display = "none";
+}, true);
+
+// Returns [{ cartId, role }] for a project, migrating from legacy legoCartId scalar on first read.
+function getProjectLegoCarts(proj) {
+  if (proj.legoCartIds) return proj.legoCartIds;
+  return proj.legoCartId ? [{ cartId: proj.legoCartId, role: "main" }] : [];
+}
+
+// Returns the primary legoCart ID for backward-compat allocation code.
+function primaryLegoCartId(proj) {
+  const carts = getProjectLegoCarts(proj);
+  return carts.find(c => c.role === "main")?.cartId ?? carts[0]?.cartId ?? null;
+}
+
+function legoCartOverLimit(parts) {
+  const pabLots = parts.filter(p => p.channel === "pab").length;
+  const bapLots = parts.filter(p => p.channel === "bap").length;
+  return {
+    pab: pabLots > LEGO_CART_LOT_LIMIT ? pabLots : 0,
+    bap: bapLots > LEGO_CART_LOT_LIMIT ? bapLots : 0,
+  };
+}
+
+const ROLE_LABELS = {
+  main: "Main", overflow: "Overflow",
+  "pab-only": "Bestseller Only", "bap-only": "Standard Only",
+  "pab-overflow": "Bestseller Overflow", "bap-overflow": "Standard Overflow",
+};
+
 function summaryPanel(parts, cart) {
   const cats = {
     pab: { lots: 0, pieces: 0, price: 0, hasPrice: true },
@@ -303,6 +348,9 @@ let currentDetail = null; // { listType, listId, list, parts: [...with pabEntry]
 let currentTab = "all";
 let currentSort = "name_color";
 let currentSortDir = "asc";
+let legoCartSortPref   = "name"; // "name" | "default" | "parts" | "saved"
+let blCartSortPref     = "name";
+let wantedListSortPref = "name";
 let currentPabRegion = "en-us";
 let pendingQtyEditIdx = null;
 let currentProjectTab = "all";
@@ -347,6 +395,27 @@ function navigate(view) {
 async function renderLists(content) {
   const { wantedLists = [], carts = [], legoCarts = [] } = await chrome.storage.local.get(["wantedLists", "carts", "legoCarts"]);
 
+  function applyListSort(arr, pref) {
+    const sorted = [...arr];
+    if      (pref === "name")  sorted.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+    else if (pref === "parts") sorted.sort((a, b) => (b.partsCount ?? 0) - (a.partsCount ?? 0));
+    else if (pref === "saved") sorted.sort((a, b) => new Date(b.savedAt ?? b.importedAt ?? 0) - new Date(a.savedAt ?? a.importedAt ?? 0));
+    // "default" keeps insertion order (newest first)
+    return sorted;
+  }
+  const sortedLegoCarts   = applyListSort(legoCarts,     legoCartSortPref);
+  const sortedBlCarts     = applyListSort(carts,         blCartSortPref);
+  const sortedWantedLists = applyListSort(wantedLists,   wantedListSortPref);
+
+  function sortDropdown(id, pref) {
+    return `<select id="${id}" style="font-size:11px;padding:2px 6px;border:1px solid #d1d5db;border-radius:4px;color:#374151;background:#fff">
+      <option value="name"${pref    === "name"    ? " selected" : ""}>Name</option>
+      <option value="parts"${pref   === "parts"   ? " selected" : ""}>Most Parts</option>
+      <option value="saved"${pref   === "saved"   ? " selected" : ""}>Last Saved</option>
+      <option value="default"${pref === "default" ? " selected" : ""}>Last Created</option>
+    </select>`;
+  }
+
   function listTable(items, type, showRename = false) {
     if (!items.length) return null;
     return `<table>
@@ -373,20 +442,50 @@ async function renderLists(content) {
     <div class="page-title">Parts Lists</div>
 
     <div class="section">
-      <div class="section-header"><span>Wanted Lists</span><button class="new-list-btn" data-key="wantedLists" style="margin-left:auto;font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer">+ New</button></div>
-      ${listTable(wantedLists, "wantedLists", true) ?? `<div class="section-empty">No wanted lists imported yet.<br>Open a BrickLink wanted list and click <strong>Save to MOC Source</strong>.</div>`}
+      <div class="section-header">
+        <span>Wanted Lists</span>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          ${sortDropdown("wanted-sort", wantedListSortPref)}
+          <button class="new-list-btn" data-key="wantedLists" style="font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer">+ New</button>
+        </div>
+      </div>
+      ${listTable(sortedWantedLists, "wantedLists", true) ?? `<div class="section-empty">No wanted lists imported yet.<br>Open a BrickLink wanted list and click <strong>Save to MOC Source</strong>.</div>`}
     </div>
 
     <div class="section">
-      <div class="section-header"><span>BrickLink Carts</span></div>
-      ${listTable(carts, "carts", true) ?? `<div class="section-empty">No carts imported yet.<br>Open a BrickLink store cart and click <strong>Save to MOC Source</strong>.</div>`}
+      <div class="section-header">
+        <span>BrickLink Carts</span>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          ${sortDropdown("bl-cart-sort", blCartSortPref)}
+        </div>
+      </div>
+      ${listTable(sortedBlCarts, "carts", true) ?? `<div class="section-empty">No carts imported yet.<br>Open a BrickLink store cart and click <strong>Save to MOC Source</strong>.</div>`}
     </div>
 
     <div class="section">
-      <div class="section-header"><span>LEGO Carts</span><button class="new-list-btn" data-key="legoCarts" style="margin-left:auto;font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer">+ New</button></div>
-      ${listTable(legoCarts, "legoCarts", true) ?? `<div class="section-empty">No LEGO carts saved yet.<br>Transfer parts to your LEGO cart and click <strong>Save Cart</strong>.</div>`}
+      <div class="section-header">
+        <span>LEGO Carts</span>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
+          ${sortDropdown("lego-cart-sort", legoCartSortPref)}
+          <button class="new-list-btn" data-key="legoCarts" style="font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer">+ New</button>
+        </div>
+      </div>
+      ${listTable(sortedLegoCarts, "legoCarts", true) ?? `<div class="section-empty">No LEGO carts saved yet.<br>Transfer parts to your LEGO cart and click <strong>Save Cart</strong>.</div>`}
     </div>
   `;
+
+  content.querySelector("#wanted-sort")?.addEventListener("change", e => {
+    wantedListSortPref = e.target.value;
+    renderLists(content);
+  });
+  content.querySelector("#bl-cart-sort")?.addEventListener("change", e => {
+    blCartSortPref = e.target.value;
+    renderLists(content);
+  });
+  content.querySelector("#lego-cart-sort")?.addEventListener("change", e => {
+    legoCartSortPref = e.target.value;
+    renderLists(content);
+  });
 
   for (const btn of content.querySelectorAll(".list-open-btn")) {
     btn.addEventListener("click", () => navigate(`list/${btn.dataset.type}/${btn.dataset.id}`));
@@ -489,7 +588,8 @@ async function renderProjects(content) {
     const blCount = (p.blCartIds ?? []).length;
     if (wlCount) chips.push(`${wlCount} wanted list${wlCount !== 1 ? "s" : ""}`);
     if (blCount) chips.push(`${blCount} BL cart${blCount !== 1 ? "s" : ""}`);
-    if (p.legoCartId && lgMap[p.legoCartId]) chips.push("1 LEGO cart");
+    const lgCartCount = getProjectLegoCarts(p).filter(c => lgMap[c.cartId]).length;
+    if (lgCartCount > 0) chips.push(`${lgCartCount} LEGO cart${lgCartCount > 1 ? "s" : ""}`);
     return chips.length
       ? chips.map(c => `<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;background:#f0f4ff;color:#2563eb;margin-right:4px">${esc(c)}</span>`).join("")
       : `<span style="font-size:11px;color:#9ca3af">Not configured</span>`;
@@ -538,7 +638,7 @@ async function renderProjects(content) {
       createdAt: Date.now(),
       wantedListIds: [],
       blCartIds: [],
-      legoCartId: null,
+      legoCartIds: [],
       scratchWantedListId: null,
       allocations: {},
     });
@@ -629,7 +729,8 @@ async function renderProjectDetail(id, content) {
   const poolParts = [...poolMap.values()];
   const totalPoolPieces = poolParts.reduce((s, p) => s + p.wantedQty, 0);
 
-  const legoCart    = project.legoCartId ? lgMap[project.legoCartId] : null;
+  const _projLgCarts = getProjectLegoCarts(project).map(c => ({ ...c, cart: lgMap[c.cartId] })).filter(c => c.cart);
+  const legoCart     = _projLgCarts.find(c => c.role === "main")?.cart ?? _projLgCarts[0]?.cart ?? null;
   const blCartList  = (project.blCartIds ?? []).map(i => blMap[i]).filter(Boolean);
   const scratchList = project.scratchWantedListId ? wlMap[project.scratchWantedListId] : null;
 
@@ -896,7 +997,8 @@ async function renderProjectDetail(id, content) {
       <div style="display:flex;align-items:center;gap:12px;padding:8px 12px;border-bottom:1px solid #e1e4e8">
         <div style="flex:1">
           ${legoCart
-            ? `<div style="font-size:13px;font-weight:600">${esc(legoCart.name)}</div>`
+            ? `<div style="font-size:13px;font-weight:600">${esc(legoCart.name)}</div>
+               ${_projLgCarts.length > 1 ? `<div style="font-size:11px;color:#6c757d;margin-top:2px">${_projLgCarts.slice(1).map(c => `${esc(c.cart.name)} <span style="opacity:0.7">(${ROLE_LABELS[c.role] ?? c.role})</span>`).join(" · ")}</div>` : ""}`
             : `<div style="font-size:12px;color:#d97706">No LEGO cart linked — <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb;background:none;border:none;padding:0;cursor:pointer">Configure</button> to add one</div>`}
           <div style="font-size:12px;color:#6c757d">${allLegoAllocs.length} lots · ${allocPcs.toLocaleString()} pieces assigned</div>
         </div>
@@ -1429,6 +1531,7 @@ async function renderProjectDetail(id, content) {
 
   function showLegoSaveDiff() {
     if (!legoCart) return;
+    if (document.querySelector(".lego-diff-modal")) return;
 
     // Build the new parts list from current LEGO allocations
     const newParts = Object.entries(currentAllocs)
@@ -1469,6 +1572,29 @@ async function renderProjectDetail(id, content) {
 
     const noChanges = added.length === 0 && removed.length === 0 && changed.length === 0;
 
+    // Overflow detection
+    const pabLots    = newParts.filter(p => p.channel === "pab").length;
+    const bapLots    = newParts.filter(p => p.channel === "bap").length;
+    const qtyOverParts = newParts.filter(p => p.qty > LEGO_CART_QTY_LIMIT);
+    const isOverLimit  = pabLots > LEGO_CART_LOT_LIMIT || bapLots > LEGO_CART_LOT_LIMIT || qtyOverParts.length > 0;
+
+    const overflowCarts = _projLgCarts.filter(c =>
+      ["overflow", "pab-overflow", "bap-overflow"].includes(c.role)
+    );
+    const hasConfiguredOverflow = overflowCarts.length > 0;
+
+    const overflowBanner = isOverLimit ? `
+      <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;margin-top:12px;font-size:13px">
+        <div style="font-weight:700;color:#dc2626;margin-bottom:4px">&#9888; Exceeds LEGO's transfer limits</div>
+        ${pabLots > LEGO_CART_LOT_LIMIT ? `<div style="color:#7f1d1d">PAB Bestseller: <strong>${pabLots} lots</strong> — ${pabLots - LEGO_CART_LOT_LIMIT} over the ${LEGO_CART_LOT_LIMIT}-lot limit</div>` : ""}
+        ${bapLots > LEGO_CART_LOT_LIMIT ? `<div style="color:#7f1d1d">PAB Standard: <strong>${bapLots} lots</strong> — ${bapLots - LEGO_CART_LOT_LIMIT} over the ${LEGO_CART_LOT_LIMIT}-lot limit</div>` : ""}
+        ${qtyOverParts.map(p => `<div style="color:#7f1d1d">${esc(p.name)}: qty <strong>${p.qty}</strong> — ${p.qty - LEGO_CART_QTY_LIMIT} over the ${LEGO_CART_QTY_LIMIT}-unit limit</div>`).join("")}
+        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
+          <button id="lego-diff-save-overflow" style="padding:5px 12px;font-size:12px;font-weight:600;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer">${hasConfiguredOverflow ? `Save → ${esc(overflowCarts[0].cart.name)}` : "Save + Create Overflow Cart"}</button>
+          ${!hasConfiguredOverflow ? `<button id="lego-diff-add-overflow-cart" style="padding:5px 12px;font-size:12px;background:#fff;border:1px solid #d1d5db;border-radius:4px;cursor:pointer">Add Overflow Cart to Project &#8594;</button>` : ""}
+        </div>
+      </div>` : "";
+
     const modal = document.createElement("div");
     modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
     modal.innerHTML = `
@@ -1481,16 +1607,106 @@ async function renderProjectDetail(id, content) {
             ${removed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removed.length})</div>${removed.map(fmt).join("")}</div>` : ""}
             ${changed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty changed (${changed.length})</div>${changed.map(fmtChg).join("")}</div>` : ""}
           </div>`}
+        ${overflowBanner}
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6">
           <button id="lego-diff-cancel" class="btn">Cancel</button>
           ${!noChanges ? `<button id="lego-diff-confirm" class="btn btn-danger">Replace Cart</button>` : ""}
         </div>
       </div>`;
 
+    modal.className = "lego-diff-modal";
     document.body.appendChild(modal);
 
     modal.querySelector("#lego-diff-cancel").addEventListener("click", () => modal.remove());
     modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
+
+    // Overflow: "Add Overflow Cart to Project →" — navigate to project setup
+    modal.querySelector("#lego-diff-add-overflow-cart")?.addEventListener("click", () => {
+      modal.remove();
+      renderProjectSetup(id, content);
+    });
+
+    // Overflow: "Save + Create Overflow Cart" — split into keep + overflow, create new cart
+    modal.querySelector("#lego-diff-save-overflow")?.addEventListener("click", async () => {
+      const limit    = LEGO_CART_LOT_LIMIT;
+      const qtyLimit = LEGO_CART_QTY_LIMIT;
+
+      const pabParts_   = newParts.filter(p => p.channel === "pab");
+      const bapParts_   = newParts.filter(p => p.channel === "bap");
+      const otherParts_ = newParts.filter(p => p.channel !== "pab" && p.channel !== "bap");
+
+      const keepList = [];
+      const overList = [];
+
+      function splitChannel_(parts) {
+        for (const p of parts.slice(0, limit)) {
+          if (p.qty > qtyLimit) {
+            keepList.push({ ...p, qty: qtyLimit });
+            overList.push({ ...p, qty: p.qty - qtyLimit });
+          } else {
+            keepList.push(p);
+          }
+        }
+        for (const p of parts.slice(limit)) overList.push(p);
+      }
+
+      splitChannel_(pabParts_);
+      splitChannel_(bapParts_);
+      for (const p of otherParts_) keepList.push(p);
+
+      const { legoCarts: allCarts = [] } = await chrome.storage.local.get("legoCarts");
+      const cartToUpdate = allCarts.find(c => c.id === legoCart.id);
+      if (cartToUpdate) {
+        cartToUpdate.parts      = keepList;
+        cartToUpdate.savedAt    = new Date().toISOString();
+        cartToUpdate.partsCount = keepList.length;
+      }
+
+      let toastMsg;
+      if (hasConfiguredOverflow && overList.length) {
+        const oc = overflowCarts[0].cart;
+        const ocStorage = allCarts.find(c => c.id === oc.id);
+        if (ocStorage) {
+          const ocMap = new Map((ocStorage.parts ?? []).map(p => [p.elementId, p]));
+          for (const p of overList) {
+            if (ocMap.has(p.elementId)) {
+              ocMap.get(p.elementId).qty += p.qty;
+            } else {
+              ocMap.set(p.elementId, { ...p });
+            }
+          }
+          ocStorage.parts      = [...ocMap.values()];
+          ocStorage.partsCount = ocStorage.parts.length;
+          ocStorage.savedAt    = new Date().toISOString();
+        }
+        toastMsg = `Saved. ${overList.length} lots routed to "${oc.name}".`;
+      } else if (overList.length) {
+        const overflowCart = {
+          id:         String(Date.now()),
+          name:       `${legoCart.name} — Overflow`,
+          savedAt:    new Date().toISOString(),
+          locale:     legoCart.locale,
+          partsCount: overList.length,
+          parts:      overList,
+        };
+        allCarts.push(overflowCart);
+        toastMsg = `Saved. "${overflowCart.name}" created with ${overList.length} lots.`;
+      } else {
+        toastMsg = "Saved. No overflow parts to separate.";
+      }
+
+      await chrome.storage.local.set({ legoCarts: allCarts });
+      legoCart.parts = keepList;
+      modal.remove();
+      refreshLegoSection();
+      refreshGrandTotal();
+
+      const toast = document.createElement("div");
+      toast.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#15803d;color:#fff;padding:10px 24px;border-radius:6px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)";
+      toast.textContent = toastMsg;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 4000);
+    });
 
     const confirmBtn = modal.querySelector("#lego-diff-confirm");
     if (confirmBtn) {
@@ -2899,7 +3115,6 @@ async function renderProjectSetup(id, content) {
 
   const wlChecked  = new Set(project.wantedListIds ?? []);
   const blChecked  = new Set(project.blCartIds ?? []);
-  const lgSelected = project.legoCartId ?? "";
   const scratchId  = project.scratchWantedListId ?? "";
 
   function checkRow(inputType, name, value, checked, label, meta) {
@@ -2920,14 +3135,28 @@ async function renderProjectSetup(id, content) {
     ? carts.map(l => checkRow("checkbox", "bl-cart", l.id, blChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
     : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No BL store carts imported yet.</div>`;
 
-  const lgRowsHtml = [
-    `<label style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid #f3f4f6;cursor:pointer">
-      <input type="radio" name="lego-cart" value="" ${!lgSelected ? "checked" : ""}
-        style="width:15px;height:15px;flex-shrink:0;cursor:pointer">
-      <span style="font-size:13px;color:#6c757d">None</span>
-    </label>`,
-    ...legoCarts.map(l => checkRow("radio", "lego-cart", l.id, lgSelected === l.id, l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)),
-  ].join("");
+  const lgRoleOptions = sel => [
+    ["main",         "Main"],
+    ["overflow",     "Overflow"],
+    ["pab-only",     "Bestseller Only"],
+    ["bap-only",     "Standard Only"],
+    ["pab-overflow", "Bestseller Overflow"],
+    ["bap-overflow", "Standard Overflow"],
+  ].map(([v, l]) => `<option value="${v}"${sel === v ? " selected" : ""}>${l}</option>`).join("");
+
+  const lgCartOptions = sel =>
+    `<option value=""${!sel ? " selected" : ""}>(select cart)</option>` +
+    legoCarts.map(l => `<option value="${esc(l.id)}"${sel === l.id ? " selected" : ""}>${esc(l.name)} · ${(l.partsCount ?? 0).toLocaleString()} parts</option>`).join("");
+
+  function buildLgRow(cartId = "", role = "overflow") {
+    return `<div class="lego-cart-row" style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f3f4f6">
+      <select class="lego-cart-sel" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">${lgCartOptions(cartId)}</select>
+      <select class="lego-cart-role-sel" style="font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">${lgRoleOptions(role)}</select>
+      <button class="lego-cart-remove-btn" style="background:none;border:none;color:#dc2626;font-size:14px;padding:2px 6px;cursor:pointer" title="Remove">✕</button>
+    </div>`;
+  }
+
+  const existingLgRows = getProjectLegoCarts(project).map(c => buildLgRow(c.cartId, c.role)).join("");
 
   function scratchOptions(excludeIds) {
     const available = wantedLists.filter(l => !excludeIds.has(l.id));
@@ -2966,13 +3195,13 @@ async function renderProjectSetup(id, content) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
       <div class="section">
         <div class="section-header">
-          <span>LEGO Cart</span>
-          <span style="font-size:11px;color:#9ca3af;font-weight:400;margin-left:8px">one per project by convention</span>
+          <span>LEGO Carts</span>
+          ${legoCarts.length ? `<button id="add-lego-cart-btn" class="btn" style="margin-left:auto;font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none">+ Add Cart</button>` : ""}
         </div>
         <div style="padding:4px 16px 6px">
           ${legoCarts.length
-            ? lgRowsHtml
-            : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No LEGO carts saved yet.</div>`}
+            ? `<div id="lego-cart-rows">${existingLgRows || ""}</div>`
+            : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No LEGO carts saved yet. Save a cart from a LEGO PAB transfer first.</div>`}
         </div>
       </div>
 
@@ -3009,13 +3238,39 @@ async function renderProjectSetup(id, content) {
     });
   });
 
+  // ── LEGO cart multi-row editor ───────────────────────────────────────────────
+  const lgRowsContainer = content.querySelector("#lego-cart-rows");
+
+  // Wire remove buttons on existing rows
+  lgRowsContainer?.querySelectorAll(".lego-cart-remove-btn").forEach(btn => {
+    btn.addEventListener("click", () => btn.closest(".lego-cart-row").remove());
+  });
+
+  // Add Cart button appends a blank row with role "overflow"
+  content.querySelector("#add-lego-cart-btn")?.addEventListener("click", () => {
+    if (!lgRowsContainer) return;
+    lgRowsContainer.insertAdjacentHTML("beforeend", buildLgRow("", "overflow"));
+    const newRow = lgRowsContainer.lastElementChild;
+    newRow.querySelector(".lego-cart-remove-btn").addEventListener("click", () => newRow.remove());
+  });
+
+  // Enforce single Main role: demote previous Main to Overflow when a new Main is selected
+  lgRowsContainer?.addEventListener("change", e => {
+    if (!e.target.classList.contains("lego-cart-role-sel") || e.target.value !== "main") return;
+    for (const sel of lgRowsContainer.querySelectorAll(".lego-cart-role-sel")) {
+      if (sel !== e.target && sel.value === "main") sel.value = "overflow";
+    }
+  });
+
   content.querySelector("#back-btn").addEventListener("click", () => renderProjectDetail(id, content));
   content.querySelector("#cancel-btn").addEventListener("click", () => renderProjectDetail(id, content));
 
   content.querySelector("#save-btn").addEventListener("click", async () => {
-    const newWlIds   = [...content.querySelectorAll("input[name='wl-pool']:checked")].map(el => el.value);
-    const newBlIds   = [...content.querySelectorAll("input[name='bl-cart']:checked")].map(el => el.value);
-    const newLgId    = content.querySelector("input[name='lego-cart']:checked")?.value || null;
+    const newWlIds        = [...content.querySelectorAll("input[name='wl-pool']:checked")].map(el => el.value);
+    const newBlIds        = [...content.querySelectorAll("input[name='bl-cart']:checked")].map(el => el.value);
+    const newLegoCartIds  = [...content.querySelectorAll(".lego-cart-row")]
+      .map(row => ({ cartId: row.querySelector(".lego-cart-sel").value, role: row.querySelector(".lego-cart-role-sel").value }))
+      .filter(c => c.cartId);
     const newScratch = scratchSelect.value || null;
 
     const { projects: cur = [], wantedLists = [], carts = [] } =
@@ -3078,7 +3333,8 @@ async function renderProjectSetup(id, content) {
 
       proj.wantedListIds       = newWlIds;
       proj.blCartIds           = newBlIds;
-      proj.legoCartId          = newLgId;
+      proj.legoCartIds         = newLegoCartIds;
+      delete proj.legoCartId;
       proj.scratchWantedListId = newScratch;
       await chrome.storage.local.set({ projects: cur });
     }
@@ -3372,6 +3628,55 @@ function renderInfo(content) {
 
 // ─── List detail view ────────────────────────────────────────────────────────
 
+async function splitLegoCart(content) {
+  const parts = currentDetail.parts;
+  const limit = LEGO_CART_LOT_LIMIT;
+
+  const pabParts   = parts.filter(p => p.channel === "pab");
+  const bapParts   = parts.filter(p => p.channel === "bap");
+  const otherParts = parts.filter(p => p.channel !== "pab" && p.channel !== "bap");
+
+  const pabKeep     = pabParts.slice(0, limit);
+  const pabOverflow = pabParts.slice(limit);
+  const bapKeep     = bapParts.slice(0, limit);
+  const bapOverflow = bapParts.slice(limit);
+
+  const overflowParts = [...pabOverflow, ...bapOverflow];
+  if (!overflowParts.length) return;
+
+  const keepParts = [...pabKeep, ...bapKeep, ...otherParts];
+
+  const { legoCarts = [] } = await chrome.storage.local.get("legoCarts");
+  const origIdx = legoCarts.findIndex(c => c.id === currentDetail.listId);
+  if (origIdx === -1) return;
+
+  legoCarts[origIdx].parts = keepParts.map(({ pabEntry: _, _i: __, ...rest }) => rest);
+  legoCarts[origIdx].partsCount = keepParts.length;
+
+  const now = Date.now();
+  const overflowCart = {
+    id: String(now),
+    name: `${legoCarts[origIdx].name} (Part 2)`,
+    savedAt: now,
+    locale: legoCarts[origIdx].locale,
+    partsCount: overflowParts.length,
+    parts: overflowParts.map(({ pabEntry: _, _i: __, ...rest }) => rest),
+  };
+  legoCarts.push(overflowCart);
+
+  await chrome.storage.local.set({ legoCarts });
+
+  currentDetail.list = legoCarts[origIdx];
+  currentDetail.parts = keepParts;
+  renderDetailView(content);
+
+  const toast = document.createElement("div");
+  toast.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#15803d;color:#fff;padding:10px 24px;border-radius:6px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)";
+  toast.textContent = `Split complete. "${overflowCart.name}" created with ${overflowParts.length} lots.`;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 4000);
+}
+
 async function renderListDetail(listType, listId, content) {
   const { [listType]: arr = [] } = await chrome.storage.local.get(listType);
   const list = arr.find(l => l.id === listId);
@@ -3620,6 +3925,19 @@ function renderDetailView(content) {
     ? `<a href="${esc(list.storeUrl)}" target="_blank" class="btn" style="font-size:12px;text-decoration:none">↻ Open cart</a>`
     : "";
 
+  const legoOverLimit = legocart ? legoCartOverLimit(currentDetail.parts) : { pab: 0, bap: 0 };
+  const overLimitBanner = (legoOverLimit.pab || legoOverLimit.bap) ? `
+    <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:12px 16px;margin-bottom:12px;font-size:14px">
+      <div style="font-weight:700;color:#dc2626;margin-bottom:6px">&#9888; Cart exceeds LEGO's transfer limit</div>
+      <div style="color:#7f1d1d;margin-bottom:4px">You can transfer up to ${LEGO_CART_LOT_LIMIT} Bestseller and ${LEGO_CART_LOT_LIMIT} Standard lots per order.</div>
+      ${legoOverLimit.pab ? `<div style="color:#dc2626">PAB Bestseller: <strong>${legoOverLimit.pab} lots</strong> — ${legoOverLimit.pab - LEGO_CART_LOT_LIMIT} over the limit</div>` : ""}
+      ${legoOverLimit.bap ? `<div style="color:#dc2626">PAB Standard: <strong>${legoOverLimit.bap} lots</strong> — ${legoOverLimit.bap - LEGO_CART_LOT_LIMIT} over the limit</div>` : ""}
+      <div style="margin-top:10px">
+        <button class="lego-split-btn btn" style="background:#dc2626;color:#fff;border:none;font-size:13px;font-weight:600;padding:6px 18px;border-radius:5px;cursor:pointer">Split Cart</button>
+        <span style="font-size:12px;color:#7f1d1d;margin-left:10px">Keeps the first ${LEGO_CART_LOT_LIMIT} lots of each type here — moves the excess to a new cart.</span>
+      </div>
+    </div>` : "";
+
   content.innerHTML = `
     <div class="detail-header">
       <button class="back-btn">← Lists</button>
@@ -3634,6 +3952,7 @@ function renderDetailView(content) {
       </div>
     </div>
 
+    ${overLimitBanner}
     ${summaryPanel(currentDetail.parts, cart)}
 
     <div class="tab-bar">
@@ -3710,7 +4029,7 @@ function buildLegoCartRow(p, idx) {
         ${partLink}
         ${p.elementId ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.elementId}</div>` : ""}
       </td>
-      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(!this.dataset.e){this.dataset.e=1;this.src='${pnSrc||legoImg}'}else if(this.src!=='${legoImg}'){this.src='${legoImg}'}else{this.style.display='none'}"></td>
+      <td><img class="part-img" src="${esc(imgSrc)}" data-fb1="${esc(pnSrc||legoImg)}" data-fb2="${esc(legoImg)}"></td>
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 0}</strong></td>
@@ -3735,7 +4054,7 @@ function buildWantedRow(p, idx) {
         <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo)}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(p.partNo)}</a>
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
-      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(!this.dataset.e&&this.src.includes('/PT/')){this.dataset.e=1;this.src='${pnImgSrc}'}else{this.style.display='none'}"></td>
+      <td><img class="part-img" src="${esc(imgSrc)}" data-fb1="${esc(pnImgSrc)}"></td>
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td class="qty-cell" data-idx="${idx}">
@@ -3773,7 +4092,7 @@ function buildCartRow(p, idx) {
         <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo)}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="color:#6c757d;text-decoration:none" title="View on BrickLink">${esc(p.partNo)}</a>
         ${p.pabEntry?.element_id ? `<div style="font-size:10px;color:#adb5bd;margin-top:2px">${p.pabEntry.element_id}</div>` : ""}
       </td>
-      <td><img class="part-img" src="${esc(imgSrc)}" onerror="if(!this.dataset.e&&this.src.includes('/PT/')){this.dataset.e=1;this.src='${pnImgSrc}'}else{this.style.display='none'}"></td>
+      <td><img class="part-img" src="${esc(imgSrc)}" data-fb1="${esc(pnImgSrc)}"></td>
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 1}</strong></td>
@@ -4217,6 +4536,19 @@ function attachDetailListeners(content) {
   for (const btn of content.querySelectorAll(".transfer-btn")) {
     btn.addEventListener("click", async () => {
       const channel = btn.dataset.channel; // "pab", "bap", or "both"
+
+      if (isLegoCart()) {
+        const over = legoCartOverLimit(currentDetail.parts);
+        if ((channel === "pab" || channel === "both") && over.pab
+         || (channel === "bap" || channel === "both") && over.bap) {
+          const origLabel = btn.textContent;
+          btn.textContent = "Over limit — split first";
+          btn.style.background = "#dc2626";
+          setTimeout(() => { btn.textContent = origLabel; btn.style.background = ""; }, 3000);
+          return;
+        }
+      }
+
       const items = currentDetail.parts
         .filter(p => {
           const eid = isLegoCart() ? p.elementId       : p.pabEntry?.element_id;
@@ -4240,6 +4572,8 @@ function attachDetailListeners(content) {
       setTimeout(() => { btn.disabled = false; btn.textContent = origLabel; }, 3000);
     });
   }
+
+  content.querySelector(".lego-split-btn")?.addEventListener("click", () => splitLegoCart(content));
 
   for (const btn of content.querySelectorAll(".csv-dl-btn")) {
     btn.addEventListener("click", () => {

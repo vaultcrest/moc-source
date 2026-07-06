@@ -224,6 +224,79 @@ async function openBLUpload() {
   }
 }
 
+// ─── LEGO cart API ────────────────────────────────────────────────────────────
+// These fetches run in the service worker (origin = chrome-extension://...).
+// That makes them cross-origin to lego.com, so the browser sends NO lego.com
+// cookies — including Cloudflare's __cf_bm bot-management token. Running the
+// same fetch from a content script on lego.com would send that token and
+// trigger CF 1015 rate limiting.
+
+const LEGO_GQL_BASE = "https://www.lego.com/api/graphql";
+
+async function legoGql(auth, locale, urlPath, operationName, query, variables) {
+  const res = await fetch(`${LEGO_GQL_BASE}/${urlPath}`, {
+    method: "POST",
+    cache: "no-cache",
+    headers: {
+      "Content-Type": "application/json",
+      "x-locale": locale,
+      authorization: auth,
+    },
+    body: JSON.stringify({ operationName, variables, query }),
+  });
+  const json = await res.json().catch(() => null);
+  if (!res.ok) {
+    const detail = json?.errors?.[0]?.message ?? json?.message ?? JSON.stringify(json);
+    throw new Error(`HTTP ${res.status} on ${urlPath}: ${detail}`);
+  }
+  if (json?.errors?.length) throw new Error(json.errors[0].message);
+  return json.data;
+}
+
+async function legoReadCart(auth, locale, cartType) {
+  const data = await legoGql(
+    auth, locale,
+    "ElementCartQuery", "ElementCartQuery",
+    `query ElementCartQuery($cartTypes: [CartType!]!) {
+  elementCarts(types: $cartTypes) {
+    carts {
+      brickLineItems {
+        id sku designId maxOrderQuantity deliveryChannel quantity
+      }
+    }
+  }
+}`,
+    { cartTypes: [cartType] }
+  );
+  return data?.elementCarts?.carts?.[0]?.brickLineItems ?? [];
+}
+
+async function legoAddToCart(auth, locale, items, cartType) {
+  return legoGql(
+    auth, locale,
+    "AddToElementCart", "ElementCartsAddToCart",
+    `mutation ElementCartsAddToCart($items: [ElementInput!]!, $cartType: CartType!, $returnCarts: [CartType!]!) {
+  elementCartsAddToCart(input: {items: $items, cartType: $cartType, returnCarts: $returnCarts}) {
+    carts { id }
+  }
+}`,
+    { items, cartType, returnCarts: [] }
+  );
+}
+
+async function legoChangeInCart(auth, locale, elements, cartType) {
+  return legoGql(
+    auth, locale,
+    "ChangeElementLineItem", "ElementCartsChangeLineItemQuantity",
+    `mutation ElementCartsChangeLineItemQuantity($cartType: CartType!, $elements: [ElementLineItemInput!]!, $returnCarts: [CartType!]!) {
+  elementCartsChangeLineItemQuantity(input: {cartType: $cartType, elements: $elements, returnCarts: $returnCarts}) {
+    carts { id }
+  }
+}`,
+    { elements, cartType, returnCarts: [] }
+  );
+}
+
 async function openLegoTransfer(items, channel) {
   const locale = await getLocale();
   const auth = await getLegoAuth();
@@ -263,6 +336,27 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.type === "OPEN_MOC_SOURCE") {
     chrome.tabs.create({ url: chrome.runtime.getURL("index.html") });
     sendResponse(true);
+    return true;
+  }
+  if (msg.type === "LEGO_CART_API") {
+    (async () => {
+      try {
+        let data;
+        switch (msg.action) {
+          case "readCart":
+            data = await legoReadCart(msg.auth, msg.locale, msg.cartType); break;
+          case "addToCart":
+            data = await legoAddToCart(msg.auth, msg.locale, msg.items, msg.cartType); break;
+          case "changeInCart":
+            data = await legoChangeInCart(msg.auth, msg.locale, msg.elements, msg.cartType); break;
+          default:
+            throw new Error(`Unknown LEGO_CART_API action: ${msg.action}`);
+        }
+        sendResponse({ ok: true, data });
+      } catch (e) {
+        sendResponse({ ok: false, error: e.message });
+      }
+    })();
     return true;
   }
   if (msg.type === "QUEUE_TRANSFER") {

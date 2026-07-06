@@ -68,35 +68,28 @@ async function waitForAuth(timeoutMs = 10000) {
   return null;
 }
 
-// ─── LEGO cart GraphQL helpers ────────────────────────────────────────────────
+// ─── LEGO cart GraphQL (proxied through background.js service worker) ────────
+// Direct fetches from a content script on lego.com use same-origin credentials,
+// sending Cloudflare's __cf_bm bot token and triggering 1015 rate limiting.
+// Routing through background avoids this — service worker is cross-origin to
+// lego.com so no cookies are sent.
 
-// urlPath = the path segment after /api/graphql/ (may differ from operationName)
-async function gql(urlPath, operationName, query, variables, auth, locale) {
-  const headers = {
-    "Content-Type": "application/json",
-    "x-locale": locale,
-  };
-  if (auth) headers["authorization"] = auth;
+async function bgGql(action, params) {
+  const resp = await chrome.runtime.sendMessage({ type: "LEGO_CART_API", action, ...params });
+  if (!resp?.ok) throw new Error(resp?.error ?? "LEGO cart API error");
+  return resp.data;
+}
 
-  const res = await fetch(`${LEGO_GQL}/${urlPath}`, {
-    method: "POST",
-    cache: "no-cache",
-    credentials: "include",
-    headers,
-    body: JSON.stringify({ operationName, variables, query }),
-  });
+async function readCartGql(auth, locale, cartType) {
+  return bgGql("readCart", { auth, locale, cartType });
+}
 
-  const json = await res.json().catch(() => null);
-  if (!res.ok) {
-    console.log(`[MOC] gql ${urlPath} ${res.status} full body:`, JSON.stringify(json));
-    const detail = json?.errors?.[0]?.message ?? json?.message ?? JSON.stringify(json);
-    throw new Error(`HTTP ${res.status} on ${urlPath}: ${detail}`);
-  }
-  if (json?.errors?.length) {
-    console.log(`[MOC] gql ${urlPath} errors:`, JSON.stringify(json.errors));
-    throw new Error(json.errors[0].message);
-  }
-  return json.data;
+async function addToCart(auth, locale, items, cartType) {
+  return bgGql("addToCart", { auth, locale, items, cartType });
+}
+
+async function changeInCart(auth, locale, elements, cartType) {
+  return bgGql("changeInCart", { auth, locale, elements, cartType });
 }
 
 // Reads cart items from the rendered DOM by activating each tab and scanning
@@ -151,66 +144,97 @@ async function readCart(_auth, _locale, cartType) {
   return items;
 }
 
-// Adds items not already in the cart.
-async function addToCart(auth, locale, items, cartType) {
-  const result = await gql(
-    "AddToElementCart",         // URL path
-    "ElementCartsAddToCart",    // operationName in body (different from URL path)
-    `mutation ElementCartsAddToCart($items: [ElementInput!]!, $cartType: CartType!, $returnCarts: [CartType!]!) {
-      elementCartsAddToCart(
-        input: {items: $items, cartType: $cartType, returnCarts: $returnCarts}
-      ) {
-        carts {
-          id
-        }
-      }
-    }`,
-    { items, cartType, returnCarts: [] },
-    auth,
-    locale
-  );
-  console.log("[MOC] addToCart result:", JSON.stringify(result));
-  return result;
-}
-
 // ─── Transfer orchestration ───────────────────────────────────────────────────
 
-// Sends items to one cart type in batches of 150 (LEGO's per-type limit).
-// 10-second pause between batches keeps requests well under CF rate limits.
-async function pushToCart(auth, locale, toAdd, cartType, label, doneOffset, totalAll) {
-  const BATCH = 150;
-  let added = 0, failed = 0, lastError = null, limitReached = false;
-  for (let i = 0; i < toAdd.length; i += BATCH) {
-    const batch = toAdd.slice(i, i + BATCH);
+const PAB_LOT_LIMIT = 200; // LEGO's max line items per cart type (200 Bestseller + 200 Standard)
+
+// Retry fn up to `retries` times on HTTP 429, with exponential backoff.
+async function withRetry(fn, retries = 3) {
+  for (let i = 0; i <= retries; i++) {
+    try { return await fn(); }
+    catch (e) {
+      if (i === retries || !e.message.includes("429")) throw e;
+      const wait = 3000 * Math.pow(2, i); // 3s, 6s, 12s
+      console.log(`[MOC] 429 — retrying in ${wait / 1000}s (attempt ${i + 1}/${retries})`);
+      await new Promise(r => setTimeout(r, wait));
+    }
+  }
+}
+
+// Transfers items for one cart type. Reads the existing cart first, then:
+//   - items NOT yet in cart → addToCart (new lots)
+//   - items already in cart → changeInCart (update quantity)
+// Warns the user before proceeding if adding would exceed the 150-lot limit.
+async function transferOneChannel(auth, locale, items, cartType, label, doneOffset, totalAll) {
+  // Read existing cart — retry on 429.
+  let existingItems = [];
+  try {
+    existingItems = await withRetry(() => readCartGql(auth, locale, cartType));
+  } catch (e) {
+    console.warn(`[MOC] readCart(${cartType}) failed — treating all items as new:`, e.message);
+  }
+
+  const existingBySku = new Map(existingItems.map(it => [String(it.sku), it]));
+  const toAdd = [];
+  const toUpdate = [];
+
+  for (const item of items) {
+    const existing = existingBySku.get(String(item.sku));
+    if (existing) {
+      toUpdate.push({ lineItemId: existing.id, quantity: item.quantity });
+    } else {
+      toAdd.push({ sku: item.sku, quantity: item.quantity });
+    }
+  }
+
+  // Warn if new lots would overflow LEGO's per-cart-type limit.
+  // LEGO: "You can add 200 Bestseller and 200 Standard pieces per order."
+  if (existingItems.length + toAdd.length > PAB_LOT_LIMIT) {
+    const wouldAdd = Math.min(toAdd.length, PAB_LOT_LIMIT - existingItems.length);
+    const dropped  = toAdd.length - wouldAdd;
+    showOverlay(
+      `You can add ${PAB_LOT_LIMIT} ${label} lots per order.\n` +
+      `Your cart already has ${existingItems.length}. Only the first ${wouldAdd} of your ${toAdd.length} new lots will be added — ${dropped} will be dropped.\n\nContinuing…`,
+      doneOffset, totalAll
+    );
+    await new Promise(r => setTimeout(r, 3000));
+  }
+
+  let added = 0, updated = 0, failed = 0, lastError = null;
+
+  if (toAdd.length) {
     try {
-      await addToCart(auth, locale, batch, cartType);
-      added += batch.length;
+      await withRetry(() => addToCart(auth, locale, toAdd, cartType));
+      added = toAdd.length;
     } catch (e) {
-      lastError = e.message;
-      console.warn(`MOC Source: ${label} batch failed:`, e.message);
-      if (e.message.includes("MAX_LINE_ITEMS_REACHED")) {
-        limitReached = true;
-        lastError = `Your LEGO ${label} cart is full — remove some items on lego.com then try again.`;
-        failed += toAdd.length - i - added;
-        break;
-      }
-      failed += batch.length;
-      break;
+      lastError = e.message.includes("MAX_LINE_ITEMS_REACHED")
+        ? `Your LEGO ${label} cart is full — remove items on lego.com then retry.`
+        : e.message;
+      failed = toAdd.length;
     }
     showOverlay(`${label}…`, doneOffset + added, totalAll);
-    if (i + BATCH < toAdd.length) await new Promise(r => setTimeout(r, 10000));
   }
-  return { added, failed, lastError, limitReached };
+
+  if (toUpdate.length && !failed) {
+    try {
+      await withRetry(() => changeInCart(auth, locale, toUpdate, cartType));
+      updated = toUpdate.length;
+    } catch (e) {
+      console.warn(`[MOC] changeInCart(${cartType}) failed:`, e.message);
+    }
+    showOverlay(`${label}…`, doneOffset + added + updated, totalAll);
+  }
+
+  return { added, updated, failed, lastError };
 }
 
 async function runTransfer(items, locale, channel, auth) {
   if (transferInProgress) return { ok: false, error: "transfer already in progress" };
   transferInProgress = true;
 
-  showOverlay("Connecting to LEGO cart…", 0, items.length);
+  showOverlay("Reading LEGO cart…", 0, items.length);
 
-  // auth is provided by the background (read via chrome.cookies); fall back to
-  // document.cookie for the on-load path where background may not have passed it.
+  // auth is provided by background (chrome.cookies); fall back to document.cookie.
   if (!auth) auth = await waitForAuth();
   if (!auth) {
     showOverlay("Not signed in to LEGO.com — please log in and try again.", 0, 0, true);
@@ -221,50 +245,47 @@ async function runTransfer(items, locale, channel, auth) {
   // Cart API requires "en-US" format, not "en-us"
   locale = cartLocale(locale);
 
-  if (channel === "both") {
-    const pabItems = items.filter(i => i.channel === "pab");
-    const bapItems = items.filter(i => i.channel === "bap");
-    const total = items.length;
-    let added = 0, failed = 0, lastError = null;
+  const pabItems = items.filter(i => i.channel === "pab");
+  const bapItems = items.filter(i => i.channel === "bap");
+  const channels = channel === "both"
+    ? [
+        { chItems: pabItems, cartType: "pab", label: "Bestseller", offset: 0 },
+        { chItems: bapItems, cartType: "bap", label: "Standard",   offset: pabItems.length },
+      ]
+    : [{
+        chItems: items,
+        cartType: channel === "bap" ? "bap" : "pab",
+        label:    channel === "bap" ? "Standard" : "Bestseller",
+        offset: 0,
+      }];
 
-    for (const [channelItems, cartType, label, offset] of [
-      [pabItems, "pab", "Bestseller", 0],
-      [bapItems, "bap", "Standard",   pabItems.length],
-    ]) {
-      if (!channelItems.length) continue;
-      const toAdd = channelItems.map(i => ({ sku: String(i.elementId), quantity: i.qty }));
-      showOverlay(`Adding ${label} parts…`, offset, total);
-      const r = await pushToCart(auth, locale, toAdd, cartType, label, offset, total);
-      added += r.added; failed += r.failed;
-      if (r.lastError) lastError = r.lastError;
-    }
+  let totalAdded = 0, totalUpdated = 0, totalFailed = 0, lastError = null;
 
-    const parts = [];
-    if (added > 0) parts.push(`${added} lot${added !== 1 ? "s" : ""} added`);
-    if (failed > 0) parts.push(`${failed} failed`);
-    const msg = failed > 0 ? `${parts.join(", ")}.\n${lastError ?? ""}` : `Done! ${parts.join(", ")}.`;
-    showOverlay(msg, items.length, items.length, failed > 0, true);
-    transferInProgress = false;
-    return { ok: failed === 0, added, failed };
+  for (const { chItems, cartType, label, offset } of channels) {
+    if (!chItems.length) continue;
+    const normalized = chItems.map(i => ({
+      sku:      String(i.elementId ?? i.sku),
+      quantity: i.qty ?? i.quantity ?? 1,
+    }));
+    showOverlay(`Transferring ${label}…`, offset, items.length);
+    const r = await transferOneChannel(auth, locale, normalized, cartType, label, offset, items.length);
+    totalAdded   += r.added;
+    totalUpdated += r.updated;
+    totalFailed  += r.failed;
+    if (r.lastError) lastError = r.lastError;
   }
 
-  const cartType = channel === "bap" ? "bap" : "pab";
-  const label = cartType === "pab" ? "Bestseller" : "Standard";
-  const toAdd = items.map(i => ({ sku: String(i.elementId), quantity: i.qty }));
-
-  showOverlay(`Adding ${label} parts…`, 0, toAdd.length);
-  const { added, failed, lastError } = await pushToCart(auth, locale, toAdd, cartType, label, 0, toAdd.length);
-
   const parts = [];
-  if (added > 0) parts.push(`${added} lot${added !== 1 ? "s" : ""} added`);
-  if (failed > 0) parts.push(`${failed} failed`);
-  const msg = failed > 0
+  if (totalAdded   > 0) parts.push(`${totalAdded} lot${totalAdded !== 1 ? "s" : ""} added`);
+  if (totalUpdated > 0) parts.push(`${totalUpdated} updated`);
+  if (totalFailed  > 0) parts.push(`${totalFailed} failed`);
+  const msg = totalFailed > 0
     ? `${parts.join(", ")}.\n${lastError ?? ""}`
     : `Done! ${parts.join(", ")}.`;
 
-  showOverlay(msg, toAdd.length, toAdd.length, failed > 0, true);
+  showOverlay(msg, items.length, items.length, totalFailed > 0, true);
   transferInProgress = false;
-  return { ok: failed === 0, added, skipped, failed };
+  return { ok: totalFailed === 0, added: totalAdded, updated: totalUpdated, failed: totalFailed };
 }
 
 // ─── Overlay UI ──────────────────────────────────────────────────────────────
