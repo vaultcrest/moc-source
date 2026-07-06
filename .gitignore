@@ -7,6 +7,7 @@ __pycache__/
 dist/
 build/
 .alembic_version
+*.mp4
 
 # Build artifacts
 extension/*.zip

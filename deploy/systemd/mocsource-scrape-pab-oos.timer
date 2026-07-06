@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PAB OOS stock check at the top of every hour
+Requires=mocsource-scrape-pab-oos.service
+
+[Timer]
+OnCalendar=*-*-* *:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,10 @@
+[Unit]
+Description=Run PAB price refresh at 30 minutes past every hour
+Requires=mocsource-scrape-pab-price.service
+
+[Timer]
+OnCalendar=*-*-* *:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=MOC Source PAB price refresh (one locale per hour, round-robin)
+After=postgresql.service
+
+[Service]
+Type=oneshot
+User=mocsource
+WorkingDirectory=/opt/mocsource/app
+ExecStart=/opt/mocsource/venv/bin/python scripts/scrape_pab.py --mode full --one-locale
+EnvironmentFile=/opt/mocsource/app/.env
+StandardOutput=journal
+StandardError=journal
