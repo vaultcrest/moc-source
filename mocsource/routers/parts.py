@@ -269,11 +269,11 @@ async def pab_all_prices_for_part(
 async def pab_price_by_element(
     element_id: int,
     response: Response,
+    background_tasks: BackgroundTasks,
     locale: str = Query("en-us"),
     db: AsyncSession = Depends(get_db),
 ):
     """Price + BL metadata lookup by LEGO element_id for LEGO cart items."""
-    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=60"
     from ..models import BricklinkMapping, Color, LegoElementPrice
 
     def price_stmt(loc: str):
@@ -311,6 +311,7 @@ async def pab_price_by_element(
         rows = result.mappings().all()
 
     if rows:
+        response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=60"
         return [LocalePriceResult(**dict(r)) for r in rows]
 
     # No price row — return mapping info only so extension has BL name/color
@@ -335,8 +336,13 @@ async def pab_price_by_element(
     info_result = await db.execute(info_stmt)
     info_row = info_result.mappings().first()
     if not info_row:
+        # No BL mapping — trigger Rebrickable enrichment so next load resolves it
+        from ..enrichment import enrich_element_bg
+        background_tasks.add_task(enrich_element_bg, element_id)
+        response.headers["Cache-Control"] = "no-store"
         return []
 
+    response.headers["Cache-Control"] = "public, s-maxage=3600, stale-while-revalidate=60"
     return [LocalePriceResult(
         element_id=info_row["element_id"],
         design_id=info_row["design_id"],

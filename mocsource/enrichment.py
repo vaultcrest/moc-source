@@ -12,7 +12,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from .config import settings
 from .database import AsyncSessionLocal
 from .models import BricklinkMapping, LegoElement
-from .rebrickable_client import find_elements, get_bl_to_rb_color_map
+from .rebrickable_client import find_elements, get_bl_to_rb_color_map, lookup_element_mapping
 
 log = logging.getLogger(__name__)
 
@@ -153,3 +153,50 @@ def _send_enrichment_email(
         log.info("Enrichment email sent to %s", settings.report_email)
     except Exception as e:
         log.warning("Failed to send enrichment email: %s", e)
+
+
+async def enrich_element_bg(element_id: int) -> None:
+    """Background task: look up a LEGO element_id in Rebrickable and fill bricklink_mappings.
+
+    Triggered when GET_PAB_PRICE_BY_ELEMENT finds an element with no BL mapping. Uses its own
+    DB session — safe to run after the HTTP response is sent.
+    """
+    if not settings.rebrickable_api_key:
+        return
+
+    mapping = await lookup_element_mapping(element_id)
+    if not mapping:
+        log.info("enrich_element: Rebrickable has no data for element %s", element_id)
+        return
+
+    part_no, bl_color_id, part_name = mapping
+    now = datetime.utcnow()
+
+    async with AsyncSessionLocal() as db:
+        existing_map = await db.get(BricklinkMapping, element_id)
+        if existing_map:
+            return
+
+        # Ensure lego_elements row exists (may have been missed by the scraper)
+        stmt = pg_insert(LegoElement.__table__).values(
+            element_id=element_id,
+            first_seen=now,
+            last_seen=now,
+        ).on_conflict_do_update(
+            index_elements=["element_id"],
+            set_={"last_seen": now},
+        )
+        await db.execute(stmt)
+
+        db.add(BricklinkMapping(
+            element_id=element_id,
+            part_no=part_no,
+            color_id=bl_color_id,
+            item_type="PART",
+            part_name=part_name,
+            source="rebrickable",
+            updated_at=now,
+        ))
+        await db.commit()
+
+    log.info("enrich_element: element %s → part %s / BL color %s", element_id, part_no, bl_color_id)

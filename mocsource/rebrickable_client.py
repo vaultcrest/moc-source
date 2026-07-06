@@ -82,3 +82,38 @@ async def find_elements(
             log.info("Rebrickable resolved %s via %s → %d elements", part_no, candidate, len(elements))
             return candidate, elements
     return "", []
+
+
+def _fetch_element_mapping_sync(element_id: int) -> tuple[str, int, str | None] | None:
+    """Return (bl_part_no, bl_color_id, part_name) for a LEGO element_id, or None if not found."""
+    api_key = settings.rebrickable_api_key
+    if not api_key:
+        return None
+    url = f"{_RB_BASE}/elements/{element_id}/?key={api_key}"
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "mocsource/1.0"})
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            log.warning("Rebrickable element lookup returned HTTP %s for element %s", resp.status_code, element_id)
+            return None
+        data = resp.json()
+        part_no = (data.get("design") or {}).get("part_num")
+        part_name = (data.get("design") or {}).get("name")
+        bl_ids = (
+            (data.get("color") or {})
+            .get("external_ids", {})
+            .get("BrickLink", {})
+            .get("ext_ids", [])
+        )
+        if not part_no or not bl_ids:
+            return None
+        return part_no, int(bl_ids[0]), part_name
+    except Exception as e:
+        log.warning("Rebrickable element mapping failed for element %s: %s", element_id, e)
+        return None
+
+
+async def lookup_element_mapping(element_id: int) -> tuple[str, int, str | None] | None:
+    """Return (bl_part_no, bl_color_id, part_name) for a LEGO element_id via Rebrickable."""
+    return await asyncio.to_thread(_fetch_element_mapping_sync, element_id)

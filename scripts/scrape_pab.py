@@ -17,9 +17,11 @@ import time
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
+import json as _json
+import subprocess
+
 import psycopg2
 import psycopg2.extras
-from curl_cffi import requests as curl_requests
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -45,8 +47,7 @@ LOCALE_GROUPS: dict[str, list[str]] = {
     "kr": ["ko-kr"],
 }
 # Representative locale per group for OOS-check runs.
-# Poland chosen for EU — LEGO's primary PAB distribution warehouse is in Poland.
-OOS_LOCALES = ["en-us", "pl-pl", "ko-kr"]
+OOS_LOCALES = ["en-us", "de-de", "ko-kr"]
 
 
 def get_group_siblings(locale: str) -> list[str]:
@@ -103,80 +104,127 @@ fragment ElementLeaf on SearchResultElement {
 }
 """
 
-PER_PAGE = 400
-INTER_PAGE_DELAY = 1.5   # seconds between pages
-INTER_LOCALE_DELAY = 5.0  # seconds between locales
+PER_PAGE = 150  # fetchSiblings=True is expensive; 150 keeps per-page cost below LEGO's timeout
+INTER_PAGE_DELAY = 2.0   # seconds between pages
+INTER_LOCALE_DELAY = 30.0  # seconds between locales (rate-limit recovery)
 
 # ─── LEGO fetch ──────────────────────────────────────────────────────────────
 
 def _post_pab(body: dict, headers: dict) -> list[dict]:
-    resp = curl_requests.post(PAB_URL, json=body, headers=headers, impersonate="chrome124", timeout=60)
-    if resp.status_code == 429 or resp.status_code == 1015 or "rate limit" in resp.text.lower():
-        raise Exception(f"RATE_LIMITED HTTP {resp.status_code}: {resp.text[:200]}")
-    if resp.status_code != 200:
-        raise Exception(f"HTTP {resp.status_code}: {resp.text[:200]}")
-    return resp.json()["data"]["searchElements"]["results"]
+    # Use the system curl binary (OpenSSL TLS fingerprint) — Python HTTP libraries
+    # use a different fingerprint that Cloudflare Bot Management flags.
+    cmd = [
+        "curl", "-s", "-X", "POST", PAB_URL,
+        "-H", "Content-Type: application/json",
+        "-H", f"Origin: {headers.get('Origin', 'https://www.lego.com')}",
+        "-H", f"Referer: {headers.get('Referer', '')}",
+        "-H", f"x-locale: {headers.get('x-locale', '')}",
+        "-H", f"User-Agent: {headers.get('User-Agent', '')}",
+        "-H", "Accept-Language: en-US,en;q=0.9",
+        "-H", "Accept: application/json, text/plain, */*",
+        "--data", _json.dumps(body),
+        "--max-time", "60",
+        "-w", "\n%{http_code}",
+    ]
+    for attempt in range(3):
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=65)
+        except subprocess.TimeoutExpired:
+            raise Exception("curl subprocess timed out after 65s")
+        parts = result.stdout.rsplit("\n", 1)
+        try:
+            status = int(parts[-1].strip())
+            text = parts[0] if len(parts) > 1 else ""
+        except ValueError:
+            raise Exception(f"curl gave unexpected output: {result.stdout[:200]}")
+        if status == 429 or status == 1015 or "rate limit" in text.lower():
+            raise Exception(f"RATE_LIMITED HTTP {status}: {text[:200]}")
+        if status == 504:
+            wait = 30 * (attempt + 1)   # 30s, 60s, 90s
+            print(f"  504 on attempt {attempt + 1}, retrying in {wait}s …", flush=True)
+            time.sleep(wait)
+            continue
+        if status != 200:
+            raise Exception(f"HTTP {status}: {text[:200]}")
+        payload = _json.loads(text)
+        if payload.get("errors"):
+            raise Exception(f"GraphQL error: {payload['errors'][:2]}")
+        search = (payload.get("data") or {}).get("searchElements") or {}
+        return search.get("results") or []
+    raise Exception("HTTP 504: upstream request timeout (3 attempts exhausted)")
 
 
-def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False) -> tuple[list[dict], list[str]]:
+def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False,
+                 fetch_siblings: bool = True) -> tuple[list[dict], list[str], bool]:
     """
-    Returns (all_results, cached_sibling_ids).
-    all_results: all elements including cached siblings merged with fresh pass 1 data.
-    cached_sibling_ids: sibling IDs whose channel came from DB (logged only).
+    Returns (all_results, cached_sibling_ids, scan_complete).
+
+    scan_complete is True only when all pages and sibling batches succeeded
+    with no errors. Callers should skip stale-detection when it is False to
+    avoid incorrectly marking unseen elements as out-of-stock.
+
+    fetch_siblings=True (both modes): fetchSiblings=True returns one design
+    group per page with all color-variant siblings embedded. A second pass
+    re-queries siblings by element ID to get their deliveryChannel.
+    The OOS path additionally uses a DB channel cache to minimise LEGO API
+    calls; the full path always re-queries so channel data is authoritative.
     """
     headers = {
         "Origin": "https://www.lego.com",
         "Referer": f"https://www.lego.com/{locale}/pick-and-build/pick-a-brick",
         "x-locale": locale.split("-")[0].lower() + "-" + locale.split("-")[1].upper(),
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Accept": "application/json, text/plain, */*",
     }
 
-    # ── Pass 1: paginated full scrape ──────────────────────────────────────────
-    top_level: dict[str, dict] = {}   # id → item (top-level results, channel is accurate)
-    sibling_ids: list[str] = []       # ids that only appeared as siblings
-    sibling_raw: dict[str, dict] = {} # id → raw sibling object (has availability + price)
+    scan_complete = True  # set False if any page or batch errors out
+
+    # ── Pass 1: paginated scrape with fetchSiblings=True ──────────────────────
+    top_level: dict[str, dict] = {}
+    sibling_ids: list[str] = []
+    sibling_raw: dict[str, dict] = {}
     page = 1
 
     while True:
         print(f"  [{locale}] page {page} ...", flush=True)
-        results = _post_pab({
-            "operationName": "PickABrickQuery",
-            "variables": {"input": {
-                "page": page, "perPage": PER_PAGE,
-                "sort": {"key": "RELEVANCE", "direction": "DESC"},
-                "query": "", "fetchSiblings": True,
-                "availability": ["AVAILABLE", "OUT_OF_STOCK"],
-            }},
-            "query": PAB_QUERY,
-        }, headers)
-
+        try:
+            results = _post_pab({
+                "operationName": "PickABrickQuery",
+                "variables": {"input": {
+                    "page": page, "perPage": PER_PAGE,
+                    "sort": {"key": "RELEVANCE", "direction": "DESC"},
+                    "query": "", "fetchSiblings": True,
+                    "availability": ["AVAILABLE", "OUT_OF_STOCK"],
+                }},
+                "query": PAB_QUERY,
+            }, headers)
+        except Exception as e:
+            if page > 1 and top_level:
+                print(f"  [{locale}] page {page} failed ({e}); using {len(top_level)} elements from pages 1–{page-1}", flush=True)
+                scan_complete = False
+                break
+            raise
         if not results:
             break
-
         for item in results:
             top_level[item["id"]] = item
             for sib in item.get("siblings", []):
                 if sib["id"] not in top_level:
                     sibling_ids.append(sib["id"])
-                    sibling_raw[sib["id"]] = sib  # save availability + price for cache merge
-
+                    sibling_raw[sib["id"]] = sib
         if len(results) < PER_PAGE:
             break
         page += 1
         time.sleep(INTER_PAGE_DELAY)
 
-    # ── Pass 2: re-query siblings by element ID so each appears as a top-level
-    # result with its own deliveryChannel (siblings in pass 1 don't expose it).
+    # ── Pass 2: deliveryChannel for siblings ──────────────────────────────────
     new_sibling_ids = [sid for sid in sibling_ids if sid not in top_level]
-
-    # Cache only delivery channel (pab/bap) from DB — never 'oos'.
-    # Availability and price always come fresh from pass 1 sibling data,
-    # so OOS transitions and restocks are detected on every run.
-    # Parts returning from OOS are never cached (channel='oos' excluded) so
-    # they get a full LEGO re-query and pick up their real delivery channel.
     cached_sibling_ids: list[str] = []
     actually_unknown = new_sibling_ids
 
+    # OOS mode uses a DB channel cache so only newly-seen siblings need a LEGO
+    # re-query. Full mode skips the cache so channel data is always fresh.
     if conn and new_sibling_ids and (locale != "en-us" or use_sibling_cache):
         try:
             with conn.cursor() as cur:
@@ -210,7 +258,7 @@ def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False) -> tup
             cached_sibling_ids = []
             actually_unknown = new_sibling_ids
 
-    BATCH = 900  # IDs per query string (LEGO accepts up to ~900)
+    BATCH = 300
     for b_start in range(0, len(actually_unknown), BATCH):
         batch = actually_unknown[b_start:b_start + BATCH]
         query_str = " ".join(batch)
@@ -230,6 +278,7 @@ def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False) -> tup
                 }, headers)
             except Exception as e:
                 print(f"  [{locale}] sibling batch page {sib_page} failed: {e}", file=sys.stderr)
+                scan_complete = False
                 break
             for item in results:
                 top_level[item["id"]] = item
@@ -240,8 +289,9 @@ def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False) -> tup
 
     all_results = list(top_level.values())
     print(f"  [{locale}] fetched {len(all_results)} elements total "
-          f"({len(cached_sibling_ids)} DB cache, {len(actually_unknown)} LEGO API)", flush=True)
-    return all_results, cached_sibling_ids
+          f"({len(cached_sibling_ids)} DB cache, {len(actually_unknown)} LEGO API)"
+          + ("" if scan_complete else " [INCOMPLETE — stale detection skipped]"), flush=True)
+    return all_results, cached_sibling_ids, scan_complete
 
 
 # ─── Transform ───────────────────────────────────────────────────────────────
@@ -445,19 +495,40 @@ def get_db_url() -> str:
     return url
 
 
+_STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pab_locale_idx")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Scrape PAB inventory to PostgreSQL")
     parser.add_argument("--locale", help="Scrape a single locale only (e.g. en-us)")
     parser.add_argument("--dry-run", action="store_true", help="Fetch but do not write to DB")
     parser.add_argument(
         "--mode", choices=["full", "oos"], default="full",
-        help="full: all 18 locales, prices + availability (daily). "
+        help="full: all locales, prices + availability. "
              "oos: 3 representative locales only, propagates in_stock to sibling locales (hourly).",
+    )
+    parser.add_argument(
+        "--one-locale", action="store_true",
+        help="Round-robin: pick one locale per invocation using a state file. "
+             "Pair with --mode full and an hourly timer to spread the full price "
+             "refresh across the day (one locale per hour, ~18 hours per cycle).",
     )
     args = parser.parse_args()
 
     if args.mode == "oos":
         locales = OOS_LOCALES
+    elif args.one_locale:
+        try:
+            idx = int(open(_STATE_FILE).read().strip())
+        except (FileNotFoundError, ValueError):
+            idx = 0
+        locales = [LOCALES[idx % len(LOCALES)]]
+        next_idx = (idx + 1) % len(LOCALES)
+        try:
+            open(_STATE_FILE, "w").write(str(next_idx))
+        except Exception as e:
+            print(f"Warning: could not write state file: {e}", file=sys.stderr)
+        print(f"Round-robin: locale {idx % len(LOCALES) + 1}/{len(LOCALES)} → {locales[0]}", flush=True)
     else:
         locales = [args.locale] if args.locale else LOCALES
     now = datetime.now(timezone.utc)
@@ -486,7 +557,7 @@ def main():
             print(f"\n[{i+1}/{len(locales)}] Scraping {locale} ...", flush=True)
 
             try:
-                raw, cached_ids = fetch_locale(
+                raw, cached_ids, scan_complete = fetch_locale(
                     locale,
                     conn if not args.dry_run else None,
                     use_sibling_cache=(args.mode == "oos"),
@@ -522,11 +593,17 @@ def main():
                     n = write_prices(cur, rows)
                     total_prices += n
 
-                    # Price rows not touched this run: element left this locale's PAB catalog.
-                    cur.execute(MARK_STALE_PRICES_OOS, {"now": now, "locale": locale, "run_start": locale_start})
-                    stale_p = cur.rowcount
-                    if stale_p:
-                        print(f"  [{locale}] {stale_p} price rows marked out-of-stock (left catalog)", flush=True)
+                    # Stale detection: only when the scan was complete (all pages and
+                    # sibling batches succeeded). A partial scan would falsely mark
+                    # unseen elements as OOS. OOS mode never runs stale detection
+                    # since it intentionally fetches only a partial catalog.
+                    if args.mode == "full" and scan_complete:
+                        cur.execute(MARK_STALE_PRICES_OOS, {"now": now, "locale": locale, "run_start": locale_start})
+                        stale_p = cur.rowcount
+                        if stale_p:
+                            print(f"  [{locale}] {stale_p} price rows marked out-of-stock (left catalog)", flush=True)
+                    elif args.mode == "full" and not scan_complete:
+                        print(f"  [{locale}] scan incomplete — skipping stale detection to avoid false OOS", flush=True)
 
                 conn.commit()
                 print(f"  [{locale}] committed {n} price rows", flush=True)

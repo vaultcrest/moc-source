@@ -1,6 +1,28 @@
 # Changelog
 
-All notable changes to the MOC Source Chrome extension are documented here.
+All notable changes to MOC Source are documented here.
+
+## [Backend] — 2026-07-05
+
+### PAB Scraper (`scripts/scrape_pab.py`)
+- Replaced `curl_cffi` with system `curl` subprocess — correct OpenSSL TLS fingerprint avoids Cloudflare Bot Management blocks
+- Reduced page size 400 → 150 and sibling batch size 900 → 300 to stay within LEGO API per-request timeouts
+- Increased inter-page delay to 2 s and inter-locale delay to 30 s for rate-limit recovery
+- Added 504 retry logic with 30 s / 60 s / 90 s backoff
+- Added `scan_complete` flag: stale OOS marking is skipped when a scrape completes only partially, preventing false out-of-stock writes
+- Added `--one-locale` flag for round-robin hourly price refresh (one locale per invocation, state tracked in `.pab_locale_idx`)
+- Changed OOS representative locale from `pl-pl` to `de-de`
+
+### Element Enrichment (`mocsource/enrichment.py`, `mocsource/rebrickable_client.py`)
+- Added `lookup_element_mapping(element_id)` — queries Rebrickable by LEGO element ID to resolve BrickLink part number, color ID, and part name
+- Added `enrich_element_bg(element_id)` background task — triggered automatically by `GET /api/v1/parts/element/{id}/price` when no BrickLink mapping exists; fills `bricklink_mappings` so subsequent lookups resolve correctly
+
+### API (`mocsource/routers/parts.py`)
+- `pab_price_by_element`: Cache-Control header is now set per code path — `no-store` when element has no mapping (forces re-fetch after background enrichment), `s-maxage=3600` only when data is present
+- Unknown elements now trigger `enrich_element_bg` as a FastAPI `BackgroundTask` (zero latency impact on the HTTP response)
+
+### Privacy Policy (`static/privacy.html`)
+- Updated wording for clarity; added "What that means" section header
 
 ## [0.4.8] — 2026-07-05
 
