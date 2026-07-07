@@ -4,45 +4,6 @@ const BL_COUNTRIES = ["Afghanistan","Albania","Algeria","Andorra","Angola","Angu
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-// BrickLink OAuth credential encryption (AES-GCM via SubtleCrypto).
-// Key is derived from the extension ID (device-bound, never transmitted).
-async function _blCryptoKey() {
-  const enc = new TextEncoder();
-  const raw = enc.encode(chrome.runtime.id);
-  const base = await crypto.subtle.importKey("raw", raw, "PBKDF2", false, ["deriveKey"]);
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt: enc.encode("moc-source-bl"), iterations: 100000, hash: "SHA-256" },
-    base,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-}
-
-async function encryptBLCredentials(creds) {
-  const key = await _blCryptoKey();
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const enc = new TextEncoder();
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(JSON.stringify(creds)));
-  const toB64 = buf => btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return { iv: toB64(iv), ciphertext: toB64(ciphertext) };
-}
-
-async function decryptBLCredentials() {
-  const { blCredentials } = await chrome.storage.local.get("blCredentials");
-  if (!blCredentials) return null;
-  try {
-    const key = await _blCryptoKey();
-    const fromB64 = s => Uint8Array.from(atob(s), c => c.charCodeAt(0));
-    const plain = await crypto.subtle.decrypt(
-      { name: "AES-GCM", iv: fromB64(blCredentials.iv) },
-      key,
-      fromB64(blCredentials.ciphertext)
-    );
-    return JSON.parse(new TextDecoder().decode(plain));
-  } catch { return null; }
-}
-
 function esc(s) {
   return String(s)
     .replace(/&/g, "&amp;").replace(/</g, "&lt;")
@@ -464,13 +425,13 @@ async function renderLists(content) {
 
     <div class="section">
       <div class="section-header">
-        <span>LEGO Carts</span>
+        <span>Pick-A-Brick Carts</span>
         <div style="display:flex;align-items:center;gap:6px;margin-left:auto">
           ${sortDropdown("lego-cart-sort", legoCartSortPref)}
           <button class="new-list-btn" data-key="legoCarts" style="font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none;border-radius:4px;cursor:pointer">+ New</button>
         </div>
       </div>
-      ${listTable(sortedLegoCarts, "legoCarts", true) ?? `<div class="section-empty">No LEGO carts saved yet.<br>Transfer parts to your LEGO cart and click <strong>Save Cart</strong>.</div>`}
+      ${listTable(sortedLegoCarts, "legoCarts", true) ?? `<div class="section-empty">No Pick-A-Brick carts saved yet.<br>Transfer parts to your Pick-A-Brick cart and click <strong>Save Cart</strong>.</div>`}
     </div>
   `;
 
@@ -554,7 +515,7 @@ async function renderLists(content) {
       const newId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2) + Date.now().toString(36);
       const newItem = {
         id: newId,
-        name: key === "legoCarts" ? `LEGO Cart ${fmtDate(now)}` : `New List`,
+        name: key === "legoCarts" ? `Pick-A-Brick Cart ${fmtDate(now)}` : `New List`,
         parts: [],
         partsCount: 0,
         userCreated: true,
@@ -589,7 +550,7 @@ async function renderProjects(content) {
     if (wlCount) chips.push(`${wlCount} wanted list${wlCount !== 1 ? "s" : ""}`);
     if (blCount) chips.push(`${blCount} BL cart${blCount !== 1 ? "s" : ""}`);
     const lgCartCount = getProjectLegoCarts(p).filter(c => lgMap[c.cartId]).length;
-    if (lgCartCount > 0) chips.push(`${lgCartCount} LEGO cart${lgCartCount > 1 ? "s" : ""}`);
+    if (lgCartCount > 0) chips.push(`${lgCartCount} Pick-A-Brick cart${lgCartCount > 1 ? "s" : ""}`);
     return chips.length
       ? chips.map(c => `<span style="display:inline-block;padding:1px 7px;border-radius:3px;font-size:11px;background:#f0f4ff;color:#2563eb;margin-right:4px">${esc(c)}</span>`).join("")
       : `<span style="font-size:11px;color:#9ca3af">Not configured</span>`;
@@ -931,8 +892,8 @@ async function renderProjectDetail(id, content) {
       .map(([key, a]) => ({ key, qty: a.legoQty }));
     if (!legoCart && !allLegoAllocs.length) {
       return `
-        <div class="section-header"><span>LEGO Cart</span></div>
-        <div class="section-empty" style="padding:16px">No LEGO cart selected. <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb">Configure</button> to add one.</div>`;
+        <div class="section-header"><span>Pick-A-Brick Cart</span></div>
+        <div class="section-empty" style="padding:16px">No Pick-A-Brick cart selected. <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb">Configure</button> to add one.</div>`;
     }
     const getChannel = key => poolParts.find(p => `${p.partNo}_${p.colorId}` === key)?.pabEntry?.channel;
     const bsCount    = allLegoAllocs.filter(e => getChannel(e.key) === "pab").length;
@@ -985,7 +946,7 @@ async function renderProjectDetail(id, content) {
     ].map(([v, l]) => `<option value="${v}"${legoSectionSort === v ? " selected" : ""}>${l}</option>`).join("");
     return `
       <div class="section-header">
-        <span>LEGO Cart</span>
+        <span>Pick-A-Brick Cart</span>
         ${allLegoAllocs.length > 0 ? `
           <div style="display:flex;align-items:center;gap:4px">
             <span style="font-size:11px;color:#6c757d;font-weight:400;margin-right:2px">Transfer:</span>
@@ -999,7 +960,7 @@ async function renderProjectDetail(id, content) {
           ${legoCart
             ? `<div style="font-size:13px;font-weight:600">${esc(legoCart.name)}</div>
                ${_projLgCarts.length > 1 ? `<div style="font-size:11px;color:#6c757d;margin-top:2px">${_projLgCarts.slice(1).map(c => `${esc(c.cart.name)} <span style="opacity:0.7">(${ROLE_LABELS[c.role] ?? c.role})</span>`).join(" · ")}</div>` : ""}`
-            : `<div style="font-size:12px;color:#d97706">No LEGO cart linked — <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb;background:none;border:none;padding:0;cursor:pointer">Configure</button> to add one</div>`}
+            : `<div style="font-size:12px;color:#d97706">No Pick-A-Brick cart linked — <button class="proj-configure-link back-btn" style="font-size:12px;color:#2563eb;background:none;border:none;padding:0;cursor:pointer">Configure</button> to add one</div>`}
           <div style="font-size:12px;color:#6c757d">${allLegoAllocs.length} lots · ${allocPcs.toLocaleString()} pieces assigned</div>
         </div>
         ${legoCart ? `
@@ -1046,7 +1007,7 @@ async function renderProjectDetail(id, content) {
     const selCount   = blAllocs.filter(e => selSet.has(e.key)).length;
     const targets    = [
       ...blCartList.filter(c => c.id !== cart.id).map(c => ({ type: "bl", cartId: c.id, label: `→ ${esc(c.name)}` })),
-      { type: "lego", cartId: "", label: "→ LEGO Cart" },
+      { type: "lego", cartId: "", label: "→ Pick-A-Brick Cart" },
       { type: "pool", cartId: "", label: "Return to pool" }
     ];
     // Cost summary
@@ -1142,7 +1103,7 @@ async function renderProjectDetail(id, content) {
     const scratchPieces = scratchEntries.reduce((s, e) => s + e.qty, 0);
     const selCount      = scratchEntries.filter(e => selectedScratchKeys.has(e.key)).length;
     const targets       = [
-      { type: "lego", cartId: "", label: "→ LEGO Cart" },
+      { type: "lego", cartId: "", label: "→ Pick-A-Brick Cart" },
       ...blCartList.map(c => ({ type: "bl", cartId: c.id, label: `→ ${esc(c.name)}` }))
     ];
     const header = `
@@ -1277,7 +1238,7 @@ async function renderProjectDetail(id, content) {
           alert(`None of the selected parts are available on LEGO PAB/BAP:\n${names.join("\n")}${extra}`);
           return;
         }
-        if (!confirm(`${nonPab.length} selected part(s) are not on LEGO PAB/BAP and will be skipped:\n${names.join("\n")}${extra}\n\nMove the ${selectedPoolKeys.size} PAB/BAP part(s) to LEGO Cart?`)) return;
+        if (!confirm(`${nonPab.length} selected part(s) are not on LEGO PAB/BAP and will be skipped:\n${names.join("\n")}${extra}\n\nMove the ${selectedPoolKeys.size} PAB/BAP part(s) to Pick-A-Brick Cart?`)) return;
       }
       if (!selectedPoolKeys.size) return;
     }
@@ -1338,7 +1299,7 @@ async function renderProjectDetail(id, content) {
           alert(`None of the selected parts are available on LEGO PAB/BAP:\n${names.join("\n")}${extra}`);
           return;
         }
-        if (!confirm(`${nonPab.length} selected part(s) are not on LEGO PAB/BAP and will be skipped:\n${names.join("\n")}${extra}\n\nMove the ${selKeys.length} PAB/BAP part(s) to LEGO Cart?`)) return;
+        if (!confirm(`${nonPab.length} selected part(s) are not on LEGO PAB/BAP and will be skipped:\n${names.join("\n")}${extra}\n\nMove the ${selKeys.length} PAB/BAP part(s) to Pick-A-Brick Cart?`)) return;
       }
       if (!selKeys.length) return;
     }
@@ -1599,7 +1560,7 @@ async function renderProjectDetail(id, content) {
     modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
     modal.innerHTML = `
       <div style="background:#fff;border-radius:8px;padding:24px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
-        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save to LEGO Cart</div>
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save to Pick-A-Brick Cart</div>
         <div style="font-size:12px;color:#6c757d;margin-bottom:16px">Replacing <strong>${esc(legoCart.name)}</strong> · ${unchanged.length + added.length + changed.length} lots</div>
         ${noChanges ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — cart is already up to date.</div>` : `
           <div style="overflow-y:auto;flex:1;min-height:0">
@@ -2252,7 +2213,7 @@ async function renderProjectDetail(id, content) {
       ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">All clear — this store's prices are the best option for all shared pool parts.</div>`
       : `<div style="overflow-y:auto;flex:1;min-height:0">
            ${sectionHtml("Cheaper here — consolidate from other stores", "#16a34a", cheaperHere, "here", hereSavings, "→ This Cart")}
-           ${sectionHtml("PAB cheaper than this store — move to LEGO cart", "#2563eb", pabCheaper, "pab", pabSavings, "→ LEGO Cart", legoCart ? "" : "disabled")}
+           ${sectionHtml("PAB cheaper than this store — move to Pick-A-Brick cart", "#2563eb", pabCheaper, "pab", pabSavings, "→ Pick-A-Brick Cart", legoCart ? "" : "disabled")}
          </div>
          <div style="margin-top:10px;padding:10px 0;border-top:1px solid #f3f4f6;display:flex;gap:20px;font-size:12px;color:#374151">
            ${cheaperHere.length ? `<span>Consolidation savings: <strong style="color:#16a34a">$${hereSavings.toFixed(2)}</strong></span>` : ""}
@@ -2914,7 +2875,7 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
   }).join("");
 
   const moveTargets = [
-    `<button class="btn move-btn" data-move-type="lego" data-move-cart="" style="font-size:12px;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">→ LEGO Cart</button>`,
+    `<button class="btn move-btn" data-move-type="lego" data-move-cart="" style="font-size:12px;background:#eff6ff;border-color:#93c5fd;color:#1d4ed8">→ Pick-A-Brick Cart</button>`,
     ...(blCartList ?? []).map(c =>
       `<button class="btn move-btn" data-move-type="bl" data-move-cart="${esc(c.id)}" style="font-size:12px">→ ${esc(c.name)}</button>`)
   ].join(" ");
@@ -3195,13 +3156,13 @@ async function renderProjectSetup(id, content) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px">
       <div class="section">
         <div class="section-header">
-          <span>LEGO Carts</span>
+          <span>Pick-A-Brick Carts</span>
           ${legoCarts.length ? `<button id="add-lego-cart-btn" class="btn" style="margin-left:auto;font-size:12px;padding:2px 10px;background:#1e2330;color:#fff;border:none">+ Add Cart</button>` : ""}
         </div>
         <div style="padding:4px 16px 6px">
           ${legoCarts.length
             ? `<div id="lego-cart-rows">${existingLgRows || ""}</div>`
-            : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No LEGO carts saved yet. Save a cart from a LEGO PAB transfer first.</div>`}
+            : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No Pick-A-Brick carts saved yet. Save a cart from a LEGO PAB transfer first.</div>`}
         </div>
       </div>
 
@@ -3454,7 +3415,7 @@ async function renderSettings(content) {
     </div>
 
     <div class="settings-card">
-      <h3>Project Jigsaw — LEGO Fees</h3>
+      <h3>Project — LEGO Fees</h3>
       <label class="field-check">
         <input type="checkbox" id="ignoreLegoFees">
         Ignore LEGO fees &amp; shipping in cart cost estimates
@@ -3464,36 +3425,6 @@ async function renderSettings(content) {
         and PAB delivery ($4.95 ≤$25 · $6.95 $25–$35 · Free ≥$35).
         Enable this if you plan to pad your order above the thresholds.
       </p>
-    </div>
-
-    <div class="settings-card">
-      <h3>BrickLink API Credentials</h3>
-      <p style="font-size:12px;color:#6c757d;margin:0 0 10px">
-        Required for BL store API features (missed deals scanner, cart writeback).
-        Credentials are encrypted and stored locally — never transmitted.
-        Generate keys at <a href="https://www.bricklink.com/v3/api.page" target="_blank" style="color:#0d6efd">bricklink.com/v3/api.page</a>.
-      </p>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <label for="blConsumerKey" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Consumer Key</label>
-        <input type="password" id="blConsumerKey" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <label for="blConsumerSecret" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Consumer Secret</label>
-        <input type="password" id="blConsumerSecret" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        <label for="blToken" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Token</label>
-        <input type="password" id="blToken" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
-        <label for="blTokenSecret" style="width:130px;font-size:12px;color:#555;flex-shrink:0">Token Secret</label>
-        <input type="password" id="blTokenSecret" autocomplete="off" style="flex:1;font-size:12px;padding:4px 6px;border:1px solid #d1d5db;border-radius:4px">
-      </div>
-      <div style="display:flex;align-items:center;gap:10px">
-        <button class="btn btn-primary" id="saveBLCreds" style="font-size:12px;padding:5px 14px">Save credentials</button>
-        <button class="btn" id="clearBLCreds" style="font-size:12px;padding:5px 14px;color:#dc2626;border-color:#dc2626">Clear</button>
-        <span id="blCredStatus" style="font-size:12px;color:#6c757d"></span>
-      </div>
     </div>
 
     <div class="saved-msg" id="savedMsg">Saved</div>
@@ -3535,51 +3466,6 @@ async function renderSettings(content) {
   for (const el of content.querySelectorAll("select, input[type=checkbox]")) {
     el.addEventListener("change", save);
   }
-
-  // BL credentials — show masked placeholders if already saved
-  const existingCreds = await decryptBLCredentials();
-  if (existingCreds) {
-    const MASK = "••••••••••••";
-    for (const id of ["blConsumerKey","blConsumerSecret","blToken","blTokenSecret"]) {
-      content.querySelector(`#${id}`).placeholder = MASK;
-    }
-    content.querySelector("#blCredStatus").textContent = "Credentials saved";
-    content.querySelector("#blCredStatus").style.color = "#16a34a";
-  }
-
-  content.querySelector("#saveBLCreds").addEventListener("click", async () => {
-    const ck = content.querySelector("#blConsumerKey").value.trim();
-    const cs = content.querySelector("#blConsumerSecret").value.trim();
-    const t  = content.querySelector("#blToken").value.trim();
-    const ts = content.querySelector("#blTokenSecret").value.trim();
-    const status = content.querySelector("#blCredStatus");
-    if (!ck || !cs || !t || !ts) {
-      status.textContent = "All four fields are required";
-      status.style.color = "#dc2626";
-      return;
-    }
-    const encrypted = await encryptBLCredentials({ consumerKey: ck, consumerSecret: cs, token: t, tokenSecret: ts });
-    await chrome.storage.local.set({ blCredentials: encrypted });
-    for (const id of ["blConsumerKey","blConsumerSecret","blToken","blTokenSecret"]) {
-      const el = content.querySelector(`#${id}`);
-      el.value = "";
-      el.placeholder = "••••••••••••";
-    }
-    status.textContent = "Credentials saved";
-    status.style.color = "#16a34a";
-  });
-
-  content.querySelector("#clearBLCreds").addEventListener("click", async () => {
-    await chrome.storage.local.remove("blCredentials");
-    for (const id of ["blConsumerKey","blConsumerSecret","blToken","blTokenSecret"]) {
-      const el = content.querySelector(`#${id}`);
-      el.value = "";
-      el.placeholder = "";
-    }
-    const status = content.querySelector("#blCredStatus");
-    status.textContent = "Credentials cleared";
-    status.style.color = "#6c757d";
-  });
 }
 
 // ─── Info view ───────────────────────────────────────────────────────────────
@@ -4116,7 +4002,7 @@ function showTransferWarning(skippedParts, isMove) {
 
     overlay.innerHTML = `
       <div style="background:#fff;border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.2);max-width:480px;width:90%;padding:24px">
-        <div style="font-weight:700;font-size:16px;margin-bottom:8px">Some parts can't go to a LEGO cart</div>
+        <div style="font-weight:700;font-size:16px;margin-bottom:8px">Some parts can't go to a Pick-A-Brick cart</div>
         <div style="color:#6c757d;font-size:14px;margin-bottom:10px">
           The following ${skippedParts.length} part${skippedParts.length !== 1 ? "s" : ""} ${skippedParts.length !== 1 ? "are" : "is"} BrickLink-only and will be skipped:
         </div>
@@ -4347,7 +4233,7 @@ function attachDetailListeners(content) {
     const headStyle = "padding:4px 12px 2px;font-size:10px;color:#9ca3af;font-weight:700;text-transform:uppercase;letter-spacing:0.06em";
 
     if (legoTargets.length) {
-      html += `<div style="${headStyle}">LEGO Carts${!isLego ? " — PAB items only" : ""}</div>`;
+      html += `<div style="${headStyle}">Pick-A-Brick Carts${!isLego ? " — PAB items only" : ""}</div>`;
       for (const c of legoTargets)
         html += `<button class="transfer-target-btn" data-key="legoCarts" data-id="${esc(c.id)}" style="${itemStyle}">${esc(c.name)}</button>`;
     }
