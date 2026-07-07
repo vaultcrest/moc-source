@@ -2,6 +2,12 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.9] — 2026-07-07
+
+### Extension
+- Renamed "LEGO Cart(s)" to "Pick-A-Brick Cart(s)" across the Lists view and Project detail page for clarity
+- Removed the unused BrickLink API Credentials settings card and its encrypt/decrypt wiring — it was never used and only added confusion
+
 ## [Backend] — 2026-07-05
 
 ### PAB Scraper (`scripts/scrape_pab.py`)
