@@ -199,24 +199,6 @@
     .legend .std { background: #fef9c3; color: #a16207; }
     .legend .na  { background: #e5e7eb; color: #4b5563; }
 
-    /* ── Feature step cards (Saving Lists & Carts) ── */
-    .save-cards {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 20px;
-      margin-top: 10px;
-    }
-    .save-card {
-      background: var(--card-bg);
-      border: 1px solid rgba(255,255,255,0.08);
-      border-radius: 10px;
-      overflow: hidden;
-    }
-    .save-card img { width: 100%; display: block; }
-    .save-card .body { padding: 14px 16px; }
-    .save-card h4 { font-size: 14px; font-weight: 700; margin-bottom: 6px; }
-    .save-card p { font-size: 13px; color: #9db89a; }
-
     /* ── Projects flagship block ── */
     .flagship {
       background: #0a1f12;
@@ -231,17 +213,9 @@
       color: #9db89a; font-size: 16px; max-width: 640px; margin-bottom: 32px;
     }
 
-    .flagship-shots {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 16px;
-      margin: 28px 0 36px;
-    }
-    .flagship-shots .shot { margin: 0; }
-
     .feature-list {
       display: grid;
-      gap: 20px;
+      gap: 32px;
     }
     .feature-item {
       border-left: 3px solid var(--orange);
@@ -257,6 +231,7 @@
       font-size: 14px;
       color: #9db89a;
     }
+    .feature-item .shot { margin: 14px 0 0; }
 
     /* ── FAQ ── */
     .faq-item {
@@ -415,34 +390,28 @@
     <h2>Saving Lists &amp; Carts to MOC Source</h2>
     <p style="margin-bottom:8px">At the top of Pick a Brick carts, Wanted Lists, and store pages you'll find a button to save that page to MOC Source for reference.</p>
 
-    <div class="save-cards">
-      <div class="save-card">
-        <img src="/static/badge-wanted-list.png" alt="Save Wanted List button">
-        <div class="body">
-          <h4>Save Wanted List</h4>
-          <p>Wanted lists can be reimported into a new list, or added to an existing one.</p>
-        </div>
-      </div>
-      <div class="save-card">
-        <img src="/static/pab-cart.png" alt="Save Pick a Brick Cart button">
-        <div class="body">
-          <h4>Save Pick a Brick Cart</h4>
-          <p>Carts can be used to add parts back to Pick a Brick, or saved to a Wanted List.</p>
-        </div>
-      </div>
-      <div class="save-card">
-        <img src="/static/badge-store-cart.png" alt="Save Store Cart button">
-        <div class="body">
-          <h4>Save Store Cart</h4>
-          <p>Your BrickLink store cart. Store carts can be updated in MOC Source if the cart changes.</p>
-        </div>
-      </div>
+    <div class="badge-block">
+      <h4>Save Wanted List</h4>
+      <p>Wanted lists can be reimported into a new list, or added to an existing one.</p>
+      <div class="shot"><img src="/static/badge-wanted-list.png" alt="Save Wanted List button"></div>
+    </div>
+
+    <div class="badge-block">
+      <h4>Save Pick a Brick Cart</h4>
+      <p>Carts can be used to add parts back to Pick a Brick, or saved to a Wanted List.</p>
+      <div class="shot"><img src="/static/pab-cart.png" alt="Save Pick a Brick Cart button"></div>
+    </div>
+
+    <div class="badge-block">
+      <h4>Save Store Cart</h4>
+      <p>Your BrickLink store cart. Store carts can be updated in MOC Source if the cart changes.</p>
+      <div class="shot"><img src="/static/badge-store-cart.png" alt="Save Store Cart button"></div>
     </div>
   </section>
 
   <!-- ── 5. Lists View ── -->
   <section class="section" id="lists-view">
-    <p class="section-label">The Extension SPA</p>
+    <p class="section-label">Inside the Extension</p>
     <h2>The Lists View</h2>
     <ul>
       <li>Three sections: Wanted Lists / BrickLink Carts / Pick-A-Brick Carts</li>
@@ -454,7 +423,7 @@
 
   <!-- ── 6. Detail Views ── -->
   <section class="section" id="detail-views">
-    <p class="section-label">The Extension SPA</p>
+    <p class="section-label">Inside the Extension</p>
     <h2>Detail Views</h2>
 
     <h3>Wanted List detail</h3>
@@ -487,21 +456,16 @@
       <h2>Projects</h2>
       <p class="lead">Projects are where Wanted Lists, BrickLink carts, and Pick a Brick prices work together — planning a MOC build across multiple sources, and finding the cheapest way to fill it.</p>
 
-      <div class="flagship-shots">
-        <div class="shot"><img src="/static/project-setup.png" alt="Project setup screen"></div>
-        <div class="shot"><img src="/static/project-pool.png" alt="Project pool and allocation"></div>
-        <div class="shot"><img src="/static/project-auto-allocate.png" alt="Project Auto Allocate button"></div>
-        <div class="shot"><img src="/static/project-savings.png" alt="Project grand total and PAB savings"></div>
-      </div>
-
       <div class="feature-list">
         <div class="feature-item">
           <h3>Setup</h3>
           <p>Link the wanted lists, BrickLink store carts, a Pick a Brick cart, and a scratch list you want to use for a particular project. Create multiple Pick a Brick carts to separate Bestseller from Standard, or to split across multiple carts if you go over 200 elements per type or 999 in quantity on a single lot.</p>
+          <div class="shot"><img src="/static/project-setup.png" alt="Project setup screen"></div>
         </div>
         <div class="feature-item">
           <h3>Pool</h3>
           <p>The aggregated view of all unallocated parts in a project, with tabs and over-allocation highlighting. Expand it to show parts that are already allocated.</p>
+          <div class="shot"><img src="/static/project-pool.png" alt="Project pool and allocation"></div>
         </div>
         <div class="feature-item">
           <h3>Allocating parts</h3>
@@ -510,6 +474,7 @@
         <div class="feature-item">
           <h3>⚡ Auto Allocate</h3>
           <p>One click assigns every pool part to its cheapest source, with a domestic-PAB-only option. We recommend starting here. If a store isn't giving you much of a discount over Pick a Brick, remove it from the project configuration — its parts return to the pool — then run Auto Allocate again for a better mix.</p>
+          <div class="shot"><img src="/static/project-auto-allocate.png" alt="Project Auto Allocate button"></div>
         </div>
         <div class="feature-item">
           <h3>Scratch space</h3>
@@ -522,6 +487,7 @@
         <div class="feature-item">
           <h3>Grand total bar</h3>
           <p>Per-cart subtotals plus estimated shipping, rolled into a total cost of buying the parts — and how much you saved versus Pick a Brick by using BrickLink stores.</p>
+          <div class="shot"><img src="/static/project-savings.png" alt="Project grand total and PAB savings"></div>
         </div>
       </div>
     </div>
