@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +42,6 @@ async def get_part(element_id: int, db: AsyncSession = Depends(get_db)):
 async def pab_price(
     part_no: str,
     color_id: int,
-    background_tasks: BackgroundTasks,
     response: Response,
     locale: str = Query("en-us", description="BCP-47 locale code, e.g. en-us, de-de, en-gb"),
     db: AsyncSession = Depends(get_db),
@@ -119,19 +118,16 @@ async def pab_price(
         from datetime import datetime
 
         from ..bl_client import fetch_bl_part
-        from ..enrichment import enrich_bl_part_bg
-        from ..models import BLPartCatalog, BricklinkAlternate, BricklinkMapping
+        from ..models import BLPartCatalog
 
         cached = await db.execute(select(BLPartCatalog).where(BLPartCatalog.part_no == part_no))
         cached_row = cached.scalar_one_or_none()
         part_name = cached_row.name if cached_row else None
-        alternates: list[str] = []
 
         if part_name is None:
             bl_data = await fetch_bl_part(part_no)
             if bl_data:
                 part_name = bl_data.get("name")
-                alternates = bl_data.get("alternate_no", [])
                 now = datetime.utcnow()
                 if cached_row:
                     cached_row.name = part_name
@@ -146,28 +142,16 @@ async def pab_price(
                     ))
                 await db.commit()
 
-        # Merge alternates from bricklink_alternates table (covers the cached-name case)
-        db_alts = await db.execute(
-            select(BricklinkAlternate.alternate_no).where(BricklinkAlternate.part_no == part_no)
-        )
-        for (alt,) in db_alts.all():
-            if alt not in alternates:
-                alternates.append(alt)
-
         color_result = await db.execute(select(Color).where(Color.bl_id == color_id))
         color_row = color_result.scalar_one_or_none()
 
         if not part_name and not color_row:
             return []
 
-        # Only trigger enrichment if we don't already have a rebrickable mapping for this part+color
-        existing_rb = await db.execute(
-            select(BricklinkMapping.element_id)
-            .where(BricklinkMapping.part_no == part_no, BricklinkMapping.color_id == color_id)
-            .limit(1)
-        )
-        if not existing_rb.scalar_one_or_none():
-            background_tasks.add_task(enrich_bl_part_bg, part_no, color_id, alternates, part_name)
+        # Rebrickable enrichment for BL part+color lookups is disabled — it ran once per
+        # unmapped part a user happened to browse, which was far too much volume for
+        # Rebrickable's rate limit and got this server IP-banned. New elements are now
+        # resolved once, at scrape time, in scripts/scrape_pab.py instead.
 
         return [LocalePriceResult(
             bl_part_no=part_no,
@@ -269,7 +253,6 @@ async def pab_all_prices_for_part(
 async def pab_price_by_element(
     element_id: int,
     response: Response,
-    background_tasks: BackgroundTasks,
     locale: str = Query("en-us"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -336,9 +319,8 @@ async def pab_price_by_element(
     info_result = await db.execute(info_stmt)
     info_row = info_result.mappings().first()
     if not info_row:
-        # No BL mapping — trigger Rebrickable enrichment so next load resolves it
-        from ..enrichment import enrich_element_bg
-        background_tasks.add_task(enrich_element_bg, element_id)
+        # No BL mapping. Rebrickable enrichment here is disabled — new elements are
+        # resolved once, at scrape time, in scripts/scrape_pab.py instead of per request.
         response.headers["Cache-Control"] = "no-store"
         return []
 

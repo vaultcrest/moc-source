@@ -22,9 +22,12 @@ import subprocess
 
 import psycopg2
 import psycopg2.extras
+import requests
 from dotenv import load_dotenv
 
 load_dotenv()
+
+REBRICKABLE_API_KEY = os.environ.get("REBRICKABLE_API_KEY", "")
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -392,6 +395,115 @@ def ensure_elements_exist(cur, rows: list[dict], now: datetime) -> int:
     return cur.rowcount
 
 
+# ─── Rebrickable enrichment (new elements only) ──────────────────────────────
+#
+# Only ever called for elements that entered lego_elements for the first time
+# this run — NOT for every unmapped part a user happens to browse on BrickLink.
+# The old per-request enrichment (one Rebrickable call per unmapped part+color
+# a user viewed) generated far too much traffic and got this server IP-banned.
+# New PAB elements are rare (a handful per day at most), so resolving BL
+# mapping once here, at scrape time, stays well within Rebrickable's limits.
+
+def fetch_rebrickable_mapping(element_id: int) -> tuple[str, int, str | None] | None:
+    """Look up (bl_part_no, bl_color_id, part_name) for a LEGO element_id via Rebrickable."""
+    if not REBRICKABLE_API_KEY:
+        return None
+    url = f"https://rebrickable.com/api/v3/lego/elements/{element_id}/?key={REBRICKABLE_API_KEY}"
+    try:
+        resp = requests.get(url, timeout=15, headers={"User-Agent": "mocsource/1.0"})
+        if resp.status_code != 200:
+            return None
+        data = resp.json()
+        part_no = (data.get("design") or {}).get("part_num")
+        part_name = (data.get("design") or {}).get("name")
+        bl_ids = (data.get("color") or {}).get("external_ids", {}).get("BrickLink", {}).get("ext_ids", [])
+        if not part_no or not bl_ids:
+            return None
+        return part_no, int(bl_ids[0]), part_name
+    except Exception as e:
+        print(f"  Rebrickable lookup failed for element {element_id}: {e}", file=sys.stderr)
+        return None
+
+
+INSERT_BL_MAPPING_NEW_ONLY = """
+INSERT INTO bricklink_mappings
+    (element_id, part_no, color_id, item_type, part_name, source, updated_at)
+VALUES %s
+ON CONFLICT (element_id) DO NOTHING
+"""
+
+
+def enrich_new_elements(
+    cur, new_element_ids: list[int], now: datetime
+) -> tuple[list[tuple[int, str, int]], list[int]]:
+    """Resolve BL part_no/color_id for brand-new LEGO elements via Rebrickable.
+
+    Returns (resolved, unresolved) — resolved is a list of
+    (element_id, bl_part_no, bl_color_id) tuples; unresolved is element_ids Rebrickable
+    had no data for (or that couldn't be looked up, e.g. no API key configured).
+    """
+    if not REBRICKABLE_API_KEY:
+        return [], list(new_element_ids)
+    resolved: list[tuple[int, str, int]] = []
+    unresolved: list[int] = []
+    values = []
+    for i, element_id in enumerate(new_element_ids):
+        mapping = fetch_rebrickable_mapping(element_id)
+        if mapping:
+            part_no, bl_color_id, part_name = mapping
+            values.append((element_id, part_no, bl_color_id, "PART", part_name, "rebrickable", now))
+            resolved.append((element_id, part_no, bl_color_id))
+        else:
+            unresolved.append(element_id)
+        if i < len(new_element_ids) - 1:
+            time.sleep(1)  # polite pacing — this only runs for a handful of new elements/day
+    if values:
+        psycopg2.extras.execute_values(cur, INSERT_BL_MAPPING_NEW_ONLY, values, page_size=100)
+    return resolved, unresolved
+
+
+def send_enrichment_report(resolved: list[tuple[int, str, int]], unresolved: list[int]) -> None:
+    smtp_host     = os.environ.get("SMTP_HOST", "")
+    smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
+    smtp_user     = os.environ.get("SMTP_USER", "")
+    smtp_password = os.environ.get("SMTP_PASSWORD", "")
+    smtp_from     = os.environ.get("SMTP_FROM", "noreply@vaultcrest.com")
+    report_email  = os.environ.get("REPORT_EMAIL", "")
+    if not smtp_host or not report_email:
+        return
+
+    total = len(resolved) + len(unresolved)
+    subject = f"Enrichment needed: {total} new PAB element(s), {len(resolved)} resolved"
+    lines = [
+        f"New PAB elements seen this run : {total}",
+        f"Resolved via Rebrickable       : {len(resolved)}",
+        f"Unresolved (no BL mapping yet) : {len(unresolved)}",
+        "",
+    ]
+    if resolved:
+        lines.append("Resolved:")
+        lines += [f"  • {eid} -> BL part {part_no} / color {color_id}" for eid, part_no, color_id in resolved]
+        lines.append("")
+    if unresolved:
+        lines.append("Unresolved — needs manual mapping, or Rebrickable doesn't have this part yet:")
+        lines += [f"  • {eid}" for eid in unresolved]
+
+    msg = MIMEText("\n".join(lines))
+    msg["Subject"] = f"[MOC Source] {subject}"
+    msg["From"]    = smtp_from
+    msg["To"]      = report_email
+    try:
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as smtp:
+            smtp.ehlo()
+            smtp.starttls()
+            if smtp_user and smtp_password:
+                smtp.login(smtp_user, smtp_password)
+            smtp.sendmail(smtp_from, [report_email], msg.as_string())
+        print(f"Enrichment report emailed to {report_email}", flush=True)
+    except Exception as e:
+        print(f"Failed to send enrichment report email: {e}", file=sys.stderr)
+
+
 def write_prices(cur, rows: list[dict]) -> int:
     values = [
         (
@@ -579,12 +691,31 @@ def main():
                 locale_start = run_start
                 with conn.cursor() as cur:
                     if locale == "en-us" and args.mode == "full":
+                        # Determine which elements are brand new before upserting, so we
+                        # know which ones need BL mapping resolution via Rebrickable.
+                        incoming_ids = [r["element_id"] for r in rows]
+                        cur.execute(
+                            "SELECT element_id FROM lego_elements WHERE element_id = ANY(%s)",
+                            (incoming_ids,),
+                        )
+                        existing_ids = {row[0] for row in cur.fetchall()}
+                        new_ids = [eid for eid in incoming_ids if eid not in existing_ids]
+
                         # Full upsert: updates pricing + channel on existing rows,
                         # and creates any brand-new elements LEGO has added since last seed.
                         # Skipped in OOS mode — channel data is refreshed by the daily full run.
                         n2 = write_elements_en_us(cur, rows, now)
                         total_elements += n2
                         print(f"  [{locale}] upserted {n2} lego_elements rows", flush=True)
+
+                        if new_ids:
+                            resolved, unresolved = enrich_new_elements(cur, new_ids, now)
+                            print(
+                                f"  [{locale}] resolved BL mapping for {len(resolved)}/{len(new_ids)} "
+                                "new elements via Rebrickable",
+                                flush=True,
+                            )
+                            send_enrichment_report(resolved, unresolved)
                     else:
                         # Refresh updated_at for known elements, insert new ones.
                         # Keeps the stale-element check accurate across all locales.
