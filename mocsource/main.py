@@ -53,3 +53,8 @@ async def favicon():
 @app.get("/privacy", include_in_schema=False)
 async def privacy():
     return FileResponse(STATIC_DIR / "privacy.html")
+
+
+@app.get("/guide", include_in_schema=False)
+async def guide():
+    return FileResponse(STATIC_DIR / "guide.html")
