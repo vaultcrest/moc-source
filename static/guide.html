@@ -158,14 +158,6 @@
       border-top: 1px solid rgba(255,255,255,0.06);
     }
 
-    .shot-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-      gap: 18px;
-      margin-top: 8px;
-    }
-    .shot-grid .shot { margin: 0; }
-
     .badge-block { margin-bottom: 26px; }
     .badge-block h4 {
       font-size: 14.5px;
@@ -321,21 +313,19 @@
   <section class="section" id="getting-started">
     <p class="section-label">Get Started</p>
     <h2>Getting Started</h2>
-    <ul>
-      <li>Click the toolbar icon to open a page with your saved carts and Wanted Lists</li>
-      <li>First-time setup: click the gear icon to set your basic settings — PAB region (18 locales) and store location filter</li>
-      <li>More detail on every setting is in the Settings section below</li>
-    </ul>
-    <div class="shot-grid">
-      <div class="shot">
-        <img src="/static/getting-started.png" alt="Toolbar icon and gear icon in the MOC Source extension">
-        <div class="cap">The toolbar icon opens the extension; the gear icon opens Settings.</div>
-      </div>
-      <div class="shot">
-        <img src="/static/settings-basic.png" alt="Basic MOC Source settings">
-        <div class="cap">Basic settings: PAB price region and Buy page store filter.</div>
-      </div>
+    <div class="badge-block">
+      <h4>Open the extension</h4>
+      <p>Click the toolbar icon to open a page with your saved carts and Wanted Lists.</p>
+      <div class="shot"><img src="/static/getting-started.png" alt="Toolbar icon in the MOC Source extension"></div>
     </div>
+
+    <div class="badge-block">
+      <h4>First-time setup</h4>
+      <p>Click the gear icon to set your basic settings — PAB region (18 locales) and store location filter.</p>
+      <div class="shot"><img src="/static/settings-basic.png" alt="Basic MOC Source settings"></div>
+    </div>
+
+    <p>More detail on every setting is in the Settings section below.</p>
   </section>
 
   <!-- ── 3. Price Badges ── -->
