@@ -433,6 +433,8 @@ async function renderLists(content) {
       </div>
       ${listTable(sortedLegoCarts, "legoCarts", true) ?? `<div class="section-empty">No Pick-A-Brick carts saved yet.<br>Transfer parts to your Pick-A-Brick cart and click <strong>Save Cart</strong>.</div>`}
     </div>
+
+    ${footerCardsHtml()}
   `;
 
   content.querySelector("#wanted-sort")?.addEventListener("change", e => {
@@ -3470,6 +3472,33 @@ async function renderSettings(content) {
 
 // ─── Info view ───────────────────────────────────────────────────────────────
 
+// Shared Links / Disclaimer / License cards — shown on the Info page and
+// again at the bottom of the Lists page so they're visible without a click.
+function footerCardsHtml() {
+  return `
+    <div class="info-card">
+      <h3>Links</h3>
+      <p>MOC Source is free and open source, built by AFOLs for AFOLs. Visit the website for the full user guide. If it's helped you save money sourcing parts, consider supporting the server costs:</p>
+      <div class="donate-links">
+        <a href="https://api.moc-source.com" target="_blank">Website</a>
+        <a href="https://api.moc-source.com/guide" target="_blank">Guide</a>
+        <a href="https://www.patreon.com/c/MocSource" target="_blank">Patreon</a>
+        <a href="https://www.paypal.com/ncp/payment/SAACTUBPTPBSS" target="_blank">PayPal</a>
+      </div>
+    </div>
+
+    <div class="info-card">
+      <h3>Disclaimer</h3>
+      <p>MOC Source is a community tool and is not authorized by or affiliated with the LEGO Group. Price data is sourced from LEGO's public PAB service and may not always be accurate or current. Always verify before purchasing.</p>
+      <p style="margin-top:8px">LEGO® is a trademark of the LEGO Group.</p>
+    </div>
+
+    <div class="info-card">
+      <h3>License</h3>
+      <p>MOC Source is open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank">AGPL-3.0</a> license. Source code on <a href="https://github.com/vaultcrest/moc-source" target="_blank">GitHub</a>.</p>
+    </div>`;
+}
+
 function renderInfo(content) {
   content.innerHTML = `
     <div class="page-title">Info</div>
@@ -3490,25 +3519,7 @@ function renderInfo(content) {
       </ul>
     </div>
 
-    <div class="info-card">
-      <h3>Donation</h3>
-      <p>MOC Source is free and open source, built by AFOLs for AFOLs. If it saves you time sourcing parts, consider supporting the server costs:</p>
-      <div class="donate-links">
-        <a href="https://www.patreon.com/c/MocSource" target="_blank">Patreon</a>
-        <a href="https://www.paypal.com/ncp/payment/SAACTUBPTPBSS" target="_blank">PayPal</a>
-      </div>
-    </div>
-
-    <div class="info-card">
-      <h3>Disclaimer</h3>
-      <p>MOC Source is a community tool and is not authorized by or affiliated with the LEGO Group. Price data is sourced from LEGO's public PAB service and may not always be accurate or current. Always verify before purchasing.</p>
-      <p style="margin-top:8px">LEGO® is a trademark of the LEGO Group.</p>
-    </div>
-
-    <div class="info-card">
-      <h3>License</h3>
-      <p>MOC Source is open source under the <a href="https://www.gnu.org/licenses/agpl-3.0.html" target="_blank">AGPL-3.0</a> license. Source code on <a href="https://github.com/vaultcrest/moc-source" target="_blank">GitHub</a>.</p>
-    </div>
+    ${footerCardsHtml()}
   `;
 }
 

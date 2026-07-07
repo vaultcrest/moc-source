@@ -2,6 +2,12 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.10] — 2026-07-07
+
+### Extension
+- Added a "Links" card (Website, Guide, Patreon, PayPal) to the Info page, with a note encouraging support if MOC Source has saved you money
+- Same Links card, plus Disclaimer and License, now also shown at the bottom of the Parts Lists page — factored into a shared `footerCardsHtml()` helper so both pages stay in sync
+
 ## [0.4.9] — 2026-07-07
 
 ### Extension
