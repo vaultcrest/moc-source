@@ -23,7 +23,7 @@ MOC Source Browser Extension (Chrome/Brave, Manifest V3)
 
 ### Browser Extension (`extension/`)
 
-Manifest V3 Chrome/Brave extension. Clicking the toolbar icon opens `index.html` — a full SPA with sidebar navigation (Lists, Settings, Info).
+Manifest V3 Chrome/Brave extension. Clicking the toolbar icon opens `index.html` — a full SPA with sidebar navigation (Lists, Projects, Settings, Info).
 
 **Price badges** injected on BrickLink pages:
 
@@ -48,13 +48,14 @@ Catalog badge behaviour: shows the price for the selected color tab; if no color
 
 **SPA (`index.html` / `index.js`):**
 
-- **Lists view** — three sections (Wanted Lists, BrickLink Carts, LEGO Carts); click a name to open detail view
+- **Lists view** — three sections (Wanted Lists, BrickLink Carts, Pick-A-Brick Carts); click a name to open detail view; Links/Disclaimer/License cards at the bottom (same cards as Info)
 - **Detail view (Wanted List)** — tabs: All / Bestseller / Standard / Not on PAB; toolbar: Remove Selected, → BrickLink / → PAB channel buttons (on All tab shows both), Copy to ▾ / Move to ▾ dropdowns, sort control; columns: Part #, Image, Name, Color, Want / Have (inline editable), Need, Max $, PAB Price, Channel; element ID under part number
 - **Detail view (BL Cart)** — same tabs; toolbar: Remove Selected, → BrickLink / → PAB, ☑ BL cheaper / ☑ PAB ≤ store auto-select buttons, Copy to ▾ / Move to ▾; Qty read-only; "↻ Open cart" link; flag/unflag rows for "To Remove" tab
-- **Detail view (LEGO Cart)** — tabs: All / Bestseller / Standard / BrickLink / To Remove; toolbar: Remove Selected, → BrickLink / → PAB, Copy to ▾ / Move to ▾; Qty read-only
+- **Detail view (Pick-A-Brick Cart)** — tabs: All / Bestseller / Standard / BrickLink / To Remove; toolbar: Remove Selected, → BrickLink / → PAB, Copy to ▾ / Move to ▾; Qty read-only
 - All detail views: context-aware sort (column-order options per list type; color sorts alphabetically by BrickLink color name); sort resets on list navigation
-- **Settings** — mirrors popup: PAB region (18 locales), store location filter, buy page filter toggles
-- **Info** — donation links, disclaimer, license
+- **Projects (Cart Jigsaw)** — 4th SPA section; workspace for splitting a wanted-list pool across Pick-A-Brick and BrickLink store carts. See "Projects (Cart Jigsaw)" under What's Working for detail
+- **Settings** — PAB region (18 locales), store location filter, buy page filter toggles, wanted list page size, Fill Wanted Qtys condition preference, Project LEGO fee estimate toggle
+- **Info** — What's New, Links (Website / Guide / Patreon / PayPal, with a note to support if MOC Source saved you money), Disclaimer, License
 
 **Other features:**
 - **Set PAB** button on wanted lists fills max price inputs from PAB prices
@@ -80,7 +81,9 @@ Response includes:
 - `lego_color_id` / `lego_color_name` — LEGO color (e.g. 199 / "Dark stone grey")
 - `price_formatted`, `channel`, `in_stock`, `locale`, `currency_code`
 
-**Rebrickable enrichment** (`rebrickable_client.py`, `enrichment.py`): When a BL part+color combo is not in the DB, the endpoint returns what it knows (name, color) and schedules a background task. The task cross-references Rebrickable — trying the primary part number then any known alternates from `bricklink_alternates` — to find LEGO element IDs, then upserts them into `lego_elements` + `bricklink_mappings`. The next request for the same part returns the full element ID. BL→RB color mapping is fetched once per process and cached in memory. Sends an enrichment email report if SMTP is configured.
+**Rebrickable enrichment** — resolves LEGO element_id ↔ BrickLink part_no/color_id for parts the canonical mapping missed. **Runs only at scrape time now, for genuinely new elements** (`scripts/scrape_pab.py`): the daily en-us full run diffs incoming element_ids against existing `lego_elements` rows before upserting, then queries Rebrickable only for the new ones (paced 1s apart), upserting resolved mappings into `bricklink_mappings`. Sends a dedicated enrichment email (resolved vs. unresolved) when new elements were seen, separate from the regular scraper run-report email.
+
+An earlier version fired a Rebrickable call on every unmapped BL part+color a user's browser happened to render (`mocsource/enrichment.py`, `mocsource/rebrickable_client.py`, triggered from `routers/parts.py`) — that generated far more traffic than Rebrickable's rate limit allows and got the app server's IP banned. Those per-request trigger points were removed; the modules themselves are still in the repo, unreferenced, in case a limited version of that path comes back later.
 
 Full deploy: `ansible-playbook site.yml` from `moc-source-infra/` (repos must be siblings on disk).
 
@@ -95,7 +98,7 @@ Served at `/page-name` via FastAPI `FileResponse`. Pattern for new pages:
 2. Add `@app.get("/page-name")` route in `mocsource/main.py`
 3. Deploy
 
-Current pages: `/privacy`
+Current pages: `/privacy`, `/guide` (branded user guide, matches `index.html`'s theme — installation through Projects/Jigsaw, screenshots, FAQ)
 
 ### Database
 
@@ -175,16 +178,15 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] Multi-region pricing — 18 locales in DB, API `?locale=` param, extension reads pabRegion setting
 - [x] Hourly scraper running on app server
 - [x] Cloudflare tunnel — `api.moc-source.com` publicly accessible
-- [x] Chrome Web Store — extension v0.4.2 in progress; v0.4.1 submitted; v0.4.0 approved (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
+- [x] Chrome Web Store — v0.4.10 submitted for review; v0.4.8 is the live version until approved (ID: `hoglacgnlglnbpeffbdndnhaokiojigh`)
 - [x] BrickLink catalog badge — injected into "Item Consists Of" column; shows color-specific PAB price or max price across all colors (no-color case)
 - [x] PAB badges are clickable — clicking any PAB/STD badge opens that element on lego.com Pick a Brick in the user's region (`?query={element_id}`); N/A badges are not linked
 - [x] Privacy page at https://api.moc-source.com/privacy
 - [x] Extension icon — Vaultcrest brick shield
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
-- [x] Rebrickable enrichment — on-demand background task fills missing element IDs; tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; email report on enrichment
-- [x] BrickLink API key setting — encrypted storage of BL OAuth consumer key/secret/token/token secret in `chrome.storage.local` (AES-GCM via SubtleCrypto; key derived from the extension ID via PBKDF2, never transmitted)
-- [x] BrickLink market price API — `GET_BL_MARKET_PRICE` handler in background.js; OAuth 1.0a signing (HMAC-SHA1) for BL store API; session-scoped price cache; foundation for BL price column UI
+- [x] Rebrickable enrichment — scrape-time only, for genuinely new PAB elements (see Rebrickable enrichment section above); tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; dedicated email report
+- [x] BrickLink market price API — `GET_BL_MARKET_PRICE` handler in background.js; OAuth 1.0a signing (HMAC-SHA1) for BL store API; session-scoped price cache; foundation for BL price column UI (the BL API Credentials settings UI that fed this was removed in v0.4.9 — never used, only added confusion; the OAuth code itself is still there for when the price-column UI ships)
 - [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 fully complete:
   - Phase 1: Project CRUD + `chrome.storage.local` schema (`projects`, allocations, estimatedShipping, scratchWantedListId)
   - Phase 2: Setup view — configure wanted lists, BL store carts, LEGO cart, scratch list per project
@@ -210,12 +212,16 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
   - UI: Savings label simplified to **PAB Savings $X.XX** (was verbose "BL $X vs PAB $Y · save $Z")
 - [x] **Project LEGO Cart transfer buttons** — "Transfer: PAB / STD / ALL" buttons in the LEGO Cart section header on the project page; STD button only shown when BAP-channel items exist; uses `legoCart.parts` as primary source (same as LEGO Cart list view), falls back to pool allocations when no saved cart is linked
 - [x] **LEGO cart transfer reliability fixes** — transfer batches capped at 50 items (was 300); 400ms pause between batches prevents Cloudflare 1015 rate limiting; `MAX_LINE_ITEMS_REACHED` response bails the loop early; CSV download and Transfer All now read correct qty from `p.qty` instead of `(want - have)` formula (which always returned 1 for LEGO cart parts)
+- [x] **v0.4.8 — Multi-cart projects** — a project can link multiple Pick-A-Brick carts with roles (Main, Overflow, Bestseller Only, Standard Only, Bestseller Overflow, Standard Overflow); overflow lots route automatically past the 200-lot / 999-qty limits; sort controls (Name, Most Parts, Last Saved, Last Created) on all three Lists sections
+- [x] **v0.4.9 — "LEGO Cart(s)" renamed to "Pick-A-Brick Cart(s)"** across the Lists view and Project detail page; unused BrickLink API Credentials settings card removed (was never wired to anything, only added confusion)
+- [x] **v0.4.10 — Links card** — Website / Guide / Patreon / PayPal, with a note to support the project if it's saved you money; shown on the Info page and at the bottom of the Parts Lists page (shared via one `footerCardsHtml()` helper)
+- [x] **User guide page** — `/guide` on the website; full walkthrough with screenshots, matches the marketing site's branded theme, linked from the extension's Info page and Lists page footer
 
 ## What's Next
 
 1. **Import wanted list or cart from XML** — import BrickLink wanted list or cart from exported XML file
-2. **BrickLink price column** — backend OAuth done (`GET_BL_MARKET_PRICE`); UI display in detail view remaining
-3. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+2. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
+3. **BrickLink price column** — backend OAuth done (`GET_BL_MARKET_PRICE`); UI display in detail view remaining
 4. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
 5. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
 6. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
