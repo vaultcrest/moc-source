@@ -186,7 +186,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] AGPL-3.0 licensed, brand assets protected in NOTICE
 - [x] Ansible infra covers full server rebuild from scratch
 - [x] Rebrickable enrichment — scrape-time only, for genuinely new PAB elements (see Rebrickable enrichment section above); tries alternates from `bricklink_alternates`; upserts `lego_elements` + `bricklink_mappings`; dedicated email report
-- [x] BrickLink market price API — `GET_BL_MARKET_PRICE` handler in background.js; OAuth 1.0a signing (HMAC-SHA1) for BL store API; session-scoped price cache; foundation for BL price column UI (the BL API Credentials settings UI that fed this was removed in v0.4.9 — never used, only added confusion; the OAuth code itself is still there for when the price-column UI ships)
+- [x] BrickLink market price API — `GET_BL_MARKET_PRICE` handler in background.js; OAuth 1.0a signing (HMAC-SHA1) for BL store API; session-scoped price cache (the BL API Credentials settings UI that fed this was removed in v0.4.9 — never used, only added confusion). **Superseded as the plan for BL average pricing**: BL's API only ever returns your own store's data or public Price Guide averages, regardless of whose key — see "BrickLink price column" under What's Next for the actual design
 - [x] **Projects (Cart Jigsaw)** — 4th SPA section; Phases 1–5 fully complete:
   - Phase 1: Project CRUD + `chrome.storage.local` schema (`projects`, allocations, estimatedShipping, scratchWantedListId)
   - Phase 2: Setup view — configure wanted lists, BL store carts, LEGO cart, scratch list per project
@@ -221,7 +221,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 
 1. **Import wanted list or cart from XML** — import BrickLink wanted list or cart from exported XML file
 2. **Rakuten affiliate** — wrap PAB links in affiliate deeplinks once Projects routes users to lego.com (LEGO merchant ID: 50641, DSA approval required for extensions)
-3. **BrickLink price column** — backend OAuth done (`GET_BL_MARKET_PRICE`); UI display in detail view remaining
+3. **BrickLink average/median price** — new `bl_price_guide` table (`part_no`, `color_id`, `avg_price_cents`, `min_price_cents` — median too if BL's Price Guide API supports it), populated on a slow, paced schedule (same pattern as the Rebrickable scrape-time enrichment — never a live BL call inside the request handler, that's what got the server IP-banned once already). Joined into the existing `/pab/price/{part_no}/{color_id}` response as new `bl_avg_price_cents` / `bl_avg_price_formatted` fields — no new endpoint, no extra client-side network call. Once that's in, compute the % difference between that average/median and the current store's price (already DOM-scraped client-side) and surface it as a comparison alongside the existing PAB badge
 4. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
 5. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
 6. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
