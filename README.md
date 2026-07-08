@@ -106,7 +106,7 @@ Current pages: `/privacy`, `/guide` (branded user guide, matches `index.html`'s 
 
 ### Database
 
-PostgreSQL 18 on `app.home.arpa`.
+PostgreSQL 18 on `app.home.arpa`. See [`docs/database-schema.png`](docs/database-schema.png) for the full entity-relationship diagram (11 domain tables, 517K+ rows, solid lines = enforced foreign keys, dashed = app-level joins with no DB constraint) — generated from a live schema query, 2026-07-08.
 
 | Table | Purpose |
 |-------|---------|
