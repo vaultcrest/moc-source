@@ -85,6 +85,8 @@ Response includes:
 
 An earlier version fired a Rebrickable call on every unmapped BL part+color a user's browser happened to render (`mocsource/enrichment.py`, `mocsource/rebrickable_client.py`, triggered from `routers/parts.py`) — that generated far more traffic than Rebrickable's rate limit allows and got the app server's IP temporarily banned. Those per-request trigger points were removed; the modules themselves are still in the repo, unreferenced, in case a limited version of that path comes back later.
 
+**Gap vs. the original design:** BrickLink has its own authoritative mapping endpoint, `GET /item_mapping/{element_id}` on `api.bricklink.com/api/store/v1` (same OAuth `bl_client.py` already uses), returning `{bl_part_no, bl_color_id, bl_item_type}` directly. `brick_palettes_generator/generate_pab_inventory.py`'s `resolve_mapping()` tries this **first** and only falls back to Rebrickable when it returns nothing — that's the proven, original design. MOC Source's enrichment (old and new) skips this step entirely and only ever calls Rebrickable. Adding `fetch_bl_item_mapping()` to `bl_client.py` and trying it before Rebrickable in `scrape_pab.py` would improve both accuracy (BL's own data vs. a third-party cross-reference) and rate-limit safety (less reliance on Rebrickable) — not yet implemented.
+
 Full deploy: `ansible-playbook site.yml` from `moc-source-infra/` (repos must be siblings on disk).
 
 **Quick deploy caveat:** the rsync-based quick deploy only copies `mocsource/` Python files — it does not update `/opt/mocsource/app/.env`. Changes to `smtp_*` / `report_email` / `SECRET_KEY` etc. require either a full Ansible run or a direct `sed` edit of `.env` on the server followed by `sudo systemctl restart mocsource`.
