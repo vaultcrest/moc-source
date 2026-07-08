@@ -10,10 +10,15 @@ Usage:
 """
 
 import argparse
+import base64
+import hashlib
+import hmac
 import os
 import smtplib
 import sys
 import time
+import urllib.parse
+import uuid
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
@@ -28,6 +33,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 REBRICKABLE_API_KEY = os.environ.get("REBRICKABLE_API_KEY", "")
+BRICKLINK_CONSUMER_KEY = os.environ.get("BRICKLINK_CONSUMER_KEY", "")
+BRICKLINK_CONSUMER_SECRET = os.environ.get("BRICKLINK_CONSUMER_SECRET", "")
+BRICKLINK_TOKEN = os.environ.get("BRICKLINK_TOKEN", "")
+BRICKLINK_TOKEN_SECRET = os.environ.get("BRICKLINK_TOKEN_SECRET", "")
 
 # ─── Config ──────────────────────────────────────────────────────────────────
 
@@ -395,17 +404,73 @@ def ensure_elements_exist(cur, rows: list[dict], now: datetime) -> int:
     return cur.rowcount
 
 
-# ─── Rebrickable enrichment (new elements only) ──────────────────────────────
+# ─── Element enrichment (new elements only) ──────────────────────────────────
 #
 # Only ever called for elements that entered lego_elements for the first time
 # this run — NOT for every unmapped part a user happens to browse on BrickLink.
 # The old per-request enrichment (one Rebrickable call per unmapped part+color
 # a user viewed) generated far too much traffic and got this server IP-banned.
 # New PAB elements are rare (a handful per day at most), so resolving BL
-# mapping once here, at scrape time, stays well within Rebrickable's limits.
+# mapping once here, at scrape time, stays well within any API's limits.
+#
+# Resolution order mirrors brick_palettes_generator's resolve_mapping(): try
+# BrickLink's own item_mapping endpoint first (authoritative), and only fall
+# back to Rebrickable when BL has nothing for that element.
+
+def _bl_oauth1_header(method: str, url: str) -> str:
+    params = {
+        "oauth_consumer_key":     BRICKLINK_CONSUMER_KEY,
+        "oauth_nonce":            uuid.uuid4().hex,
+        "oauth_signature_method": "HMAC-SHA1",
+        "oauth_timestamp":        str(int(time.time())),
+        "oauth_token":            BRICKLINK_TOKEN,
+        "oauth_version":          "1.0",
+    }
+    enc = urllib.parse.quote
+    param_string = "&".join(f"{enc(k, safe='')}={enc(v, safe='')}" for k, v in sorted(params.items()))
+    base_string = "&".join([method.upper(), enc(url, safe=""), enc(param_string, safe="")])
+    signing_key = enc(BRICKLINK_CONSUMER_SECRET, safe="") + "&" + enc(BRICKLINK_TOKEN_SECRET, safe="")
+    sig = hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()
+    params["oauth_signature"] = base64.b64encode(sig).decode()
+    return "OAuth " + ", ".join(f'{enc(k, safe="")}="{enc(v, safe="")}"' for k, v in sorted(params.items()))
+
+
+def fetch_bl_item_mapping(element_id: int) -> dict | None:
+    """Look up (part_no, color_id, item_type) for a LEGO element_id via BrickLink's
+    own item_mapping endpoint — the authoritative source, tried before Rebrickable."""
+    if not BRICKLINK_CONSUMER_KEY:
+        return None
+    url = f"https://api.bricklink.com/api/store/v1/item_mapping/{element_id}"
+    for attempt in range(3):
+        try:
+            resp = requests.get(url, headers={"Authorization": _bl_oauth1_header("GET", url)}, timeout=8)
+            if resp.status_code != 200:
+                return None
+            data = resp.json().get("data")
+            if not data:
+                return None
+            mapping = data[0]
+            return {
+                "part_no": mapping["item"]["no"],
+                "color_id": mapping["color_id"],
+                "item_type": mapping["item"]["type"],
+            }
+        except requests.exceptions.RequestException as e:
+            if attempt == 2:
+                print(f"  BrickLink item_mapping network failure for element {element_id}: {e}", file=sys.stderr)
+                return None
+            time.sleep(2 * (attempt + 1))
+        except Exception as e:
+            print(f"  BrickLink item_mapping lookup failed for element {element_id}: {e}", file=sys.stderr)
+            return None
+    return None
+
 
 def fetch_rebrickable_mapping(element_id: int) -> tuple[str, int, str | None] | None:
-    """Look up (bl_part_no, bl_color_id, part_name) for a LEGO element_id via Rebrickable."""
+    """Look up (bl_part_no, bl_color_id, part_name) for a LEGO element_id via Rebrickable.
+
+    Fallback only — tried when fetch_bl_item_mapping() has nothing for this element.
+    """
     if not REBRICKABLE_API_KEY:
         return None
     url = f"https://rebrickable.com/api/v3/lego/elements/{element_id}/?key={REBRICKABLE_API_KEY}"
@@ -435,24 +500,38 @@ ON CONFLICT (element_id) DO NOTHING
 
 def enrich_new_elements(
     cur, new_element_ids: list[int], now: datetime
-) -> tuple[list[tuple[int, str, int]], list[int]]:
-    """Resolve BL part_no/color_id for brand-new LEGO elements via Rebrickable.
+) -> tuple[list[tuple[int, str, int, str]], list[int]]:
+    """Resolve BL part_no/color_id for brand-new LEGO elements.
+
+    Tries BrickLink's own item_mapping endpoint first, falling back to
+    Rebrickable only when BL has no mapping for that element.
 
     Returns (resolved, unresolved) — resolved is a list of
-    (element_id, bl_part_no, bl_color_id) tuples; unresolved is element_ids Rebrickable
-    had no data for (or that couldn't be looked up, e.g. no API key configured).
+    (element_id, bl_part_no, bl_color_id, source) tuples where source is
+    "bricklink" or "rebrickable"; unresolved is element_ids neither had data for.
     """
-    if not REBRICKABLE_API_KEY:
+    if not BRICKLINK_CONSUMER_KEY and not REBRICKABLE_API_KEY:
         return [], list(new_element_ids)
-    resolved: list[tuple[int, str, int]] = []
+    resolved: list[tuple[int, str, int, str]] = []
     unresolved: list[int] = []
     values = []
     for i, element_id in enumerate(new_element_ids):
-        mapping = fetch_rebrickable_mapping(element_id)
+        source = "bricklink"
+        part_name = None
+        mapping = fetch_bl_item_mapping(element_id)
+        if not mapping:
+            rb = fetch_rebrickable_mapping(element_id)
+            if rb:
+                part_no, bl_color_id, part_name = rb
+                mapping = {"part_no": part_no, "color_id": bl_color_id, "item_type": "PART"}
+                source = "rebrickable"
+
         if mapping:
-            part_no, bl_color_id, part_name = mapping
-            values.append((element_id, part_no, bl_color_id, "PART", part_name, "rebrickable", now))
-            resolved.append((element_id, part_no, bl_color_id))
+            values.append((
+                element_id, mapping["part_no"], mapping["color_id"],
+                mapping["item_type"], part_name, source, now,
+            ))
+            resolved.append((element_id, mapping["part_no"], mapping["color_id"], source))
         else:
             unresolved.append(element_id)
         if i < len(new_element_ids) - 1:
@@ -462,7 +541,7 @@ def enrich_new_elements(
     return resolved, unresolved
 
 
-def send_enrichment_report(resolved: list[tuple[int, str, int]], unresolved: list[int]) -> None:
+def send_enrichment_report(resolved: list[tuple[int, str, int, str]], unresolved: list[int]) -> None:
     smtp_host     = os.environ.get("SMTP_HOST", "")
     smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user     = os.environ.get("SMTP_USER", "")
@@ -473,19 +552,22 @@ def send_enrichment_report(resolved: list[tuple[int, str, int]], unresolved: lis
         return
 
     total = len(resolved) + len(unresolved)
+    bl_count = sum(1 for *_, source in resolved if source == "bricklink")
+    rb_count = len(resolved) - bl_count
     subject = f"Enrichment needed: {total} new PAB element(s), {len(resolved)} resolved"
     lines = [
         f"New PAB elements seen this run : {total}",
-        f"Resolved via Rebrickable       : {len(resolved)}",
-        f"Unresolved (no BL mapping yet) : {len(unresolved)}",
+        f"Resolved via BrickLink          : {bl_count}",
+        f"Resolved via Rebrickable         : {rb_count}",
+        f"Unresolved (no mapping yet)      : {len(unresolved)}",
         "",
     ]
     if resolved:
         lines.append("Resolved:")
-        lines += [f"  • {eid} -> BL part {part_no} / color {color_id}" for eid, part_no, color_id in resolved]
+        lines += [f"  • {eid} -> BL part {part_no} / color {color_id} [{source}]" for eid, part_no, color_id, source in resolved]
         lines.append("")
     if unresolved:
-        lines.append("Unresolved — needs manual mapping, or Rebrickable doesn't have this part yet:")
+        lines.append("Unresolved — needs manual mapping, or neither source has this part yet:")
         lines += [f"  • {eid}" for eid in unresolved]
 
     msg = MIMEText("\n".join(lines))
