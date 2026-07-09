@@ -6,6 +6,7 @@ from .color import Color
 from .failed_studio_mapping import FailedStudioMapping
 from .lego_element import LegoElement
 from .lego_element_price import LegoElementPrice
+from .lego_set import LegoSet
 from .multipack import Multipack, MultipackComponent
 from .studio_resolution import StudioResolution
 
@@ -15,6 +16,7 @@ __all__ = [
     "Color",
     "LegoElement",
     "LegoElementPrice",
+    "LegoSet",
     "BricklinkMapping",
     "BricklinkAlternate",
     "StudioResolution",
