@@ -2328,7 +2328,7 @@ async function renderProjectDetail(id, content) {
         <input type="checkbox" id="auto-alloc-domestic-only" style="cursor:pointer">
         Domestic PAB only (skip STD)
       </label>
-      <span style="font-size:12px;color:#4b7c5a">Allocate every pool part to its cheapest source — BL stores or LEGO direct.</span>
+      <span style="font-size:12px;color:#4b7c5a">Allocate every pool part to its cheapest source — BL stores or Pick a Brick cart.</span>
     </div>
 
     <div id="pool-section" style="margin-bottom:14px">
