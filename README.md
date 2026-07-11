@@ -220,6 +220,7 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
 - [x] **v0.4.9 — "LEGO Cart(s)" renamed to "Pick-A-Brick Cart(s)"** across the Lists view and Project detail page; unused BrickLink API Credentials settings card removed (was never wired to anything, only added confusion)
 - [x] **v0.4.10 — Links card** — Website / Guide / Patreon / PayPal, with a note to support the project if it's saved you money; shown on the Info page and at the bottom of the Parts Lists page (shared via one `footerCardsHtml()` helper)
 - [x] **User guide page** — `/guide` on the website; full walkthrough with screenshots, matches the marketing site's branded theme, linked from the extension's Info page and Lists page footer
+- [x] **`lego_sets` table** — imported from Rebrickable's `sets.csv` (set_num, name, year, theme_id, num_parts, img_url; 27,318 rows); refreshed via `scripts/import_sets_csv.py`, deployed by the infra playbook to `/opt/mocsource/data/sets.csv` (outside the app sync path) with a monthly systemd timer re-import. Not surfaced anywhere yet — foundation for the "last used" year lookups in the discontinued-part detection idea below
 
 ## What's Next
 
@@ -229,9 +230,17 @@ Full Ansible provisioning in [`moc-source-infra`](https://github.com/vaultcrest/
    - Scope: the ~105K `(part_no, color_id)` pairs already in `bricklink_mappings`, not BL's full ~96K-part catalog — BL pricing only matters here in comparison to a PAB price, and that set is already known
    - Priority: parts with an active PAB/BAP price first (the comparison use case); parts with no current PAB price after that — still useful as standalone reference pricing even with nothing to compare against
    - Refresh cadence (proposed): track lookup frequency per part+color, refresh the most-requested pairs weekly, work through the long tail on a slow monthly sweep. BrickLink's actual rate limit isn't verified yet — confirm it before scheduling, given what happened with Rebrickable's
-4. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
-5. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
-6. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
+4. **Discontinued part / newer mold detection** — many parts (jumper plates especially) get re-tooled over the years into a new mold under the same base part number with a different letter suffix (e.g. `3684a` "hollow studs" 1978 vs `3684c` "solid studs" 2009). Idea: detect when a part in a user's list is an old, likely-discontinued mold and suggest the newer one, which may currently be on PAB.
+   - **Signal — "last used" year**: BL's `GET /items/PART/{no}/supersets` returns every set containing that part (grouped by color), but not the sets' years. Resolve each set's year via the local `lego_sets` table (populated from `sets.csv`, see above) instead of an extra BL call per set — `max(year)` across all supersets = that part's last-used year. This is the same insight that motivated importing `sets.csv` in the first place.
+   - **Mold family**: BL's catalog endpoint already returns `alternate_no` (comma-separated sibling part numbers) — currently fetched but discarded in `bl_client.fetch_bl_part()`. The existing `bricklink_alternates` table is stale/sparse (1,880 rows, left over from the original seed import) and needs to be refreshed from live BL data, not trusted as-is.
+   - **Exclude `u`-suffixed parts** (e.g. `3684u` "Undetermined Type") from suggestions — BL uses that suffix as a placeholder for "some set contains this base part but the exact mold variant hasn't been identified yet," not a real distinct mold.
+   - **Suggested replacement**: for a part flagged likely-discontinued, pick the sibling in its mold family (excluding itself and any `u`-suffixed placeholders) with the newest last-used year that also has a current price — PAB first, BL average (#3 above) as fallback.
+   - **Surfacing**: add an optional field to the existing `/pab/price/{part_no}/{color_id}` response, e.g. `mold_succession: {is_likely_discontinued, last_used_year, suggested_part_no, suggested_price_cents, suggested_price_source}` — no new endpoint. Also feeds the #3 cost comparison (old mold's BL average vs new mold's PAB/BL price).
+   - **UX**: never auto-swap — surface a suggestion banner ("This mold may be discontinued — newer mold `3684c` available for $X. Update wanted list?") with an explicit confirm step before touching the user's BL wanted list.
+   - Needs its own scrape step (per unique `part_no` in `bricklink_mappings`, not per part/color) — shares the same rate-limit pacing concerns as #3 and can likely run as part of the same job.
+5. **Cloudflare cache** — cache PAB price responses at the Cloudflare edge to reduce origin load; cache-bust on scraper run
+6. **Regional Studio palettes** — `generate_palettes.py` reading from DB per locale
+7. **Social sharing** — Canvas-generated PNG in-extension ("I saved $X vs PAB!"); Facebook/Instagram primary targets; $5+ savings threshold; polished Vaultcrest-branded card
 
 ## Related Projects
 
