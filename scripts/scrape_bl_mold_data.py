@@ -153,6 +153,7 @@ def fetch_bl_catalog_item(part_no: str) -> tuple[bool, dict | None]:
         "name": data.get("name"),
         "item_type": data.get("type"),
         "alternate_no": alternates,
+        "year_released": data.get("year_released"),
     }
 
 
@@ -196,25 +197,28 @@ def process_part(cur, part_no: str, now: datetime, dry_run: bool) -> dict:
     name = catalog_data.get("name") if catalog_data else None
     item_type = catalog_data.get("item_type") if catalog_data else None
     raw_alts = catalog_data.get("alternate_no", []) if catalog_data else []
+    year_released = catalog_data.get("year_released") if catalog_data else None
     last_used_year = compute_last_used_year(cur, set_nos or [])
     filtered_alts = sorted({a for a in raw_alts if a and a != part_no})
 
     if dry_run:
         print(f"    [dry-run] {part_no}: name={name!r} item_type={item_type!r} "
-              f"last_used_year={last_used_year} alternates={filtered_alts}")
+              f"year_released={year_released} last_used_year={last_used_year} alternates={filtered_alts}")
     else:
         cur.execute(
             """
-            INSERT INTO bl_part_catalog (part_no, name, item_type, last_used_year, looked_up_at, mold_backfilled_at)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            INSERT INTO bl_part_catalog
+                (part_no, name, item_type, last_used_year, year_released, looked_up_at, mold_backfilled_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT (part_no) DO UPDATE SET
                 name = EXCLUDED.name,
                 item_type = EXCLUDED.item_type,
                 last_used_year = EXCLUDED.last_used_year,
+                year_released = EXCLUDED.year_released,
                 looked_up_at = EXCLUDED.looked_up_at,
                 mold_backfilled_at = EXCLUDED.mold_backfilled_at
             """,
-            (part_no, name, item_type, last_used_year, now, now),
+            (part_no, name, item_type, last_used_year, year_released, now, now),
         )
         cur.execute("DELETE FROM bricklink_alternates WHERE part_no = %s", (part_no,))
         if filtered_alts:
@@ -229,6 +233,7 @@ def process_part(cur, part_no: str, now: datetime, dry_run: bool) -> dict:
         "status": "processed",
         "has_alternates": bool(filtered_alts),
         "has_last_used_year": last_used_year is not None,
+        "has_year_released": year_released is not None,
     }
 
 
@@ -246,6 +251,7 @@ def send_backfill_report(stats: dict, remaining_after: int, duration_s: float) -
     mins, secs = divmod(int(duration_s), 60)
     alt_line = f"  Alternates found     : {stats['has_alternates']}/{processed}\n" if processed else ""
     year_line = f"  Last-used-year found : {stats['has_last_used_year']}/{processed}\n" if processed else ""
+    released_line = f"  Year-released found  : {stats['has_year_released']}/{processed}\n" if processed else ""
 
     if remaining_after == 0:
         subject = "[MOC Source] BL mold-data backfill COMPLETE"
@@ -253,7 +259,7 @@ def send_backfill_report(stats: dict, remaining_after: int, duration_s: float) -
             "The BL mold-data backfill has finished — every known part_no now has "
             "last_used_year / alternate_no data (or a confirmed no-data result).\n\n"
             f"This run   : processed {processed}, skipped (transient) {stats['skipped_transient']}\n"
-            f"{alt_line}{year_line}"
+            f"{alt_line}{year_line}{released_line}"
             f"Duration   : {mins}m {secs}s\n\n"
             "Nightly runs will keep firing but will find nothing left to do until new "
             "parts are added to bricklink_mappings.\n"
@@ -264,7 +270,7 @@ def send_backfill_report(stats: dict, remaining_after: int, duration_s: float) -
             "Nightly BL mold-data backfill run complete.\n\n"
             f"Processed            : {processed}\n"
             f"Skipped (transient)  : {stats['skipped_transient']}\n"
-            f"{alt_line}{year_line}"
+            f"{alt_line}{year_line}{released_line}"
             f"Remaining after this run: {remaining_after:,}\n"
             f"Duration   : {mins}m {secs}s\n"
         )
@@ -317,7 +323,7 @@ def main():
         conn.close()
         return
 
-    stats = {"processed": 0, "skipped_transient": 0, "has_alternates": 0, "has_last_used_year": 0}
+    stats = {"processed": 0, "skipped_transient": 0, "has_alternates": 0, "has_last_used_year": 0, "has_year_released": 0}
     consecutive_failures = 0
     now = datetime.now(timezone.utc)
 
@@ -338,9 +344,11 @@ def main():
             stats["processed"] += 1
             stats["has_alternates"] += int(result["has_alternates"])
             stats["has_last_used_year"] += int(result["has_last_used_year"])
+            stats["has_year_released"] += int(result["has_year_released"])
             print(f"[{i + 1}/{len(part_nos)}] {part_no}: processed "
                   f"(alternates={'yes' if result['has_alternates'] else 'no'}, "
-                  f"last_used_year={'yes' if result['has_last_used_year'] else 'no'})", flush=True)
+                  f"last_used_year={'yes' if result['has_last_used_year'] else 'no'}, "
+                  f"year_released={'yes' if result['has_year_released'] else 'no'})", flush=True)
         if i < len(part_nos) - 1:
             time.sleep(INTER_CALL_DELAY)
 
@@ -354,6 +362,7 @@ def main():
     if stats["processed"]:
         print(f"  Alternates found     : {stats['has_alternates']}/{stats['processed']}")
         print(f"  Last-used-year found : {stats['has_last_used_year']}/{stats['processed']}")
+        print(f"  Year-released found  : {stats['has_year_released']}/{stats['processed']}")
     print(f"  Remaining            : {remaining_after:,}")
 
     if not args.dry_run:
