@@ -61,6 +61,41 @@
       max-width: 600px;
     }
 
+    /* ── Video overview ── */
+    .video-wrap {
+      padding: 0 24px 40px;
+      display: flex;
+      justify-content: center;
+    }
+    .video-card {
+      max-width: 860px;
+      width: 100%;
+      background: var(--card-bg);
+      border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.35);
+    }
+    .video-embed {
+      position: relative;
+      width: 100%;
+      padding-bottom: 56.25%;
+      height: 0;
+    }
+    .video-embed iframe {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%;
+      height: 100%;
+      border: 0;
+    }
+    .video-card .cap {
+      padding: 14px 20px;
+      font-size: 13.5px;
+      color: #9db89a;
+      border-top: 1px solid rgba(255,255,255,0.06);
+    }
+
     /* ── Table of contents ── */
     .toc-wrap {
       padding: 0 24px 48px;
@@ -281,6 +316,16 @@
     <h1>The MOC Source <span class="orange">User Guide</span></h1>
     <p>Everything the extension does, in one place — price badges, saving lists and carts, Projects, and settings. Built by AFOLs, for AFOLs.</p>
   </section>
+
+  <!-- ── Video Overview ── -->
+  <div class="video-wrap">
+    <div class="video-card">
+      <div class="video-embed">
+        <iframe src="https://www.youtube.com/embed/bwWldCepCUo" title="MOC Source Extension Overview" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>
+      </div>
+      <p class="cap">New here? Watch a full overview of the extension before diving into the guide below.</p>
+    </div>
+  </div>
 
   <!-- ── Table of Contents ── -->
   <div class="toc-wrap">
