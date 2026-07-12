@@ -16,3 +16,4 @@ class BLPartCatalog(Base):
     item_type: Mapped[str | None] = mapped_column(String(20))
     looked_up_at: Mapped[datetime | None] = mapped_column(DateTime)
     last_used_year: Mapped[int | None] = mapped_column(Integer)
+    mold_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime)

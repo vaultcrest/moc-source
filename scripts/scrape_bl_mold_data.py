@@ -11,9 +11,13 @@ last_used_year is old is a candidate to suggest a newer sibling mold from
 its alternate_no family instead.
 
 Resumable: re-running only processes part_nos whose bl_part_catalog row
-still has looked_up_at IS NULL. A part genuinely never used in any set (or
-not found in BL's catalog at all) still gets looked_up_at set, so it's not
-retried forever — only real network/rate-limit failures are left for retry.
+still has mold_backfilled_at IS NULL — a dedicated marker, separate from
+looked_up_at (which is also set by the unrelated live-request cache path in
+routers/parts.py; using that as the gate previously caused parts already
+cached by that older path to be silently skipped forever). A part genuinely
+never used in any set (or not found in BL's catalog at all) still gets
+mold_backfilled_at set, so it's not retried forever — only real
+network/rate-limit failures are left for retry.
 
 Emails a per-run summary (or, once the backfill has nothing left, a distinct
 completion notice) via SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/SMTP_FROM/
@@ -61,7 +65,7 @@ BATCH_SQL = """
     SELECT DISTINCT bm.part_no
     FROM bricklink_mappings bm
     LEFT JOIN bl_part_catalog bpc ON bpc.part_no = bm.part_no
-    WHERE bpc.looked_up_at IS NULL
+    WHERE bpc.mold_backfilled_at IS NULL
       AND bm.part_no IS NOT NULL
     ORDER BY bm.part_no
     LIMIT %s
@@ -71,7 +75,7 @@ COUNT_SQL = """
     SELECT count(DISTINCT bm.part_no)
     FROM bricklink_mappings bm
     LEFT JOIN bl_part_catalog bpc ON bpc.part_no = bm.part_no
-    WHERE bpc.looked_up_at IS NULL
+    WHERE bpc.mold_backfilled_at IS NULL
       AND bm.part_no IS NOT NULL
 """
 
@@ -201,15 +205,16 @@ def process_part(cur, part_no: str, now: datetime, dry_run: bool) -> dict:
     else:
         cur.execute(
             """
-            INSERT INTO bl_part_catalog (part_no, name, item_type, last_used_year, looked_up_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO bl_part_catalog (part_no, name, item_type, last_used_year, looked_up_at, mold_backfilled_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (part_no) DO UPDATE SET
                 name = EXCLUDED.name,
                 item_type = EXCLUDED.item_type,
                 last_used_year = EXCLUDED.last_used_year,
-                looked_up_at = EXCLUDED.looked_up_at
+                looked_up_at = EXCLUDED.looked_up_at,
+                mold_backfilled_at = EXCLUDED.mold_backfilled_at
             """,
-            (part_no, name, item_type, last_used_year, now),
+            (part_no, name, item_type, last_used_year, now, now),
         )
         cur.execute("DELETE FROM bricklink_alternates WHERE part_no = %s", (part_no,))
         if filtered_alts:
