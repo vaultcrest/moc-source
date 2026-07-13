@@ -170,7 +170,25 @@ function extractRows() {
   return results;
 }
 
-function injectBadge(row, pabEntry) {
+function scrapeRowPrice(row) {
+  const clone = row.cloneNode(true);
+  clone.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
+  const m = clone.textContent.match(/\$([\d,]+\.[\d]{2})/);
+  return m ? parseFloat(m[1].replace(/,/g, "")) : null;
+}
+
+function computeVerdict(pabEntry, storePrice) {
+  if (storePrice == null || !pabEntry?.channel) return null;
+  const channelPrice = pabEntry.price_cents != null ? pabEntry.price_cents / 100 : null;
+  const avgPrice = pabEntry.bl_avg_price_cents != null ? pabEntry.bl_avg_price_cents / 100 : null;
+  const beatsChannel = channelPrice != null && storePrice < channelPrice;
+  const beatsAvg = avgPrice != null && storePrice < avgPrice;
+  if (!beatsChannel && !beatsAvg) return null;
+  const full = beatsChannel && (avgPrice == null || beatsAvg);
+  return { level: full ? "full" : "mixed", channelPrice, avgPrice };
+}
+
+function injectBadge(row, pabEntry, storePrice) {
   if (row.dataset.mocSourceDone) return;
   row.dataset.mocSourceDone = "1";
 
@@ -215,6 +233,29 @@ function injectBadge(row, pabEntry) {
     addToCart.insertAdjacentElement("beforebegin", badge);
   } else {
     row.appendChild(badge);
+  }
+
+  const verdict = computeVerdict(pabEntry, storePrice);
+  if (verdict) {
+    const washColor = verdict.level === "full" ? "#effaf1" : "#fefaec";
+    row.style.borderLeft = verdict.level === "full" ? "4px solid #16a34a" : "4px solid #d97706";
+    row.style.background = washColor;
+    row.style.paddingLeft = "10px";
+
+    // Store listing page renders the right-hand "Add to Cart" column (div.buy) as its
+    // own panel with an opaque background, which otherwise paints over the row's wash.
+    const buyPanel = row.querySelector(".buy");
+    if (buyPanel) buyPanel.style.background = washColor;
+
+    const caption = document.createElement("span");
+    caption.className = "moc-source-verdict-caption";
+    caption.style.cssText =
+      `display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:${verdict.level === "full" ? "#15803d" : "#b45309"};`;
+    const parts = [];
+    if (verdict.channelPrice != null) parts.push(`${pabEntry.channel === "pab" ? "PAB" : "STD"} $${verdict.channelPrice.toFixed(3)}`);
+    if (verdict.avgPrice != null) parts.push(`BL avg $${verdict.avgPrice.toFixed(3)}`);
+    caption.textContent = `▼ below ${parts.join(" and ")}`;
+    badge.insertAdjacentElement("afterend", caption);
   }
 
   rowChannels.set(row, pabEntry?.channel ?? "na");
@@ -290,10 +331,7 @@ function injectFillWantedQtyButton() {
       }
 
       // Extract store price so pass 2 can pick cheapest when multiple lots exist
-      const cl = article.cloneNode(true);
-      cl.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
-      const pm = cl.textContent.match(/\$([\d,]+\.[\d]{2})/);
-      const storePrice = pm ? parseFloat(pm[1].replace(/,/g, "")) : null;
+      const storePrice = scrapeRowPrice(article);
 
       const img = article.querySelector("img[src*='ItemImage/PT/'], img[src*='ItemImage/PN/']");
       const m = img?.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
@@ -346,10 +384,7 @@ function injectFillWantedQtyButton() {
       // STD (BAP) items always added regardless of price.
       const pabPrice = rowPrices.get(article);
       if (pabPrice !== undefined && rowChannels.get(article) === "pab") {
-        const c = article.cloneNode(true);
-        c.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
-        const m = c.textContent.match(/\$([\d,]+\.[\d]{2})/);
-        const storePrice = m ? parseFloat(m[1].replace(/,/g, "")) : null;
+        const storePrice = scrapeRowPrice(article);
         if (storePrice !== null && storePrice >= pabPrice) { pabSkipped++; continue; }
       }
 
@@ -983,7 +1018,8 @@ async function run() {
       partNo,
       colorId,
     });
-    injectBadge(row, pabEntry);
+    const storePrice = scrapeRowPrice(row);
+    injectBadge(row, pabEntry, storePrice);
   }
 
   injectFillButton();
