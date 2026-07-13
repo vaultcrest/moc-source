@@ -18,3 +18,4 @@ class BLPartCatalog(Base):
     last_used_year: Mapped[int | None] = mapped_column(Integer)
     year_released: Mapped[int | None] = mapped_column(Integer)
     mold_backfilled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    supersets_count: Mapped[int | None] = mapped_column(Integer)
