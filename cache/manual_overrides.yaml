@@ -1,0 +1,43 @@
+# Manual overrides for bricklink_mappings.part_no rows that Rebrickable's API
+# can't resolve automatically (scripts/fix_rebrickable_part_nos.py exhausts
+# both its bulk and element-id fallback tiers and leaves them tracked as
+# `unresolved` in rebrickable_part_no_fixes). Keyed by element_id (string).
+# Applied via scripts/apply_manual_overrides.py.
+#
+# Two entry shapes:
+#
+#   A correction -- a real BrickLink part number, verified by hand:
+#     '6668520':
+#       bl_part_no: 100588pb01
+#       note: "verified directly on BrickLink catalog"
+#
+#     '6483299':
+#       bl_part_no: 2889pb02
+#       note: "confirmed via BrickLink catalog search"
+#
+#   Confirmed no BrickLink equivalent exists (Rebrickable tracks detail
+#   BrickLink doesn't -- not an error, not "unresolved", just genuinely N/A).
+#   bl_part_no accepts any of these three spellings, whichever's easiest to
+#   type/paste -- they're all treated identically:
+#     '6294039':
+#       bl_part_no: N/A
+#       note: "Duplo part, no BrickLink catalog equivalent exists"
+#
+#     '6612345':
+#       bl_part_no: null
+#       note: "cancelled set, part never released"
+#
+#     '4143729':
+#       bl_part_no: ""
+#       note: "Duplo-only print variant, BrickLink doesn't track this level of detail"
+#
+# N/A entries NULL OUT bricklink_mappings.part_no for that element (source
+# set to 'manual_na') -- the original Rebrickable value isn't a real
+# BrickLink number and shouldn't be used for our purposes. Nothing is lost,
+# though: the original value is preserved as old_part_no in
+# rebrickable_part_no_fixes (method='manual_na') before being cleared, so
+# it stays traceable. Corrections instead update part_no directly
+# (source='manual') and clean up the old bad value's orphaned tracking rows.
+#
+# Safe to re-run the whole file any time -- already-applied entries are
+# no-ops.
