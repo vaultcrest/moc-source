@@ -1,5 +1,9 @@
 // ─── State ───────────────────────────────────────────────────────────────────
 
+function escHtml(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 const rowPrices   = new Map(); // row element → PAB/STD price in dollars (number)
 const rowChannels = new Map(); // row element → "pab" | "bap" | "na"
 
@@ -665,7 +669,7 @@ function buildXmlUploadOverlay(xml, defaultName) {
 
   const safeDefault = defaultName.replace(/"/g, "&quot;");
   const selectOptions = lists.length
-    ? lists.map(l => `<option value="${l.id}">${l.name} (${l.num})</option>`).join("")
+    ? lists.map(l => `<option value="${l.id}">${escHtml(l.name)} (${l.num})</option>`).join("")
     : `<option value="0">Default Wanted List</option>`;
 
   el.innerHTML = `
@@ -893,8 +897,8 @@ async function applyBlCartWriteback() {
                       ?.querySelector("input[type='number']")?.value || "0", 10) || "?";
         return `<div style="padding:2px 0;font-size:12px;display:flex;gap:8px">
           <span style="min-width:28px;text-align:right;color:#9ca3af;font-size:12px;flex-shrink:0">×${qty}</span>
-          <span style="flex:1">${c.name || c.partNo}</span>
-          <span style="color:#9ca3af;font-size:12px;flex-shrink:0">${c.colorName || String(c.colorId)}</span>
+          <span style="flex:1">${escHtml(c.name || c.partNo)}</span>
+          <span style="color:#9ca3af;font-size:12px;flex-shrink:0">${escHtml(c.colorName || String(c.colorId))}</span>
         </div>`;
       }).join("")}
     </div>` : "";

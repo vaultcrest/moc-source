@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "MOC Source",
+  "version": "0.4.13",
+  "description": "PAB price comparison on BrickLink wanted lists and cart",
+  "permissions": ["storage", "tabs", "cookies"],
+  "host_permissions": [
+    "https://*.bricklink.com/*",
+    "https://store.bricklink.com/*",
+    "https://api.moc-source.com/*",
+    "https://www.lego.com/*",
+    "https://www.bricklink.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://store.bricklink.com/*"],
+      "js": ["content_main.js"],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "https://www.bricklink.com/v2/wanted/*",
+        "https://www.bricklink.com/v2/globalcart.page*",
+        "https://www.bricklink.com/v2/catalog/catalogitem.page*",
+        "https://store.bricklink.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://www.lego.com/*"],
+      "js": ["content-lego.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  },
+  "action": {
+    "default_title": "MOC Source",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  }
+}

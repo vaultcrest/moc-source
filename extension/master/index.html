@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>MOC Source</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; display: flex; height: 100vh; background: #f4f5f7; color: #212529; }
+
+    /* ── Sidebar ── */
+    .sidebar {
+      width: 56px;
+      background: #1e2330;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 12px 0;
+      flex-shrink: 0;
+    }
+    .sidebar-logo { width: 32px; height: 32px; margin-bottom: 20px; }
+    .nav-item {
+      width: 40px; height: 40px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 8px; cursor: pointer;
+      color: #8b9ab0; text-decoration: none;
+      transition: background .15s, color .15s;
+      border: none; background: transparent;
+    }
+    .nav-item:hover { background: #2d3547; color: #c8d0de; }
+    .nav-item.active { background: #2d3547; color: #fff; }
+    .nav-spacer { flex: 1; }
+
+    /* ── Content ── */
+    .content { flex: 1; overflow-y: auto; padding: 28px 32px; }
+    .page-title { font-size: 15px; font-weight: 600; margin-bottom: 20px; color: #1e2330; }
+
+    /* ── Section (lists) ── */
+    .section { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; margin-bottom: 20px; overflow: hidden; }
+    .section-header {
+      padding: 11px 16px;
+      display: flex; align-items: center; justify-content: space-between;
+      border-bottom: 1px solid #e1e4e8;
+      font-size: 13px; font-weight: 600;
+    }
+    .section-empty { padding: 36px; text-align: center; color: #8b9ab0; font-size: 13px; line-height: 1.6; }
+    table { width: 100%; border-collapse: collapse; font-size: 16px; }
+    th { padding: 9px 16px; text-align: left; color: #6c757d; font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; border-bottom: 1px solid #e1e4e8; }
+    td { padding: 2px 16px; border-bottom: 1px solid #f3f4f6; vertical-align: middle; min-height: 91px; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafbfc; }
+
+    /* ── Buttons ── */
+    .btn { padding: 4px 11px; border-radius: 4px; border: 1px solid #d1d5db; background: #fff; cursor: pointer; font-size: 12px; line-height: 1.5; }
+    .btn:hover { background: #f8f9fa; }
+    .btn-danger { border-color: #fca5a5; color: #dc2626; }
+    .btn-danger:hover { background: #fff5f5; border-color: #f87171; }
+
+    /* ── Type badge ── */
+    .type-badge { display: inline-block; padding: 2px 7px; border-radius: 3px; font-size: 11px; background: #eff6ff; color: #2563eb; font-weight: 500; }
+
+    /* ── Settings ── */
+    .settings-card { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; }
+    .settings-card h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; margin-bottom: 14px; }
+    .field { margin-bottom: 12px; }
+    .field label { display: block; font-size: 12px; color: #555; margin-bottom: 4px; }
+    .field select { width: 100%; max-width: 320px; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 4px; font-size: 13px; }
+    .field-check { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 13px; cursor: pointer; }
+    .saved-msg { font-size: 12px; color: #16a34a; opacity: 0; transition: opacity .3s; margin-top: 10px; }
+    .saved-msg.show { opacity: 1; }
+
+    /* ── Info ── */
+    .info-card { background: #fff; border: 1px solid #e1e4e8; border-radius: 8px; padding: 20px 24px; margin-bottom: 16px; font-size: 13px; line-height: 1.65; }
+    .info-card h3 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: #6c757d; margin-bottom: 10px; }
+    .info-card a { color: #2563eb; text-decoration: none; }
+    .info-card a:hover { text-decoration: underline; }
+    .donate-links { display: flex; gap: 12px; margin-top: 10px; }
+    .donate-links a { display: inline-block; padding: 6px 14px; background: #1e2330; color: #fff; border-radius: 4px; font-size: 12px; font-weight: 500; text-decoration: none; }
+    .donate-links a:hover { background: #2d3547; text-decoration: none; }
+
+    /* ── Detail view ── */
+    .back-btn { background: none; border: none; cursor: pointer; color: #2563eb; font-size: 13px; padding: 0; }
+    .back-btn:hover { text-decoration: underline; }
+    .detail-header { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+    .detail-meta { font-size: 16px; color: #6c757d; margin-top: 2px; }
+    .tab-bar { display: flex; gap: 2px; margin-bottom: 14px; border-bottom: 2px solid #e1e4e8; }
+    .tab { background: none; border: none; padding: 7px 14px; font-size: 13px; cursor: pointer; color: #6c757d; border-bottom: 2px solid transparent; margin-bottom: -2px; }
+    .tab:hover { color: #1e2330; }
+    .tab.active { color: #1e2330; border-bottom-color: #1e2330; font-weight: 600; }
+    .need-qty { font-weight: 700; color: #1e2330; }
+    .need-zero { color: #16a34a; }
+    .qty-cell { cursor: pointer; }
+    .qty-cell:hover .qty-display { text-decoration: underline; }
+    .qty-edit { display: flex; gap: 10px; align-items: center; }
+    .qty-edit label { font-size: 11px; color: #6c757d; display: flex; flex-direction: column; gap: 2px; }
+    .qty-edit input { width: 52px; padding: 3px 5px; border: 1px solid #d1d5db; border-radius: 3px; font-size: 13px; }
+    .part-img { width: 80px; height: 60px; object-fit: contain; }
+  </style>
+</head>
+<body>
+  <nav class="sidebar">
+    <img class="sidebar-logo" src="icon48.png" alt="MOC Source">
+    <button class="nav-item active" data-view="lists" title="Parts Lists">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/>
+        <line x1="8" y1="18" x2="21" y2="18"/>
+        <circle cx="3" cy="6" r=".5" fill="currentColor"/><circle cx="3" cy="12" r=".5" fill="currentColor"/><circle cx="3" cy="18" r=".5" fill="currentColor"/>
+      </svg>
+    </button>
+    <button class="nav-item" data-view="projects" title="Projects">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+      </svg>
+    </button>
+    <button class="nav-item" data-view="settings" title="Settings">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="3"/>
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+      </svg>
+    </button>
+    <div class="nav-spacer"></div>
+    <button class="nav-item" data-view="info" title="Info">
+      <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+        <circle cx="12" cy="12" r="10"/>
+        <line x1="12" y1="16" x2="12" y2="12"/>
+        <line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+    </button>
+  </nav>
+  <main class="content" id="content"></main>
+  <script src="index.js"></script>
+</body>
+</html>

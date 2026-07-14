@@ -873,7 +873,7 @@ async function renderProjectDetail(id, content) {
             style="cursor:pointer;flex-shrink:0"></label>
           <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(part?.partNo || key.split('_')[0])}#T=C&C=${esc(String(part?.colorId ?? ''))}" target="_blank" rel="noopener" style="font-size:11px;font-family:monospace;color:#6c757d;flex-shrink:0;width:54px;text-decoration:none;display:flex;align-items:center;align-self:stretch" title="View on BrickLink">${esc(part?.partNo || key.split('_')[0])}</a>
           ${img}
-          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="display:inline-flex;align-items:center;gap:3px;color:#9ca3af;font-size:11px">${colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></div>
+          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${esc(name)}<br><span style="display:inline-flex;align-items:center;gap:3px;color:#9ca3af;font-size:11px">${colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></div>
           ${storeCell}
           <div style="font-size:12px;color:#6c757d;flex-shrink:0;width:52px;text-align:right">${pabPrice}</div>
           <div style="flex-shrink:0;width:46px;text-align:center">${badge}</div>
@@ -1178,7 +1178,7 @@ async function renderProjectDetail(id, content) {
             style="cursor:pointer;flex-shrink:0"></label>
           <a href="https://www.bricklink.com/v2/catalog/catalogitem.page?P=${esc(p.partNo || '')}#T=C&C=${esc(String(p.colorId ?? ''))}" target="_blank" rel="noopener" style="font-size:11px;font-family:monospace;color:#6c757d;flex-shrink:0;width:54px;text-decoration:none;display:flex;align-items:center;align-self:stretch" title="View on BrickLink">${esc(p.partNo || "")}</a>
           ${img}
-          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${name}<br><span style="display:inline-flex;align-items:center;gap:3px;color:#9ca3af;font-size:11px">${colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></div>
+          <div style="flex:1;min-width:0;font-size:12px;line-height:1.3">${esc(name)}<br><span style="display:inline-flex;align-items:center;gap:3px;color:#9ca3af;font-size:11px">${colorHex ? `<span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:#${esc(colorHex)};border:1px solid rgba(0,0,0,0.2);flex-shrink:0"></span>` : ""}${esc(color)}</span></div>
           <div style="font-size:12px;color:#6c757d;flex-shrink:0;width:52px;text-align:right">${price}</div>
           <div style="flex-shrink:0;width:46px;text-align:center">${badge}</div>
           <div style="font-size:13px;font-weight:600;flex-shrink:0;width:24px;text-align:right">${qty}</div>

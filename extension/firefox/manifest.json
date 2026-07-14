@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MOC Source",
-  "version": "0.4.12",
+  "version": "0.4.13",
   "description": "PAB price comparison on BrickLink wanted lists and cart",
   "permissions": ["storage", "tabs", "cookies"],
   "host_permissions": [
@@ -12,7 +12,17 @@
     "https://www.bricklink.com/*"
   ],
   "background": {
-    "service_worker": "background.js"
+    "scripts": ["background.js"]
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "moc-source@moc-source.com",
+      "strict_min_version": "142.0",
+      "data_collection_permissions": {
+        "required": ["websiteContent"],
+        "optional": []
+      }
+    }
   },
   "content_scripts": [
     {
