@@ -60,12 +60,11 @@ DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("pos
 BAD_PART_NO_PATTERN = r"pr[0-9]+$"
 
 BATCH_SQL = f"""
-    SELECT DISTINCT bm.part_no
-    FROM bricklink_mappings bm
-    LEFT JOIN rebrickable_part_no_fixes f ON f.old_part_no = bm.part_no
-    WHERE bm.part_no ~ '{BAD_PART_NO_PATTERN}'
-      AND (f.old_part_no IS NULL OR f.method = 'unresolved')
-    ORDER BY f.attempted_at ASC NULLS FIRST, bm.part_no
+    SELECT dp.part_no
+    FROM (SELECT DISTINCT part_no FROM bricklink_mappings WHERE part_no ~ '{BAD_PART_NO_PATTERN}') dp
+    LEFT JOIN rebrickable_part_no_fixes f ON f.old_part_no = dp.part_no
+    WHERE f.old_part_no IS NULL OR f.method = 'unresolved'
+    ORDER BY f.attempted_at ASC NULLS FIRST, dp.part_no
     LIMIT %s
 """
 
