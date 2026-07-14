@@ -1,24 +1,26 @@
 """Shared Rebrickable -> BrickLink part-number resolution helpers.
 
-Used by scripts/scrape_pab.py, scripts/import_rebrickable.py, and
-scripts/fix_rebrickable_part_nos.py. Rebrickable's own part_num values
-(e.g. "27372pr0006") are NOT BrickLink part numbers and must never be
-written into bricklink_mappings.part_no directly or derived via string
-transform — the translation only exists in external_ids.BrickLink on
-Rebrickable's part/element resources. Confirmed empirically (2026-07-14):
-base numbers can differ entirely between the two systems (Rebrickable
-"102220pr0001" -> BrickLink "47205pb098"), so this must always be a live
-lookup, never a regex.
+Used by scripts/scrape_pab.py, scripts/import_rebrickable.py,
+scripts/fix_rebrickable_part_nos.py, and scripts/backfill_last_used_year.py.
+Rebrickable's own part_num values (e.g. "27372pr0006") are NOT BrickLink
+part numbers and must never be written into bricklink_mappings.part_no
+directly or derived via string transform — the translation only exists in
+external_ids.BrickLink on Rebrickable's part/element resources. Confirmed
+empirically (2026-07-14): base numbers can differ entirely between the two
+systems (Rebrickable "102220pr0001" -> BrickLink "47205pb098"), so this must
+always be a live lookup, never a regex.
 
-Two entry points:
+Three entry points:
   resolve_bl_part_nos_bulk()      -- efficient, up to 100 part_nums/call
+  resolve_part_years_bulk()       -- same bulk endpoint, year_from/year_to
+                                      instead of the BrickLink translation
   resolve_element_via_rebrickable() -- per-element_id fallback for stale/
-                                        renumbered part_nums the bulk call
-                                        misses (Rebrickable sometimes
+                                        renumbered part_nums the bulk calls
+                                        miss (Rebrickable sometimes
                                         renumbers print variants; the
                                         element_id stays stable)
 
-Both retry on HTTP 429 honoring Retry-After, and the caller is expected to
+All retry on HTTP 429 honoring Retry-After, and the caller is expected to
 pace at >=1.2s between calls to stay under Rebrickable's stated 1 req/sec
 average limit (this module does not sleep between its own internal chunk
 calls beyond what's needed for a single logical resolve, so callers doing
@@ -85,6 +87,35 @@ def resolve_bl_part_nos_bulk(part_nums: list[str], api_key: str, inter_call_dela
             bl_ids = (result.get("external_ids") or {}).get("BrickLink") or []
             if bl_ids:
                 resolved[result["part_num"]] = bl_ids[0]
+        if i + MAX_PART_NUMS_PER_CALL < len(part_nums):
+            time.sleep(inter_call_delay)
+    return resolved
+
+
+def resolve_part_years_bulk(
+    part_nums: list[str], api_key: str, inter_call_delay: float = 1.2
+) -> dict[str, tuple[int | None, int | None]]:
+    """Resolve many Rebrickable part_nums to (year_from, year_to) in one pass.
+
+    year_from/year_to are Rebrickable's own first-year/last-year-used fields,
+    returned by the same bulk parts endpoint used by resolve_bl_part_nos_bulk
+    -- confirmed live 2026-07-14 (part 3001 -> year_from=1979, year_to=2026).
+    A part_num missing from the result means Rebrickable had no record for it
+    via this endpoint.
+    """
+    if not api_key or not part_nums:
+        return {}
+    headers = {"Authorization": f"key {api_key}", "User-Agent": "mocsource/1.0"}
+    url = f"{REBRICKABLE_API_BASE}/parts/"
+    resolved: dict[str, tuple[int | None, int | None]] = {}
+    for i in range(0, len(part_nums), MAX_PART_NUMS_PER_CALL):
+        chunk = part_nums[i : i + MAX_PART_NUMS_PER_CALL]
+        params = {"part_nums": ",".join(chunk), "inc_part_details": 1}
+        resp = _get_with_retry(url, params, headers)
+        if resp is None or resp.status_code != 200:
+            continue
+        for result in resp.json().get("results", []):
+            resolved[result["part_num"]] = (result.get("year_from"), result.get("year_to"))
         if i + MAX_PART_NUMS_PER_CALL < len(part_nums):
             time.sleep(inter_call_delay)
     return resolved

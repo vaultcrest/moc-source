@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
-"""Backfill BrickLink mold-family (alternate_no) and last-used-year data.
+"""Backfill BrickLink mold-family (alternate_no) data.
 
 For every part_no in bricklink_mappings, fetches BrickLink's catalog entry
-(for alternate_no — sibling mold numbers) and its supersets (every set
-containing the part, used to compute last_used_year via the local lego_sets
-table — no extra BL call per set needed).
+for name/item_type/alternate_no (sibling mold numbers) — the one piece of
+data here with no Rebrickable equivalent.
+
+last_used_year and year_released are no longer computed by this script (see
+scripts/backfill_last_used_year.py, 2026-07-14): both now come from
+Rebrickable's bulk parts API instead of a paced BrickLink /supersets call
+per part_no cross-referenced against the local lego_sets table, which was
+both far slower (~11.5 hours of BrickLink traffic for last_used_year alone)
+and incomplete for series lego_sets doesn't cover (e.g. Collectible
+Minifigures). Splitting the two jobs means this one now makes a single BL
+call per part instead of two.
 
 Foundation for discontinued-part / newer-mold detection: a part whose
-last_used_year is old is a candidate to suggest a newer sibling mold from
-its alternate_no family instead.
+last_used_year (set by the sibling script) is old is a candidate to suggest
+a newer sibling mold from its alternate_no family instead.
 
 Resumable: re-running only processes part_nos whose bl_part_catalog row
 still has mold_backfilled_at IS NULL — a dedicated marker, separate from
 looked_up_at (which is also set by the unrelated live-request cache path in
 routers/parts.py; using that as the gate previously caused parts already
 cached by that older path to be silently skipped forever). A part genuinely
-never used in any set (or not found in BL's catalog at all) still gets
-mold_backfilled_at set, so it's not retried forever — only real
-network/rate-limit failures are left for retry.
+not found in BL's catalog at all still gets mold_backfilled_at set, so it's
+not retried forever — only real network/rate-limit failures are left for
+retry.
 
 Emails a per-run summary (or, once the backfill has nothing left, a distinct
 completion notice) via SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/SMTP_FROM/
@@ -29,21 +37,16 @@ Usage:
     DATABASE_URL=... python scripts/scrape_bl_mold_data.py --part-no 3684a 3684c [--dry-run]
 """
 import argparse
-import base64
-import hashlib
-import hmac
 import os
 import smtplib
 import sys
 import time
-import urllib.parse
-import uuid
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
 import psycopg2
 import psycopg2.extras
-import requests
+from _bricklink_lookup import BLClient
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -53,7 +56,8 @@ BRICKLINK_CONSUMER_SECRET = os.environ.get("BRICKLINK_CONSUMER_SECRET", "")
 BRICKLINK_TOKEN = os.environ.get("BRICKLINK_TOKEN", "")
 BRICKLINK_TOKEN_SECRET = os.environ.get("BRICKLINK_TOKEN_SECRET", "")
 
-BL_API_BASE = "https://api.bricklink.com/api/store/v1"
+bl_client = BLClient(BRICKLINK_CONSUMER_KEY, BRICKLINK_CONSUMER_SECRET, BRICKLINK_TOKEN, BRICKLINK_TOKEN_SECRET)
+
 INTER_CALL_DELAY = 1.0  # polite pacing, matches scrape_pab.py's enrichment convention
 DEFAULT_BATCH_SIZE = 100
 MAX_CONSECUTIVE_FAILURES = 5
@@ -80,149 +84,31 @@ COUNT_SQL = """
 """
 
 
-def _bl_oauth1_header(method: str, url: str) -> str:
-    params = {
-        "oauth_consumer_key":     BRICKLINK_CONSUMER_KEY,
-        "oauth_nonce":            uuid.uuid4().hex,
-        "oauth_signature_method": "HMAC-SHA1",
-        "oauth_timestamp":        str(int(time.time())),
-        "oauth_token":            BRICKLINK_TOKEN,
-        "oauth_version":          "1.0",
-    }
-    enc = urllib.parse.quote
-    param_string = "&".join(f"{enc(k, safe='')}={enc(v, safe='')}" for k, v in sorted(params.items()))
-    base_string = "&".join([method.upper(), enc(url, safe=""), enc(param_string, safe="")])
-    signing_key = enc(BRICKLINK_CONSUMER_SECRET, safe="") + "&" + enc(BRICKLINK_TOKEN_SECRET, safe="")
-    sig = hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()
-    params["oauth_signature"] = base64.b64encode(sig).decode()
-    return "OAuth " + ", ".join(f'{enc(k, safe="")}="{enc(v, safe="")}"' for k, v in sorted(params.items()))
-
-
-def _bl_get(url: str, label: str, part_no: str):
-    """Shared retry loop. Returns (attempted, resp_or_none).
-
-    attempted=True means BL gave an authoritative answer (200, or a 4xx that
-    isn't 429) — the caller should persist looked_up_at regardless of
-    whether any data came back. attempted=False means a transient failure
-    (network error, 429, 5xx) exhausted its retries — the caller must not
-    write anything, so the next run retries this part_no.
-    """
-    for attempt in range(3):
-        try:
-            resp = requests.get(url, headers={"Authorization": _bl_oauth1_header("GET", url)}, timeout=8)
-        except requests.exceptions.RequestException as e:
-            if attempt == 2:
-                print(f"  BL {label} network failure for {part_no}: {e}", file=sys.stderr)
-                return False, None
-            time.sleep(2 * (attempt + 1))
-            continue
-
-        if resp.status_code == 429 or resp.status_code >= 500:
-            if attempt == 2:
-                print(f"  BL {label} rate-limited/server error for {part_no}: HTTP {resp.status_code}", file=sys.stderr)
-                return False, None
-            time.sleep(2 * (attempt + 1))
-            continue
-
-        return True, resp
-    return False, None
-
-
-def fetch_bl_catalog_item(part_no: str) -> tuple[bool, dict | None]:
-    """Fetch (name, item_type, alternate_no) for a part_no. Mirrors the parsing
-    in mocsource/bl_client.py's _fetch_part_sync."""
-    url = f"{BL_API_BASE}/items/PART/{urllib.parse.quote(part_no, safe='')}"
-    attempted, resp = _bl_get(url, "catalog", part_no)
-    if not attempted:
-        return False, None
-    if resp.status_code == 404:
-        return True, None
-    if resp.status_code != 200:
-        print(f"  BL catalog unexpected status for {part_no}: HTTP {resp.status_code}", file=sys.stderr)
-        return True, None
-
-    data = resp.json().get("data")
-    if not data:
-        return True, None
-    raw_alt = data.get("alternate_no") or ""
-    if isinstance(raw_alt, str):
-        alternates = [p.strip() for p in raw_alt.split(",") if p.strip()]
-    else:
-        alternates = [str(p).strip() for p in raw_alt if str(p).strip()]
-    return True, {
-        "name": data.get("name"),
-        "item_type": data.get("type"),
-        "alternate_no": alternates,
-        "year_released": data.get("year_released"),
-    }
-
-
-def fetch_bl_supersets(part_no: str) -> tuple[bool, list[str] | None]:
-    """Fetch every distinct SET number containing part_no, across all colors."""
-    url = f"{BL_API_BASE}/items/PART/{urllib.parse.quote(part_no, safe='')}/supersets"
-    attempted, resp = _bl_get(url, "supersets", part_no)
-    if not attempted:
-        return False, None
-    if resp.status_code == 404:
-        return True, []
-    if resp.status_code != 200:
-        print(f"  BL supersets unexpected status for {part_no}: HTTP {resp.status_code}", file=sys.stderr)
-        return True, []
-
-    data = resp.json().get("data") or []
-    set_nos: set[str] = set()
-    for group in data:
-        for entry in group.get("entries", []):
-            item = entry.get("item", {})
-            if item.get("type") == "SET" and item.get("no"):
-                set_nos.add(item["no"])
-    return True, sorted(set_nos)
-
-
-def compute_last_used_year(cur, set_nos: list[str]) -> int | None:
-    if not set_nos:
-        return None
-    cur.execute("SELECT MAX(year) FROM lego_sets WHERE set_num = ANY(%s)", (set_nos,))
-    return cur.fetchone()[0]
-
-
 def process_part(cur, part_no: str, now: datetime, dry_run: bool) -> dict:
-    catalog_attempted, catalog_data = fetch_bl_catalog_item(part_no)
-    time.sleep(INTER_CALL_DELAY)
-    supersets_attempted, set_nos = fetch_bl_supersets(part_no)
+    catalog_attempted, catalog_data = bl_client.fetch_item("PART", part_no)
 
-    if not catalog_attempted or not supersets_attempted:
+    if not catalog_attempted:
         return {"status": "skipped_transient"}
 
     name = catalog_data.get("name") if catalog_data else None
     item_type = catalog_data.get("item_type") if catalog_data else None
     raw_alts = catalog_data.get("alternate_no", []) if catalog_data else []
-    year_released = catalog_data.get("year_released") if catalog_data else None
-    last_used_year = compute_last_used_year(cur, set_nos or [])
-    supersets_count = len(set_nos or [])
     filtered_alts = sorted({a for a in raw_alts if a and a != part_no})
 
     if dry_run:
-        print(f"    [dry-run] {part_no}: name={name!r} item_type={item_type!r} "
-              f"year_released={year_released} last_used_year={last_used_year} "
-              f"supersets_count={supersets_count} alternates={filtered_alts}")
+        print(f"    [dry-run] {part_no}: name={name!r} item_type={item_type!r} alternates={filtered_alts}")
     else:
         cur.execute(
             """
-            INSERT INTO bl_part_catalog
-                (part_no, name, item_type, last_used_year, year_released, supersets_count,
-                 looked_up_at, mold_backfilled_at)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO bl_part_catalog (part_no, name, item_type, looked_up_at, mold_backfilled_at)
+            VALUES (%s, %s, %s, %s, %s)
             ON CONFLICT (part_no) DO UPDATE SET
                 name = EXCLUDED.name,
                 item_type = EXCLUDED.item_type,
-                last_used_year = EXCLUDED.last_used_year,
-                year_released = EXCLUDED.year_released,
-                supersets_count = EXCLUDED.supersets_count,
                 looked_up_at = EXCLUDED.looked_up_at,
                 mold_backfilled_at = EXCLUDED.mold_backfilled_at
             """,
-            (part_no, name, item_type, last_used_year, year_released, supersets_count, now, now),
+            (part_no, name, item_type, now, now),
         )
         cur.execute("DELETE FROM bricklink_alternates WHERE part_no = %s", (part_no,))
         if filtered_alts:
@@ -233,13 +119,7 @@ def process_part(cur, part_no: str, now: datetime, dry_run: bool) -> dict:
                 page_size=100,
             )
 
-    return {
-        "status": "processed",
-        "has_alternates": bool(filtered_alts),
-        "has_supersets": supersets_count > 0,
-        "has_last_used_year": last_used_year is not None,
-        "has_year_released": year_released is not None,
-    }
+    return {"status": "processed", "has_alternates": bool(filtered_alts)}
 
 
 def send_backfill_report(stats: dict, remaining_after: int, duration_s: float) -> None:
@@ -255,20 +135,14 @@ def send_backfill_report(stats: dict, remaining_after: int, duration_s: float) -
     processed = stats["processed"]
     mins, secs = divmod(int(duration_s), 60)
     alt_line = f"  Alternates found     : {stats['has_alternates']}/{processed}\n" if processed else ""
-    supersets_line = f"  Parts with any BL supersets : {stats['has_supersets']}/{processed}\n" if processed else ""
-    year_line = (
-        f"    -> matched to lego_sets   : {stats['has_last_used_year']}/{stats['has_supersets']}\n"
-        if stats["has_supersets"] else ""
-    )
-    released_line = f"  Year-released found  : {stats['has_year_released']}/{processed}\n" if processed else ""
 
     if remaining_after == 0:
         subject = "[MOC Source] BL mold-data backfill COMPLETE"
         body = (
             "The BL mold-data backfill has finished — every known part_no now has "
-            "last_used_year / alternate_no data (or a confirmed no-data result).\n\n"
+            "alternate_no data (or a confirmed no-data result).\n\n"
             f"This run   : processed {processed}, skipped (transient) {stats['skipped_transient']}\n"
-            f"{alt_line}{supersets_line}{year_line}{released_line}"
+            f"{alt_line}"
             f"Duration   : {mins}m {secs}s\n\n"
             "Nightly runs will keep firing but will find nothing left to do until new "
             "parts are added to bricklink_mappings.\n"
@@ -279,7 +153,7 @@ def send_backfill_report(stats: dict, remaining_after: int, duration_s: float) -
             "Nightly BL mold-data backfill run complete.\n\n"
             f"Processed            : {processed}\n"
             f"Skipped (transient)  : {stats['skipped_transient']}\n"
-            f"{alt_line}{supersets_line}{year_line}{released_line}"
+            f"{alt_line}"
             f"Remaining after this run: {remaining_after:,}\n"
             f"Duration   : {mins}m {secs}s\n"
         )
@@ -332,10 +206,7 @@ def main():
         conn.close()
         return
 
-    stats = {
-        "processed": 0, "skipped_transient": 0, "has_alternates": 0,
-        "has_supersets": 0, "has_last_used_year": 0, "has_year_released": 0,
-    }
+    stats = {"processed": 0, "skipped_transient": 0, "has_alternates": 0}
     consecutive_failures = 0
     now = datetime.now(timezone.utc)
 
@@ -355,13 +226,8 @@ def main():
                 conn.commit()
             stats["processed"] += 1
             stats["has_alternates"] += int(result["has_alternates"])
-            stats["has_supersets"] += int(result["has_supersets"])
-            stats["has_last_used_year"] += int(result["has_last_used_year"])
-            stats["has_year_released"] += int(result["has_year_released"])
             print(f"[{i + 1}/{len(part_nos)}] {part_no}: processed "
-                  f"(alternates={'yes' if result['has_alternates'] else 'no'}, "
-                  f"last_used_year={'yes' if result['has_last_used_year'] else 'no'}, "
-                  f"year_released={'yes' if result['has_year_released'] else 'no'})", flush=True)
+                  f"(alternates={'yes' if result['has_alternates'] else 'no'})", flush=True)
         if i < len(part_nos) - 1:
             time.sleep(INTER_CALL_DELAY)
 
@@ -374,10 +240,6 @@ def main():
     print(f"\nDone. Processed {stats['processed']}, skipped (transient) {stats['skipped_transient']}.")
     if stats["processed"]:
         print(f"  Alternates found     : {stats['has_alternates']}/{stats['processed']}")
-        print(f"  Parts with any BL supersets : {stats['has_supersets']}/{stats['processed']}")
-        if stats["has_supersets"]:
-            print(f"    -> matched to lego_sets   : {stats['has_last_used_year']}/{stats['has_supersets']}")
-        print(f"  Year-released found  : {stats['has_year_released']}/{stats['processed']}")
     print(f"  Remaining            : {remaining_after:,}")
 
     if not args.dry_run:
