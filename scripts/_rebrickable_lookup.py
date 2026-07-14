@@ -40,10 +40,11 @@ DEFAULT_RETRY_AFTER = 5.0
 def _get_with_retry(url: str, params: dict, headers: dict, max_retries: int = 3):
     """GET with 429 retry honoring Retry-After. Returns Response, or None if
     retries were exhausted or a network error occurred."""
-    for _attempt in range(max_retries):
+    for attempt in range(max_retries):
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=25)
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
+            print(f"  Rebrickable network error for {url}: {e}", flush=True)
             return None
         if resp.status_code == 429:
             retry_after = resp.headers.get("Retry-After")
@@ -51,9 +52,12 @@ def _get_with_retry(url: str, params: dict, headers: dict, max_retries: int = 3)
                 delay = float(retry_after) if retry_after else DEFAULT_RETRY_AFTER
             except ValueError:
                 delay = DEFAULT_RETRY_AFTER
+            print(f"  Rebrickable 429 rate-limited (attempt {attempt + 1}/{max_retries}), "
+                  f"Retry-After={delay}s: {url}", flush=True)
             time.sleep(delay)
             continue
         return resp
+    print(f"  Rebrickable 429 retries exhausted for {url}", flush=True)
     return None
 
 

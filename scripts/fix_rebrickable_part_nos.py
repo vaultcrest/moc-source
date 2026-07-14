@@ -45,7 +45,11 @@ from email.mime.text import MIMEText
 
 import psycopg2
 import psycopg2.extras
-from _rebrickable_lookup import resolve_bl_part_nos_bulk, resolve_element_via_rebrickable
+from _rebrickable_lookup import (
+    MAX_PART_NUMS_PER_CALL,
+    resolve_bl_part_nos_bulk,
+    resolve_element_via_rebrickable,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -103,38 +107,50 @@ def apply_correction(cur, old_part_no: str, new_part_no: str) -> None:
 
 
 def process_batch(cur, old_part_nos: list[str], dry_run: bool) -> dict:
+    """Processes old_part_nos in sub-chunks of MAX_PART_NUMS_PER_CALL rather than
+    one giant bulk lookup up front -- so output and DB commits land continuously
+    (every ~100 part_nos) instead of going silent for the whole run before the
+    first line of progress appears."""
     stats = {"bulk": 0, "element_fallback": 0, "unresolved": 0}
-    now = datetime.now(timezone.utc)
 
-    bulk_resolved = resolve_bl_part_nos_bulk(old_part_nos, REBRICKABLE_API_KEY)
+    for chunk_start in range(0, len(old_part_nos), MAX_PART_NUMS_PER_CALL):
+        chunk = old_part_nos[chunk_start:chunk_start + MAX_PART_NUMS_PER_CALL]
+        chunk_num = chunk_start // MAX_PART_NUMS_PER_CALL + 1
+        total_chunks = (len(old_part_nos) + MAX_PART_NUMS_PER_CALL - 1) // MAX_PART_NUMS_PER_CALL
+        print(f"--- chunk {chunk_num}/{total_chunks} ({len(chunk)} part_nos) ---", flush=True)
 
-    for old_part_no in old_part_nos:
-        new_part_no = bulk_resolved.get(old_part_no)
-        method = "bulk" if new_part_no else None
+        now = datetime.now(timezone.utc)
+        bulk_resolved = resolve_bl_part_nos_bulk(chunk, REBRICKABLE_API_KEY)
+        if chunk_start + MAX_PART_NUMS_PER_CALL < len(old_part_nos):
+            time.sleep(INTER_CALL_DELAY)
 
-        if not new_part_no:
-            for element_id in element_ids_for_part_no(cur, old_part_no):
-                info = resolve_element_via_rebrickable(element_id, REBRICKABLE_API_KEY)
-                time.sleep(INTER_CALL_DELAY)
-                if info and info["bl_part_no"]:
-                    new_part_no = info["bl_part_no"]
-                    method = "element_fallback"
-                    break
+        for old_part_no in chunk:
+            new_part_no = bulk_resolved.get(old_part_no)
+            method = "bulk" if new_part_no else None
 
-        if new_part_no:
-            stats[method] += 1
-            print(f"  {old_part_no} -> {new_part_no} ({method})", flush=True)
+            if not new_part_no:
+                for element_id in element_ids_for_part_no(cur, old_part_no):
+                    info = resolve_element_via_rebrickable(element_id, REBRICKABLE_API_KEY)
+                    time.sleep(INTER_CALL_DELAY)
+                    if info and info["bl_part_no"]:
+                        new_part_no = info["bl_part_no"]
+                        method = "element_fallback"
+                        break
+
+            if new_part_no:
+                stats[method] += 1
+                print(f"  {old_part_no} -> {new_part_no} ({method})", flush=True)
+                if not dry_run:
+                    apply_correction(cur, old_part_no, new_part_no)
+                    cur.execute(UPSERT_FIX_SQL, (old_part_no, new_part_no, method, now))
+            else:
+                stats["unresolved"] += 1
+                print(f"  {old_part_no} -> UNRESOLVED (retry-eligible)", flush=True)
+                if not dry_run:
+                    cur.execute(UPSERT_FIX_SQL, (old_part_no, None, "unresolved", now))
+
             if not dry_run:
-                apply_correction(cur, old_part_no, new_part_no)
-                cur.execute(UPSERT_FIX_SQL, (old_part_no, new_part_no, method, now))
-        else:
-            stats["unresolved"] += 1
-            print(f"  {old_part_no} -> UNRESOLVED (retry-eligible)", flush=True)
-            if not dry_run:
-                cur.execute(UPSERT_FIX_SQL, (old_part_no, None, "unresolved", now))
-
-        if not dry_run:
-            cur.connection.commit()
+                cur.connection.commit()
 
     return stats
 
