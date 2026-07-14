@@ -98,17 +98,17 @@ def _fetch_element_mapping_sync(element_id: int) -> tuple[str, int, str | None] 
             log.warning("Rebrickable element lookup returned HTTP %s for element %s", resp.status_code, element_id)
             return None
         data = resp.json()
-        part_no = (data.get("design") or {}).get("part_num")
-        part_name = (data.get("design") or {}).get("name")
-        bl_ids = (
-            (data.get("color") or {})
-            .get("external_ids", {})
+        part = data.get("part") or {}
+        part_name = part.get("name")
+        bl_part_ids = (part.get("external_ids") or {}).get("BrickLink") or []
+        bl_color_ids = (
+            ((data.get("color") or {}).get("external_ids") or {})
             .get("BrickLink", {})
             .get("ext_ids", [])
         )
-        if not part_no or not bl_ids:
+        if not bl_part_ids or not bl_color_ids:
             return None
-        return part_no, int(bl_ids[0]), part_name
+        return bl_part_ids[0], int(bl_color_ids[0]), part_name
     except Exception as e:
         log.warning("Rebrickable element mapping failed for element %s: %s", element_id, e)
         return None

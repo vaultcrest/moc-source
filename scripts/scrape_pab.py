@@ -13,8 +13,10 @@ import argparse
 import base64
 import hashlib
 import hmac
+import json as _json
 import os
 import smtplib
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -22,12 +24,10 @@ import uuid
 from datetime import datetime, timezone
 from email.mime.text import MIMEText
 
-import json as _json
-import subprocess
-
 import psycopg2
 import psycopg2.extras
 import requests
+from _rebrickable_lookup import resolve_element_via_rebrickable
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -471,23 +471,10 @@ def fetch_rebrickable_mapping(element_id: int) -> tuple[str, int, str | None] | 
 
     Fallback only — tried when fetch_bl_item_mapping() has nothing for this element.
     """
-    if not REBRICKABLE_API_KEY:
+    info = resolve_element_via_rebrickable(element_id, REBRICKABLE_API_KEY)
+    if not info or not info["bl_part_no"] or info["bl_color_id"] is None:
         return None
-    url = f"https://rebrickable.com/api/v3/lego/elements/{element_id}/?key={REBRICKABLE_API_KEY}"
-    try:
-        resp = requests.get(url, timeout=15, headers={"User-Agent": "mocsource/1.0"})
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        part_no = (data.get("design") or {}).get("part_num")
-        part_name = (data.get("design") or {}).get("name")
-        bl_ids = (data.get("color") or {}).get("external_ids", {}).get("BrickLink", {}).get("ext_ids", [])
-        if not part_no or not bl_ids:
-            return None
-        return part_no, int(bl_ids[0]), part_name
-    except Exception as e:
-        print(f"  Rebrickable lookup failed for element {element_id}: {e}", file=sys.stderr)
-        return None
+    return info["bl_part_no"], info["bl_color_id"], info["part_name"]
 
 
 INSERT_BL_MAPPING_NEW_ONLY = """
@@ -619,7 +606,8 @@ def purge_cf_cache() -> None:
     token   = os.environ.get("CLOUDFLARE_API_TOKEN", "")
     if not zone_id or not token:
         return
-    import urllib.request, json as _json
+    import json as _json
+    import urllib.request
     url     = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
     payload = _json.dumps({"purge_everything": True}).encode()
     req     = urllib.request.Request(url, data=payload, method="POST")

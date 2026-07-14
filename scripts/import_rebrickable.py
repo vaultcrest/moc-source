@@ -8,8 +8,16 @@ data is never overwritten.
 Color mapping: Rebrickable color IDs are matched to BrickLink color IDs by
 name (case-insensitive). Elements whose color cannot be mapped are skipped.
 
+Part number: elements.csv's part_num is Rebrickable's OWN numbering (e.g.
+"27372pr0006"), not a BrickLink part number -- it must never be written into
+bricklink_mappings.part_no directly (that was the root cause behind 29,689
+untranslated rows found 2026-07-14). This script resolves the real BrickLink
+part number for every distinct part_num via Rebrickable's bulk parts API
+(scripts/_rebrickable_lookup.py) before inserting; part_nums that don't
+translate are skipped, not written with a guessed/raw value.
+
 Usage:
-    DATABASE_URL=... python scripts/import_rebrickable.py [rebrickable_dir]
+    DATABASE_URL=... REBRICKABLE_API_KEY=... python scripts/import_rebrickable.py [rebrickable_dir]
 
 Default rebrickable_dir: ../../brick_palettes_generator/data/rebrickable/
 """
@@ -20,11 +28,17 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
+from _rebrickable_lookup import resolve_bl_part_nos_bulk
+from dotenv import load_dotenv
+
+load_dotenv()
 
 try:
     DEFAULT_RB_DIR = Path(__file__).resolve().parents[2] / "brick_palettes_generator/data/rebrickable"
 except IndexError:
     DEFAULT_RB_DIR = Path("rebrickable")
+
+REBRICKABLE_API_KEY = os.environ.get("REBRICKABLE_API_KEY", "")
 
 _raw_url = os.environ.get("DATABASE_URL", "postgresql://mocsource:changeme@localhost/mocsource")
 DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg2://", "postgresql://")
@@ -78,6 +92,9 @@ def main(rb_dir: Path = DEFAULT_RB_DIR) -> None:
         if not (rb_dir / fname).exists():
             print(f"ERROR: {rb_dir / fname} not found", file=sys.stderr)
             sys.exit(1)
+    if not REBRICKABLE_API_KEY:
+        print("ERROR: REBRICKABLE_API_KEY not set — required to translate part numbers", file=sys.stderr)
+        sys.exit(1)
 
     conn = psycopg2.connect(DB_URL)
     conn.autocommit = False
@@ -96,8 +113,7 @@ def main(rb_dir: Path = DEFAULT_RB_DIR) -> None:
     print(f"  {len(parts)} part names loaded")
 
     print("Processing elements.csv…")
-    element_rows: list[tuple] = []   # (element_id, design_id)
-    mapping_rows: list[tuple] = []   # (element_id, part_no, color_id, part_name, source)
+    candidates: list[tuple] = []   # (element_id, design_id, rb_part_num, bl_color_id, part_name)
     skipped_color = 0
     skipped_name = 0
 
@@ -105,9 +121,9 @@ def main(rb_dir: Path = DEFAULT_RB_DIR) -> None:
         for row in csv.DictReader(f):
             try:
                 element_id = int(row["element_id"])
-                part_num = row["part_num"].strip()
+                rb_part_num = row["part_num"].strip()
                 rb_color_id = int(row["color_id"])
-                design_id = row.get("design_id", "").strip() or part_num
+                design_id = row.get("design_id", "").strip() or rb_part_num
             except (ValueError, KeyError):
                 continue
 
@@ -116,16 +132,33 @@ def main(rb_dir: Path = DEFAULT_RB_DIR) -> None:
                 skipped_color += 1
                 continue
 
-            part_name = parts.get(part_num)
+            part_name = parts.get(rb_part_num)
             if not part_name:
                 skipped_name += 1
                 continue
 
-            element_rows.append((element_id, design_id))
-            mapping_rows.append((element_id, part_num, bl_color_id, part_name, "rebrickable"))
+            candidates.append((element_id, design_id, rb_part_num, bl_color_id, part_name))
 
-    print(f"  {len(element_rows)} elements to import  "
+    print(f"  {len(candidates)} candidates  "
           f"({skipped_color} skipped: unmapped color, {skipped_name} skipped: unknown part)")
+
+    distinct_rb_part_nums = sorted({c[2] for c in candidates})
+    print(f"Resolving {len(distinct_rb_part_nums)} distinct part numbers via Rebrickable's API…")
+    bl_part_no_map = resolve_bl_part_nos_bulk(distinct_rb_part_nums, REBRICKABLE_API_KEY)
+    print(f"  {len(bl_part_no_map)}/{len(distinct_rb_part_nums)} translated to a BrickLink part number")
+
+    element_rows: list[tuple] = []   # (element_id, design_id)
+    mapping_rows: list[tuple] = []   # (element_id, part_no, color_id, part_name, source)
+    skipped_untranslated = 0
+    for element_id, design_id, rb_part_num, bl_color_id, part_name in candidates:
+        bl_part_no = bl_part_no_map.get(rb_part_num)
+        if not bl_part_no:
+            skipped_untranslated += 1
+            continue
+        element_rows.append((element_id, design_id))
+        mapping_rows.append((element_id, bl_part_no, bl_color_id, part_name, "rebrickable"))
+
+    print(f"  {len(element_rows)} elements to import ({skipped_untranslated} skipped: no BrickLink translation)")
 
     BATCH = 1000
 
