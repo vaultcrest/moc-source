@@ -120,15 +120,26 @@ class BLClient:
         }
 
     def fetch_price_guide(self, part_no: str, color_id: int, new_or_used: str) -> tuple[bool, dict | None]:
-        """Fetch BrickLink's Price Guide (sold, North America only) for one
-        (part_no, color_id, new_or_used) combo. Returns BL's raw {min_price,
-        max_price, avg_price, qty_avg_price, unit_quantity, total_quantity,
-        price_detail: [...]}; price_detail rows carry quantity, unit_price,
-        seller_country_code, buyer_country_code, date_ordered and span up to
-        ~6 months of real sold listings in one call. new_or_used is 'N' or 'U'.
-        A 404 means BL has no sold data for this combo at all (not an error)."""
+        """Fetch BrickLink's Price Guide (sold, worldwide) for one
+        (part_no, color_id, new_or_used) combo. No region param -- confirmed
+        live 2026-07-15 that BrickLink's region filter is a genuine
+        server-side restriction, not something we need to (or should)
+        replicate client-side; dropping it returns the full worldwide
+        price_detail[] in the same single call, which the caller buckets
+        into global/north_america/eu_gb/other itself (scripts/_price_guide_
+        regions.py) -- more regional granularity at no extra API cost.
+        Returns BL's raw {min_price, max_price, avg_price, qty_avg_price,
+        unit_quantity, total_quantity, price_detail: [...]}; price_detail
+        rows carry quantity, unit_price, seller_country_code,
+        buyer_country_code, date_ordered. Rows can span back years, but are
+        only dense/reliable for roughly the most recent 6 full calendar
+        months -- older than that gets sporadic (single anecdotal sales,
+        whole months missing); scrape_bl_price_guide.py enforces a 6-month
+        retention floor (month_floor_minus()) for this reason. new_or_used
+        is 'N' or 'U'. A 404 means BL has no sold data for this combo at all
+        (not an error)."""
         url = (f"{BL_API_BASE}/items/PART/{urllib.parse.quote(part_no, safe='')}/price"
-               f"?color_id={color_id}&guide_type=sold&new_or_used={new_or_used}&region=north_america")
+               f"?color_id={color_id}&guide_type=sold&new_or_used={new_or_used}")
         attempted, resp = self._get(url, "price guide", f"{part_no}/{color_id}/{new_or_used}")
         if not attempted:
             return False, None

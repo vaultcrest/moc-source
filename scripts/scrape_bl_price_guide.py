@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
-"""Priority-ordered first pass: BrickLink Price Guide, North America, monthly history.
+"""Priority-ordered first pass: BrickLink Price Guide, worldwide, monthly history,
+bucketed into global/north_america/eu_gb/other.
 
 For every (part_no, color_id) pair in bricklink_mappings, fetches BrickLink's
-sold-listing Price Guide (North America, New and Used, 2 calls/pair) and
-buckets each response's price_detail[] by month(date_ordered) -- a single
-call already returns up to ~6 months of real sold-listing line items, so one
-pass here backfills several months of history per pair, not just a single
-snapshot. Each month bucket is outlier-filtered (scripts/_outlier_filter.py's
-three-tier MAD / PAB-ratio / max-drop strategy) before avg/min/max/median are
-computed and upserted into bl_price_guide_monthly. Raw price_detail rows are
-never persisted -- only the derived monthly summary. No retention limit:
-rows accumulate indefinitely to build multi-year price-trend history.
+worldwide sold-listing Price Guide (New and Used, 2 calls/pair -- confirmed
+live 2026-07-15 that omitting BrickLink's region param returns the same
+single call's worth of data, unfiltered, rather than costing extra calls)
+and buckets each response's price_detail[] by month(date_ordered). A single
+call can return rows going back years, but only the most recent
+RETENTION_MONTHS (6) full calendar months are dense/reliable -- older than
+that BrickLink's data is sporadic leftover single sales, not real history
+(confirmed live 2026-07-15) -- so anything older than the month_floor_minus()
+cutoff is dropped before it ever reaches bl_price_guide_monthly. Within each
+kept month, rows are further split into 4 region groups
+(scripts/_price_guide_regions.py: global/north_america/eu_gb/other) by
+seller_country_code. Each (month, region) group is independently
+outlier-filtered (scripts/_outlier_filter.py's three-tier MAD / PAB-ratio /
+max-drop strategy) before avg/min/max/median are computed and upserted into
+bl_price_guide_monthly -- 4 rows per (pair, kept month) instead of 1. Raw
+price_detail rows are never persisted -- only the derived monthly summary.
 
 Priority order (this is a one-time first pass, not a recurring cadence
 split): pairs with an active PAB/BAP price first, then everything else by
@@ -20,7 +28,8 @@ pairs with no year data at all, last.
 Resumable via bl_price_guide_scan_log (a thin tracker separate from
 bl_price_guide_monthly itself, so a pair with zero BL sales -- which
 produces no monthly rows at all -- still gets marked done instead of being
-retried every run).
+retried every run). One scan covers all 4 regions at once (single worldwide
+fetch), so scan_log tracks by (part_no, color_id) only -- no region column.
 
 Shares BrickLink's ~5,000 calls/day budget with scrape_bl_mold_data.py (see
 moc-source-infra's throttled batch size there, 2026-07-15) -- deployed at
@@ -40,12 +49,13 @@ import os
 import smtplib
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from email.mime.text import MIMEText
 
 import psycopg2
 from _bricklink_lookup import BLClient
-from _outlier_filter import bucket_by_month, compute_stats, filter_bucket
+from _outlier_filter import bucket_by_month, compute_stats, filter_bucket, month_floor_minus
+from _price_guide_regions import rows_by_region
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -57,7 +67,18 @@ BRICKLINK_TOKEN_SECRET = os.environ.get("BRICKLINK_TOKEN_SECRET", "")
 
 bl_client = BLClient(BRICKLINK_CONSUMER_KEY, BRICKLINK_CONSUMER_SECRET, BRICKLINK_TOKEN, BRICKLINK_TOKEN_SECRET)
 
-REGION = "north_america"
+# BrickLink's price_detail[] isn't a clean rolling window -- the last ~6-7
+# months are dense/comprehensive (hundreds of sales/month for common parts),
+# but older than that it's sporadic leftover single listings, not real
+# history (confirmed live 2026-07-15: part 2357/Black had 962 sales in one
+# recent month vs. 1-3/month scattered back to 2018, with whole months like
+# Dec 2025 missing entirely). Floor everything older than RETENTION_MONTHS
+# full months back so bl_price_guide_monthly never gets polluted with those
+# single-anecdote months. Month-aligned via month_floor_minus(), not a naive
+# day-precise `now - N*30 days` (which would land mid-month and truncate the
+# oldest kept month to its second half only).
+RETENTION_MONTHS = 6
+
 INTER_CALL_DELAY = 1.0  # polite pacing, matches scrape_bl_mold_data.py's convention
 DEFAULT_BATCH_SIZE = 500
 MAX_CONSECUTIVE_FAILURES = 5
@@ -70,7 +91,7 @@ BASE_WHERE = """
     AND bm.part_no !~ 'pr[0-9]+$'
     AND NOT EXISTS (
       SELECT 1 FROM bl_price_guide_scan_log sl
-      WHERE sl.part_no = bm.part_no AND sl.color_id = bm.color_id AND sl.region = %(region)s
+      WHERE sl.part_no = bm.part_no AND sl.color_id = bm.color_id
     )
 """
 
@@ -125,9 +146,9 @@ UPSERT_MONTHLY_SQL = """
 """
 
 UPSERT_SCAN_LOG_SQL = """
-    INSERT INTO bl_price_guide_scan_log (part_no, color_id, region, scanned_at)
-    VALUES (%s, %s, %s, %s)
-    ON CONFLICT (part_no, color_id, region) DO UPDATE SET scanned_at = EXCLUDED.scanned_at
+    INSERT INTO bl_price_guide_scan_log (part_no, color_id, scanned_at)
+    VALUES (%s, %s, %s)
+    ON CONFLICT (part_no, color_id) DO UPDATE SET scanned_at = EXCLUDED.scanned_at
 """
 
 
@@ -137,7 +158,7 @@ def _pab_price_cents(cur, part_no: str, color_id: int) -> int | None:
     return row[0] if row else None
 
 
-def process_pair(cur, part_no: str, color_id: int, now: datetime, dry_run: bool) -> dict:
+def process_pair(cur, part_no: str, color_id: int, now: datetime, cutoff_month: date, dry_run: bool) -> dict:
     pab_price_cents = _pab_price_cents(cur, part_no, color_id)
 
     responses = {}
@@ -155,31 +176,40 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, dry_run: bool)
         price_detail = (data or {}).get("price_detail") or []
         if not price_detail:
             continue
-        for month, rows in bucket_by_month(price_detail).items():
-            try:
-                filtered = filter_bucket(rows, pab_price_cents)
-                stats = compute_stats(filtered)
-            except Exception as e:
-                error = {"part_no": part_no, "color_id": color_id, "new_or_used": new_or_used,
-                          "month": month, "error": f"{type(e).__name__}: {e}"}
-                errors.append(error)
-                print(f"    ERROR {part_no}/{color_id}/{new_or_used} {month}: "
-                      f"{type(e).__name__}: {e} -- skipping this bucket", file=sys.stderr, flush=True)
-                continue
-            if dry_run:
-                print(f"    [dry-run] {part_no}/{color_id}/{new_or_used} {month}: "
-                      f"n={stats['sample_count']}/{len(rows)} avg={stats['avg_price_cents']}")
-            else:
-                cur.execute(UPSERT_MONTHLY_SQL, {
-                    "part_no": part_no, "color_id": color_id, "region": REGION,
-                    "new_or_used": new_or_used, "month": month,
-                    "raw_sample_count": len(rows), "updated_at": now,
-                    **stats,
-                })
-            month_rows += 1
+        for month, month_all_rows in bucket_by_month(price_detail).items():
+            if month < cutoff_month:
+                continue  # sporadic leftover single sales beyond BL's real ~6-month window, not real history
+            # 'global' is the whole month_all_rows set, not a peer of the
+            # other three -- north_america/eu_gb/other mutually exclusively
+            # partition it. Each of the 4 gets its own outlier-filter pass
+            # and its own bl_price_guide_monthly row.
+            for region, rows in rows_by_region(month_all_rows).items():
+                if not rows:
+                    continue
+                try:
+                    filtered = filter_bucket(rows, pab_price_cents)
+                    stats = compute_stats(filtered)
+                except Exception as e:
+                    error = {"part_no": part_no, "color_id": color_id, "new_or_used": new_or_used,
+                              "month": month, "region": region, "error": f"{type(e).__name__}: {e}"}
+                    errors.append(error)
+                    print(f"    ERROR {part_no}/{color_id}/{new_or_used}/{region} {month}: "
+                          f"{type(e).__name__}: {e} -- skipping this bucket", file=sys.stderr, flush=True)
+                    continue
+                if dry_run:
+                    print(f"    [dry-run] {part_no}/{color_id}/{new_or_used}/{region} {month}: "
+                          f"n={stats['sample_count']}/{len(rows)} avg={stats['avg_price_cents']}")
+                else:
+                    cur.execute(UPSERT_MONTHLY_SQL, {
+                        "part_no": part_no, "color_id": color_id, "region": region,
+                        "new_or_used": new_or_used, "month": month,
+                        "raw_sample_count": len(rows), "updated_at": now,
+                        **stats,
+                    })
+                month_rows += 1
 
     if not dry_run:
-        cur.execute(UPSERT_SCAN_LOG_SQL, (part_no, color_id, REGION, now))
+        cur.execute(UPSERT_SCAN_LOG_SQL, (part_no, color_id, now))
 
     return {"status": "processed", "month_rows": month_rows, "errors": errors}
 
@@ -203,7 +233,7 @@ def send_report(stats: dict, remaining_after: int, duration_s: float) -> None:
     error_section = ""
     if errors:
         error_section = "\nErrors this run (bucket skipped, needs review):\n" + "\n".join(
-            f"  {e['part_no']}/{e['color_id']}/{e['new_or_used']} {e['month']}: {e['error']}"
+            f"  {e['part_no']}/{e['color_id']}/{e['new_or_used']}/{e['region']} {e['month']}: {e['error']}"
             for e in errors
         ) + "\n"
 
@@ -270,9 +300,9 @@ def main():
         pairs = [(args.part_no, args.color_id, None)]
         print(f"Processing 1 explicitly-specified pair")
     else:
-        cur.execute(COUNT_SQL, {"region": REGION})
+        cur.execute(COUNT_SQL)
         remaining = cur.fetchone()[0]
-        cur.execute(BATCH_SQL, {"region": REGION, "limit": args.batch_size})
+        cur.execute(BATCH_SQL, {"limit": args.batch_size})
         pairs = [(r[0], r[1], r[2]) for r in cur.fetchall()]
         print(f"{remaining} unscanned pair(s) total; selected {len(pairs)} for this run")
 
@@ -285,9 +315,11 @@ def main():
     stats = {"processed": 0, "skipped_transient": 0, "has_pab": 0, "month_rows": 0, "errors": []}
     consecutive_failures = 0
     now = datetime.now(timezone.utc)
+    cutoff_month = month_floor_minus(now, RETENTION_MONTHS)
+    print(f"Retention floor: keeping month >= {cutoff_month} ({RETENTION_MONTHS} full months back)")
 
     for i, (part_no, color_id, has_pab) in enumerate(pairs):
-        result = process_pair(cur, part_no, color_id, now, args.dry_run)
+        result = process_pair(cur, part_no, color_id, now, cutoff_month, args.dry_run)
         if result["status"] == "skipped_transient":
             stats["skipped_transient"] += 1
             consecutive_failures += 1
@@ -310,7 +342,7 @@ def main():
         if i < len(pairs) - 1:
             time.sleep(INTER_CALL_DELAY)
 
-    cur.execute(COUNT_SQL, {"region": REGION})
+    cur.execute(COUNT_SQL)
     remaining_after = cur.fetchone()[0]
 
     cur.close()

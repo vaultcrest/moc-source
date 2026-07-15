@@ -49,6 +49,19 @@ def bucket_by_month(price_detail: list[dict]) -> dict[date, list[dict]]:
     return buckets
 
 
+def month_floor_minus(reference: datetime, months_back: int) -> date:
+    """First-of-month, `months_back` full calendar months before reference's month.
+
+    Month-aligned, not day-precise -- e.g. for a scan on 2026-07-15 with
+    months_back=6, returns 2026-01-01 (January in full), not "2026-01-15"
+    (a naive `reference - 180 days` would land mid-January, silently
+    truncating that month's real data to its second half only).
+    """
+    total_months = reference.year * 12 + (reference.month - 1) - months_back
+    year, month0 = divmod(total_months, 12)
+    return date(year, month0 + 1, 1)
+
+
 def filter_bucket(rows: list[dict], pab_price_cents: int | None) -> list[dict]:
     """Returns the subset of rows surviving outlier rejection. Each row must
     have a unit_price field (BL's raw string price)."""
