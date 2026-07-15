@@ -240,9 +240,9 @@ def send_report(stats: dict, remaining_after: int, duration_s: float) -> None:
     if remaining_after == 0:
         subject = f"[MOC Source] BL price guide first pass COMPLETE{error_suffix}"
         body = (
-            "The BrickLink Price Guide first pass (North America, New+Used, "
-            "priority-ordered) has finished -- every known (part_no, color_id) "
-            "pair now has a scan_log entry.\n\n"
+            "The BrickLink Price Guide first pass (worldwide, New+Used, bucketed "
+            "into global/North America/EU+UK/other, priority-ordered) has finished "
+            "-- every known (part_no, color_id) pair now has a scan_log entry.\n\n"
             f"This run   : processed {processed}, skipped (transient) {stats['skipped_transient']}\n"
             f"{tier_line}"
             f"Duration   : {mins}m {secs}s\n"

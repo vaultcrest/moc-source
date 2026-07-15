@@ -13,5 +13,4 @@ class BLPriceGuideScanLog(Base):
 
     part_no: Mapped[str] = mapped_column(String(100), primary_key=True)
     color_id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    region: Mapped[str] = mapped_column(String(30), primary_key=True)
     scanned_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
