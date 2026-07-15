@@ -11,6 +11,16 @@ All notable changes to MOC Source are documented here.
 - New `scripts/scrape_bl_price_guide.py` — priority-ordered first pass over the ~81K known `(part_no, color_id)` pairs in `bricklink_mappings`: PAB/BAP-priced pairs first, then everything else by `bl_part_catalog.last_used_year` descending (current year backward), then no-year-data pairs last. Each call returns up to ~6 months of real sold-listing history (`price_detail[]`), bucketed by month and outlier-filtered before being written — a single pass backfills several months of history per pair, not just a current snapshot. Raw `price_detail` rows are never persisted, only the derived monthly summary. **No retention limit** — supersedes the earlier-drafted 12-month rolling design; history accumulates indefinitely for multi-year price-trend charts
 - `scrape_bl_mold_data.py` throttled from 5,000 to 500 calls/night (`moc-source-infra`) to free up BrickLink's shared ~5,000 calls/day budget for the new scraper (~4,500 calls/night, 2,250 pairs), since mold-backfill's output only feeds the not-yet-built discontinued-mold feature — nothing live consumes it yet, unlike price-guide data. New `mocsource-scrape-bl-price-guide.service/.timer` (daily 03:00)
 
+### BL Price Guide — zero-price crash fix + per-bucket crash reporting
+- Both runs since initial deploy (a manual test + the first real 03:00 timer run) crashed with `ValueError: math domain error` — BrickLink's `price_detail[]` includes some genuine $0.0000 line items (confirmed real example: part `22885`, Light Bluish Gray, Used, a 129-qty sale recorded at exactly $0.0000/unit on 2026-06-09 — corroborated by BrickLink's own `min_price` aggregate field for that combo, not a rounding artifact; BL reports `unit_price` to 4 decimal places, e.g. `0.0806`, so a true sub-cent price would show as `0.0050`, not `0.0000`) and the MAD tier's `math.log(cents)` has no domain for 0
+- `_outlier_filter.py`'s `filter_bucket()` now drops non-positive prices before any tier logic runs
+- `scrape_bl_price_guide.py`'s `process_pair()` now catches any per-month-bucket exception (not just this one), skips just that bucket instead of aborting the whole batch, and surfaces `part_no/color_id/new_or_used/month` + error in the email report's new "Errors this run" section
+- Verified against real production data (clean 20-pair batch, zero errors) and deployed same day
+
+### Disk usage monitor (`moc-source-infra`, `roles/disk_monitor/`)
+- New role: checks `/` on app.home.arpa 4x/day (00:00/06:00/12:00/18:00), emails an alert via the app's existing SMTP settings once usage hits 75% — no new secret needed (reuses `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD`/`SMTP_FROM`/`REPORT_EMAIL` from `/opt/mocsource/app/.env`)
+- Added specifically because `bl_price_guide_monthly` has no retention limit by design — this is the early-warning trip wire in case that decision needs revisiting later
+
 ## [Backend] — 2026-07-14
 
 ### Colors Table (`colors`, `scripts/backfill_rebrickable_colors.py`, `scripts/backfill_bricklink_colors.py`)
