@@ -56,6 +56,12 @@ def filter_bucket(rows: list[dict], pab_price_cents: int | None) -> list[dict]:
         return []
 
     priced = [(row, _to_cents(row["unit_price"])) for row in rows]
+    # Drop non-positive prices up front -- a $0.00 "sale" is a data anomaly
+    # (free/bundled/promotional listing), never a real market price, and
+    # log(price) below is undefined for it anyway.
+    priced = [(row, cents) for row, cents in priced if cents > 0]
+    if not priced:
+        return []
 
     if len(priced) >= MIN_SAMPLE_FOR_MAD:
         return _filter_tier1_mad(priced)

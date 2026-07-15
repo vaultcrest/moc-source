@@ -150,13 +150,22 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, dry_run: bool)
             time.sleep(INTER_CALL_DELAY)
 
     month_rows = 0
+    errors = []
     for new_or_used, data in responses.items():
         price_detail = (data or {}).get("price_detail") or []
         if not price_detail:
             continue
         for month, rows in bucket_by_month(price_detail).items():
-            filtered = filter_bucket(rows, pab_price_cents)
-            stats = compute_stats(filtered)
+            try:
+                filtered = filter_bucket(rows, pab_price_cents)
+                stats = compute_stats(filtered)
+            except Exception as e:
+                error = {"part_no": part_no, "color_id": color_id, "new_or_used": new_or_used,
+                          "month": month, "error": f"{type(e).__name__}: {e}"}
+                errors.append(error)
+                print(f"    ERROR {part_no}/{color_id}/{new_or_used} {month}: "
+                      f"{type(e).__name__}: {e} -- skipping this bucket", file=sys.stderr, flush=True)
+                continue
             if dry_run:
                 print(f"    [dry-run] {part_no}/{color_id}/{new_or_used} {month}: "
                       f"n={stats['sample_count']}/{len(rows)} avg={stats['avg_price_cents']}")
@@ -172,7 +181,7 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, dry_run: bool)
     if not dry_run:
         cur.execute(UPSERT_SCAN_LOG_SQL, (part_no, color_id, REGION, now))
 
-    return {"status": "processed", "month_rows": month_rows}
+    return {"status": "processed", "month_rows": month_rows, "errors": errors}
 
 
 def send_report(stats: dict, remaining_after: int, duration_s: float) -> None:
@@ -186,24 +195,33 @@ def send_report(stats: dict, remaining_after: int, duration_s: float) -> None:
         return
 
     processed = stats["processed"]
+    errors = stats.get("errors", [])
     mins, secs = divmod(int(duration_s), 60)
     tier_line = (f"  PAB/BAP-priced pairs : {stats['has_pab']}/{processed}\n"
                  f"  Month-rows written   : {stats['month_rows']}\n") if processed else ""
+    error_suffix = f" ({len(errors)} errors)" if errors else ""
+    error_section = ""
+    if errors:
+        error_section = "\nErrors this run (bucket skipped, needs review):\n" + "\n".join(
+            f"  {e['part_no']}/{e['color_id']}/{e['new_or_used']} {e['month']}: {e['error']}"
+            for e in errors
+        ) + "\n"
 
     if remaining_after == 0:
-        subject = "[MOC Source] BL price guide first pass COMPLETE"
+        subject = f"[MOC Source] BL price guide first pass COMPLETE{error_suffix}"
         body = (
             "The BrickLink Price Guide first pass (North America, New+Used, "
             "priority-ordered) has finished -- every known (part_no, color_id) "
             "pair now has a scan_log entry.\n\n"
             f"This run   : processed {processed}, skipped (transient) {stats['skipped_transient']}\n"
             f"{tier_line}"
-            f"Duration   : {mins}m {secs}s\n\n"
+            f"Duration   : {mins}m {secs}s\n"
+            f"{error_section}\n"
             "Nightly runs will keep firing but will find nothing left to do until "
             "new pairs are added to bricklink_mappings.\n"
         )
     else:
-        subject = f"[MOC Source] BL price guide: {processed} processed, {remaining_after:,} remaining"
+        subject = f"[MOC Source] BL price guide: {processed} processed, {remaining_after:,} remaining{error_suffix}"
         body = (
             "Nightly BL Price Guide scrape run complete.\n\n"
             f"Processed            : {processed}\n"
@@ -211,6 +229,7 @@ def send_report(stats: dict, remaining_after: int, duration_s: float) -> None:
             f"{tier_line}"
             f"Remaining after this run: {remaining_after:,}\n"
             f"Duration   : {mins}m {secs}s\n"
+            f"{error_section}"
         )
 
     msg = MIMEText(body)
@@ -263,7 +282,7 @@ def main():
         conn.close()
         return
 
-    stats = {"processed": 0, "skipped_transient": 0, "has_pab": 0, "month_rows": 0}
+    stats = {"processed": 0, "skipped_transient": 0, "has_pab": 0, "month_rows": 0, "errors": []}
     consecutive_failures = 0
     now = datetime.now(timezone.utc)
 
@@ -284,8 +303,10 @@ def main():
             stats["processed"] += 1
             stats["month_rows"] += result["month_rows"]
             stats["has_pab"] += int(bool(has_pab))
+            stats["errors"].extend(result.get("errors", []))
+            err_suffix = f", {len(result['errors'])} error(s)" if result.get("errors") else ""
             print(f"[{i + 1}/{len(pairs)}] {part_no}/{color_id}: processed "
-                  f"({result['month_rows']} month-rows)", flush=True)
+                  f"({result['month_rows']} month-rows{err_suffix})", flush=True)
         if i < len(pairs) - 1:
             time.sleep(INTER_CALL_DELAY)
 
@@ -298,6 +319,8 @@ def main():
     print(f"\nDone. Processed {stats['processed']}, skipped (transient) {stats['skipped_transient']}.")
     if stats["processed"]:
         print(f"  Month-rows written   : {stats['month_rows']}")
+    if stats["errors"]:
+        print(f"  Errors (skipped)     : {len(stats['errors'])}")
     print(f"  Remaining            : {remaining_after:,}")
 
     if not args.dry_run:
