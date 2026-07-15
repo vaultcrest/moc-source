@@ -109,3 +109,16 @@ class BLClient:
             "alternate_no": alternates,
             "year_released": data.get("year_released"),
         }
+
+    def fetch_colors(self) -> tuple[bool, list[dict] | None]:
+        """Fetch BrickLink's full colors catalog: list of {color_id, color_name,
+        color_code, color_type}, ~214 entries as of 2026-07-14. One call, no
+        pagination — unlike fetch_item(), this is a bulk list endpoint."""
+        url = f"{BL_API_BASE}/colors"
+        attempted, resp = self._get(url, "colors catalog", "all")
+        if not attempted:
+            return False, None
+        if resp.status_code != 200:
+            print(f"  BL colors catalog unexpected status: HTTP {resp.status_code}", file=sys.stderr)
+            return True, None
+        return True, resp.json().get("data") or []

@@ -2,6 +2,15 @@
 
 All notable changes to MOC Source are documented here.
 
+## [Backend] — 2026-07-14
+
+### Colors Table (`colors`, `scripts/backfill_rebrickable_colors.py`, `scripts/backfill_bricklink_colors.py`)
+- Added `rebrickable_id` column (Alembic `b4c5d6e7`) — additive only, no existing `bl_id`/`bl_name`/`lego_id`/`lego_name`/`hex` values touched
+- New `scripts/backfill_rebrickable_colors.py` cross-references Rebrickable's `/lego/colors/` API against `colors.bl_id` via `external_ids.BrickLink.ext_ids`, matching the ID-based approach already proven in `mocsource/rebrickable_client.py`. 170/174 colors matched; the 4 unmatched are BrickLink placeholder entries with negative IDs (Magnet, Electric Contact Alloy/Copper, and an unnamed `-1`), not real colors
+- Added `color_type`, `rebrickable_year_from`, `rebrickable_year_to` columns (Alembic `c5d6e7f8`) — additive only
+- New `scripts/backfill_bricklink_colors.py` pulls BrickLink's own `GET /colors` catalog (214 live colors): backfills `color_type` for existing rows and inserts the 44 BrickLink colors previously missing from the table entirely (mostly the "Mx" Modulex sub-brand) — `ON CONFLICT (bl_id) DO NOTHING` on insert, so it can never overwrite an existing row
+- `scripts/backfill_rebrickable_colors.py` extended to also backfill `rebrickable_year_from`/`_to` from Rebrickable's bulk `colors.csv` download (`cdn.rebrickable.com/media/downloads/colors.csv.gz`) — confirmed the live REST API has no year field at all, this data only exists in that bulk product. Fetched fresh each run (small file, ~275 rows), not cached locally. After both scripts: 218 total colors (174 original + 44 newly inserted), 214/218 have `color_type`, 213/218 matched to a `rebrickable_id` with year data
+
 ## [0.4.10] — 2026-07-07
 
 ### Extension

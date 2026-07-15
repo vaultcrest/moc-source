@@ -12,3 +12,7 @@ class Color(Base):
     lego_id: Mapped[int | None] = mapped_column(Integer)
     lego_name: Mapped[str | None] = mapped_column(Text)
     hex: Mapped[str | None] = mapped_column(String(6))
+    rebrickable_id: Mapped[int | None] = mapped_column(Integer)
+    color_type: Mapped[str | None] = mapped_column(Text)
+    rebrickable_year_from: Mapped[int | None] = mapped_column(Integer)
+    rebrickable_year_to: Mapped[int | None] = mapped_column(Integer)
