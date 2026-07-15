@@ -91,9 +91,13 @@ class BLClient:
         return False, None
 
     def fetch_item(self, item_type: str, no: str) -> tuple[bool, dict | None]:
-        """Fetch (name, item_type, alternate_no, year_released) for any BL
-        item type. Mirrors the parsing in mocsource/bl_client.py's
-        _fetch_part_sync (PART-specific there; this generalizes to any type)."""
+        """Fetch (name, item_type, alternate_no, year_released, category_id)
+        for any BL item type. Mirrors the parsing in mocsource/bl_client.py's
+        _fetch_part_sync (PART-specific there; this generalizes to any type).
+        category_id is BrickLink's own catalog category (see bl_categories /
+        scripts/seed_bl_categories.py) -- not scoped to any one item type by
+        BrickLink itself, so a category_id seen here isn't guaranteed to be
+        one of bl_categories' part-only rows."""
         url = f"{BL_API_BASE}/items/{item_type}/{urllib.parse.quote(no, safe='')}"
         attempted, resp = self._get(url, f"{item_type} catalog", no)
         if not attempted:
@@ -117,6 +121,7 @@ class BLClient:
             "item_type": data.get("type"),
             "alternate_no": alternates,
             "year_released": data.get("year_released"),
+            "category_id": data.get("category_id"),
         }
 
     def fetch_price_guide(self, part_no: str, color_id: int, new_or_used: str) -> tuple[bool, dict | None]:

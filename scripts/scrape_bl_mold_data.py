@@ -3,7 +3,11 @@
 
 For every part_no in bricklink_mappings, fetches BrickLink's catalog entry
 for name/item_type/alternate_no (sibling mold numbers) — the one piece of
-data here with no Rebrickable equivalent.
+data here with no Rebrickable equivalent. Also captures category_id (added
+2026-07-15, free — same call, previously discarded) into
+bl_part_catalog.category_id; see bl_categories / scripts/seed_bl_categories.py
+for resolving it to a name (BrickLink's own category list isn't scoped to
+parts, so not every category_id seen here will match a bl_categories row).
 
 last_used_year and year_released are no longer computed by this script (see
 scripts/backfill_last_used_year.py, 2026-07-14): both now come from
@@ -92,23 +96,26 @@ def process_part(cur, part_no: str, now: datetime, dry_run: bool) -> dict:
 
     name = catalog_data.get("name") if catalog_data else None
     item_type = catalog_data.get("item_type") if catalog_data else None
+    category_id = catalog_data.get("category_id") if catalog_data else None
     raw_alts = catalog_data.get("alternate_no", []) if catalog_data else []
     filtered_alts = sorted({a for a in raw_alts if a and a != part_no})
 
     if dry_run:
-        print(f"    [dry-run] {part_no}: name={name!r} item_type={item_type!r} alternates={filtered_alts}")
+        print(f"    [dry-run] {part_no}: name={name!r} item_type={item_type!r} "
+              f"category_id={category_id!r} alternates={filtered_alts}")
     else:
         cur.execute(
             """
-            INSERT INTO bl_part_catalog (part_no, name, item_type, looked_up_at, mold_backfilled_at)
-            VALUES (%s, %s, %s, %s, %s)
+            INSERT INTO bl_part_catalog (part_no, name, item_type, category_id, looked_up_at, mold_backfilled_at)
+            VALUES (%s, %s, %s, %s, %s, %s)
             ON CONFLICT (part_no) DO UPDATE SET
                 name = EXCLUDED.name,
                 item_type = EXCLUDED.item_type,
+                category_id = EXCLUDED.category_id,
                 looked_up_at = EXCLUDED.looked_up_at,
                 mold_backfilled_at = EXCLUDED.mold_backfilled_at
             """,
-            (part_no, name, item_type, now, now),
+            (part_no, name, item_type, category_id, now, now),
         )
         cur.execute("DELETE FROM bricklink_alternates WHERE part_no = %s", (part_no,))
         if filtered_alts:

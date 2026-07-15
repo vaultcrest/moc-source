@@ -1,0 +1,1217 @@
+[
+  {
+    "category_id": 1,
+    "category_name": "Antenna",
+    "parent_id": 0
+  },
+  {
+    "category_id": 2,
+    "category_name": "Baseplate",
+    "parent_id": 0
+  },
+  {
+    "category_id": 3,
+    "category_name": "Boat",
+    "parent_id": 0
+  },
+  {
+    "category_id": 4,
+    "category_name": "Bracket",
+    "parent_id": 0
+  },
+  {
+    "category_id": 5,
+    "category_name": "Brick",
+    "parent_id": 0
+  },
+  {
+    "category_id": 6,
+    "category_name": "Arch",
+    "parent_id": 0
+  },
+  {
+    "category_id": 7,
+    "category_name": "Brick, Modified",
+    "parent_id": 0
+  },
+  {
+    "category_id": 8,
+    "category_name": "Brick, Round",
+    "parent_id": 0
+  },
+  {
+    "category_id": 10,
+    "category_name": "Container",
+    "parent_id": 0
+  },
+  {
+    "category_id": 11,
+    "category_name": "Cylinder",
+    "parent_id": 0
+  },
+  {
+    "category_id": 12,
+    "category_name": "Door",
+    "parent_id": 0
+  },
+  {
+    "category_id": 13,
+    "category_name": "Fence",
+    "parent_id": 0
+  },
+  {
+    "category_id": 14,
+    "category_name": "Magnet",
+    "parent_id": 0
+  },
+  {
+    "category_id": 16,
+    "category_name": "Minifigure, Headgear",
+    "parent_id": 0
+  },
+  {
+    "category_id": 18,
+    "category_name": "Minifigure, Utensil",
+    "parent_id": 0
+  },
+  {
+    "category_id": 19,
+    "category_name": "Minifigure, Weapon",
+    "parent_id": 0
+  },
+  {
+    "category_id": 20,
+    "category_name": "Minifigure, Body Part",
+    "parent_id": 0
+  },
+  {
+    "category_id": 21,
+    "category_name": "Cone",
+    "parent_id": 0
+  },
+  {
+    "category_id": 22,
+    "category_name": "Hinge",
+    "parent_id": 0
+  },
+  {
+    "category_id": 25,
+    "category_name": "Plant",
+    "parent_id": 0
+  },
+  {
+    "category_id": 26,
+    "category_name": "Plate",
+    "parent_id": 0
+  },
+  {
+    "category_id": 27,
+    "category_name": "Plate, Modified",
+    "parent_id": 0
+  },
+  {
+    "category_id": 28,
+    "category_name": "Plate, Round",
+    "parent_id": 0
+  },
+  {
+    "category_id": 30,
+    "category_name": "Propeller",
+    "parent_id": 0
+  },
+  {
+    "category_id": 31,
+    "category_name": "Slope",
+    "parent_id": 0
+  },
+  {
+    "category_id": 32,
+    "category_name": "Slope, Inverted",
+    "parent_id": 0
+  },
+  {
+    "category_id": 33,
+    "category_name": "Slope, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 36,
+    "category_name": "Technic",
+    "parent_id": 0
+  },
+  {
+    "category_id": 37,
+    "category_name": "Tile",
+    "parent_id": 0
+  },
+  {
+    "category_id": 38,
+    "category_name": "Tile, Modified",
+    "parent_id": 0
+  },
+  {
+    "category_id": 39,
+    "category_name": "Tile, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 40,
+    "category_name": "Turntable",
+    "parent_id": 0
+  },
+  {
+    "category_id": 42,
+    "category_name": "Wedge",
+    "parent_id": 0
+  },
+  {
+    "category_id": 43,
+    "category_name": "Wheel",
+    "parent_id": 0
+  },
+  {
+    "category_id": 45,
+    "category_name": "Arm",
+    "parent_id": 0
+  },
+  {
+    "category_id": 46,
+    "category_name": "Bar",
+    "parent_id": 0
+  },
+  {
+    "category_id": 48,
+    "category_name": "Belville",
+    "parent_id": 0
+  },
+  {
+    "category_id": 72,
+    "category_name": "Vehicle",
+    "parent_id": 0
+  },
+  {
+    "category_id": 73,
+    "category_name": "Conveyor",
+    "parent_id": 0
+  },
+  {
+    "category_id": 74,
+    "category_name": "Crane",
+    "parent_id": 0
+  },
+  {
+    "category_id": 76,
+    "category_name": "Flag",
+    "parent_id": 0
+  },
+  {
+    "category_id": 77,
+    "category_name": "Vehicle, Mudguard",
+    "parent_id": 0
+  },
+  {
+    "category_id": 79,
+    "category_name": "Garage",
+    "parent_id": 0
+  },
+  {
+    "category_id": 81,
+    "category_name": "Window, Glass & Shutter",
+    "parent_id": 0
+  },
+  {
+    "category_id": 83,
+    "category_name": "Hinge, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 84,
+    "category_name": "Window, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 85,
+    "category_name": "Homemaker",
+    "parent_id": 0
+  },
+  {
+    "category_id": 86,
+    "category_name": "Animal, Accessory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 87,
+    "category_name": "Hose",
+    "parent_id": 0
+  },
+  {
+    "category_id": 88,
+    "category_name": "String Reel & Winch",
+    "parent_id": 0
+  },
+  {
+    "category_id": 90,
+    "category_name": "Ladder",
+    "parent_id": 0
+  },
+  {
+    "category_id": 91,
+    "category_name": "Panel",
+    "parent_id": 0
+  },
+  {
+    "category_id": 93,
+    "category_name": "Aircraft",
+    "parent_id": 0
+  },
+  {
+    "category_id": 95,
+    "category_name": "Plant, Tree",
+    "parent_id": 0
+  },
+  {
+    "category_id": 98,
+    "category_name": "Road Sign",
+    "parent_id": 0
+  },
+  {
+    "category_id": 99,
+    "category_name": "Rock",
+    "parent_id": 0
+  },
+  {
+    "category_id": 102,
+    "category_name": "Scala",
+    "parent_id": 0
+  },
+  {
+    "category_id": 103,
+    "category_name": "Stairs",
+    "parent_id": 0
+  },
+  {
+    "category_id": 105,
+    "category_name": "Support",
+    "parent_id": 0
+  },
+  {
+    "category_id": 106,
+    "category_name": "Tail",
+    "parent_id": 0
+  },
+  {
+    "category_id": 107,
+    "category_name": "Tap",
+    "parent_id": 0
+  },
+  {
+    "category_id": 111,
+    "category_name": "Wheel, Tire & Tread",
+    "parent_id": 0
+  },
+  {
+    "category_id": 112,
+    "category_name": "Hook",
+    "parent_id": 0
+  },
+  {
+    "category_id": 113,
+    "category_name": "Window",
+    "parent_id": 0
+  },
+  {
+    "category_id": 114,
+    "category_name": "Wing",
+    "parent_id": 0
+  },
+  {
+    "category_id": 115,
+    "category_name": "Windscreen",
+    "parent_id": 0
+  },
+  {
+    "category_id": 116,
+    "category_name": "Dish",
+    "parent_id": 0
+  },
+  {
+    "category_id": 117,
+    "category_name": "Tile, Round",
+    "parent_id": 0
+  },
+  {
+    "category_id": 118,
+    "category_name": "Brick, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 119,
+    "category_name": "Electric",
+    "parent_id": 0
+  },
+  {
+    "category_id": 121,
+    "category_name": "Electric, Motor",
+    "parent_id": 0
+  },
+  {
+    "category_id": 122,
+    "category_name": "Electric, Train",
+    "parent_id": 0
+  },
+  {
+    "category_id": 123,
+    "category_name": "Electric, Light & Sound",
+    "parent_id": 0
+  },
+  {
+    "category_id": 124,
+    "category_name": "Train",
+    "parent_id": 0
+  },
+  {
+    "category_id": 128,
+    "category_name": "Train, Track",
+    "parent_id": 0
+  },
+  {
+    "category_id": 130,
+    "category_name": "Baseplate, Road",
+    "parent_id": 0
+  },
+  {
+    "category_id": 131,
+    "category_name": "Vehicle, Base",
+    "parent_id": 0
+  },
+  {
+    "category_id": 132,
+    "category_name": "Window, Glass & Shutter, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 133,
+    "category_name": "Technic, Connector",
+    "parent_id": 0
+  },
+  {
+    "category_id": 134,
+    "category_name": "Technic, Axle",
+    "parent_id": 0
+  },
+  {
+    "category_id": 135,
+    "category_name": "Technic, Brick",
+    "parent_id": 0
+  },
+  {
+    "category_id": 136,
+    "category_name": "Technic, Gear",
+    "parent_id": 0
+  },
+  {
+    "category_id": 137,
+    "category_name": "Technic, Liftarm",
+    "parent_id": 0
+  },
+  {
+    "category_id": 138,
+    "category_name": "Technic, Link",
+    "parent_id": 0
+  },
+  {
+    "category_id": 139,
+    "category_name": "Technic, Pin",
+    "parent_id": 0
+  },
+  {
+    "category_id": 140,
+    "category_name": "Technic, Plate",
+    "parent_id": 0
+  },
+  {
+    "category_id": 141,
+    "category_name": "Technic, Steering",
+    "parent_id": 0
+  },
+  {
+    "category_id": 142,
+    "category_name": "Minifigure, Body Wear",
+    "parent_id": 0
+  },
+  {
+    "category_id": 143,
+    "category_name": "(Other)",
+    "parent_id": 0
+  },
+  {
+    "category_id": 145,
+    "category_name": "Animal, Water",
+    "parent_id": 0
+  },
+  {
+    "category_id": 146,
+    "category_name": "Animal, Air",
+    "parent_id": 0
+  },
+  {
+    "category_id": 147,
+    "category_name": "Animal, Land",
+    "parent_id": 0
+  },
+  {
+    "category_id": 148,
+    "category_name": "Animal, Body Part",
+    "parent_id": 0
+  },
+  {
+    "category_id": 150,
+    "category_name": "Minifigure, Torso",
+    "parent_id": 0
+  },
+  {
+    "category_id": 152,
+    "category_name": "Znap",
+    "parent_id": 0
+  },
+  {
+    "category_id": 153,
+    "category_name": "Fabuland",
+    "parent_id": 0
+  },
+  {
+    "category_id": 154,
+    "category_name": "Technic, Panel",
+    "parent_id": 0
+  },
+  {
+    "category_id": 159,
+    "category_name": "Pneumatic",
+    "parent_id": 0
+  },
+  {
+    "category_id": 160,
+    "category_name": "Sticker Sheet",
+    "parent_id": 0
+  },
+  {
+    "category_id": 161,
+    "category_name": "Plastic",
+    "parent_id": 0
+  },
+  {
+    "category_id": 162,
+    "category_name": "Cloth",
+    "parent_id": 0
+  },
+  {
+    "category_id": 167,
+    "category_name": "DUPLO",
+    "parent_id": 0
+  },
+  {
+    "category_id": 175,
+    "category_name": "Food & Drink",
+    "parent_id": 0
+  },
+  {
+    "category_id": 184,
+    "category_name": "Animal, Dinosaur",
+    "parent_id": 0
+  },
+  {
+    "category_id": 225,
+    "category_name": "Riding Cycle",
+    "parent_id": 0
+  },
+  {
+    "category_id": 229,
+    "category_name": "Rubber Band & Belt",
+    "parent_id": 0
+  },
+  {
+    "category_id": 231,
+    "category_name": "String & Net",
+    "parent_id": 0
+  },
+  {
+    "category_id": 234,
+    "category_name": "Foam",
+    "parent_id": 0
+  },
+  {
+    "category_id": 235,
+    "category_name": "BIONICLE, Kanohi Mask",
+    "parent_id": 0
+  },
+  {
+    "category_id": 237,
+    "category_name": "Monorail",
+    "parent_id": 0
+  },
+  {
+    "category_id": 238,
+    "category_name": "Minifigure, Head",
+    "parent_id": 0
+  },
+  {
+    "category_id": 242,
+    "category_name": "Technic, Figure Accessory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 243,
+    "category_name": "Baseplate, Raised",
+    "parent_id": 0
+  },
+  {
+    "category_id": 246,
+    "category_name": "Paper",
+    "parent_id": 0
+  },
+  {
+    "category_id": 273,
+    "category_name": "BIONICLE",
+    "parent_id": 0
+  },
+  {
+    "category_id": 294,
+    "category_name": "Primo",
+    "parent_id": 0
+  },
+  {
+    "category_id": 379,
+    "category_name": "Roof",
+    "parent_id": 0
+  },
+  {
+    "category_id": 394,
+    "category_name": "Minitalia",
+    "parent_id": 0
+  },
+  {
+    "category_id": 411,
+    "category_name": "Electric, Battery Box",
+    "parent_id": 0
+  },
+  {
+    "category_id": 412,
+    "category_name": "Belville, Figure Accessory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 413,
+    "category_name": "Scala, Figure Accessory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 417,
+    "category_name": "DUPLO, Brick",
+    "parent_id": 0
+  },
+  {
+    "category_id": 418,
+    "category_name": "Minifigure, Shield",
+    "parent_id": 0
+  },
+  {
+    "category_id": 420,
+    "category_name": "DUPLO, Animal",
+    "parent_id": 0
+  },
+  {
+    "category_id": 423,
+    "category_name": "Classic",
+    "parent_id": 0
+  },
+  {
+    "category_id": 424,
+    "category_name": "HO 1:87 Vehicles",
+    "parent_id": 423
+  },
+  {
+    "category_id": 429,
+    "category_name": "Jumbo Bricks",
+    "parent_id": 0
+  },
+  {
+    "category_id": 437,
+    "category_name": "Explore",
+    "parent_id": 0
+  },
+  {
+    "category_id": 438,
+    "category_name": "Slope, Curved",
+    "parent_id": 0
+  },
+  {
+    "category_id": 439,
+    "category_name": "Soft Bricks",
+    "parent_id": 0
+  },
+  {
+    "category_id": 440,
+    "category_name": "DUPLO, Brick, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 441,
+    "category_name": "DUPLO, Train",
+    "parent_id": 0
+  },
+  {
+    "category_id": 444,
+    "category_name": "Galidor",
+    "parent_id": 0
+  },
+  {
+    "category_id": 450,
+    "category_name": "Track System",
+    "parent_id": 179
+  },
+  {
+    "category_id": 461,
+    "category_name": "Panel, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 463,
+    "category_name": "Electric, Programmable",
+    "parent_id": 0
+  },
+  {
+    "category_id": 473,
+    "category_name": "Sports",
+    "parent_id": 0
+  },
+  {
+    "category_id": 479,
+    "category_name": "Cockpit",
+    "parent_id": 0
+  },
+  {
+    "category_id": 483,
+    "category_name": "Technic, Flex Cable",
+    "parent_id": 0
+  },
+  {
+    "category_id": 484,
+    "category_name": "Minifigure, Legs",
+    "parent_id": 0
+  },
+  {
+    "category_id": 485,
+    "category_name": "Minifigure, Torso Assembly",
+    "parent_id": 0
+  },
+  {
+    "category_id": 487,
+    "category_name": "DUPLO, Plate",
+    "parent_id": 0
+  },
+  {
+    "category_id": 488,
+    "category_name": "DUPLO, Vehicle",
+    "parent_id": 0
+  },
+  {
+    "category_id": 490,
+    "category_name": "Clikits",
+    "parent_id": 0
+  },
+  {
+    "category_id": 504,
+    "category_name": "Motor, Non-Electric",
+    "parent_id": 0
+  },
+  {
+    "category_id": 506,
+    "category_name": "DUPLO, Brick, Promotional",
+    "parent_id": 0
+  },
+  {
+    "category_id": 514,
+    "category_name": "Throwing Disk",
+    "parent_id": 0
+  },
+  {
+    "category_id": 522,
+    "category_name": "Hose, Ribbed 7mm D.",
+    "parent_id": 0
+  },
+  {
+    "category_id": 524,
+    "category_name": "DUPLO, Toolo",
+    "parent_id": 0
+  },
+  {
+    "category_id": 527,
+    "category_name": "Hose, Soft Axle",
+    "parent_id": 0
+  },
+  {
+    "category_id": 528,
+    "category_name": "Hose, Rigid 3mm D.",
+    "parent_id": 0
+  },
+  {
+    "category_id": 529,
+    "category_name": "Hose, Soft 3mm D.",
+    "parent_id": 0
+  },
+  {
+    "category_id": 530,
+    "category_name": "Hose, Pneumatic 4mm D.",
+    "parent_id": 0
+  },
+  {
+    "category_id": 532,
+    "category_name": "Wheel & Tire Assembly",
+    "parent_id": 0
+  },
+  {
+    "category_id": 534,
+    "category_name": "Brick, Promotional",
+    "parent_id": 0
+  },
+  {
+    "category_id": 535,
+    "category_name": "Brick, Modified, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 537,
+    "category_name": "Quatro",
+    "parent_id": 0
+  },
+  {
+    "category_id": 538,
+    "category_name": "DUPLO, Tile, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 540,
+    "category_name": "Door, Frame",
+    "parent_id": 0
+  },
+  {
+    "category_id": 542,
+    "category_name": "Technic, Shock Absorber",
+    "parent_id": 0
+  },
+  {
+    "category_id": 569,
+    "category_name": "Large Figure Part",
+    "parent_id": 0
+  },
+  {
+    "category_id": 575,
+    "category_name": "Clikits, Icon",
+    "parent_id": 0
+  },
+  {
+    "category_id": 578,
+    "category_name": "Wedge, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 579,
+    "category_name": "Windscreen, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 582,
+    "category_name": "Stickered Assembly",
+    "parent_id": 0
+  },
+  {
+    "category_id": 583,
+    "category_name": "Wedge, Plate",
+    "parent_id": 0
+  },
+  {
+    "category_id": 585,
+    "category_name": "DUPLO, Figure Wear & Utensil",
+    "parent_id": 0
+  },
+  {
+    "category_id": 600,
+    "category_name": "Town Plan",
+    "parent_id": 0
+  },
+  {
+    "category_id": 606,
+    "category_name": "Minifigure, Head, Modified",
+    "parent_id": 0
+  },
+  {
+    "category_id": 636,
+    "category_name": "Minifigure, Headgear Accessory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 638,
+    "category_name": "Technic, Disk",
+    "parent_id": 0
+  },
+  {
+    "category_id": 639,
+    "category_name": "DUPLO, Boat",
+    "parent_id": 0
+  },
+  {
+    "category_id": 640,
+    "category_name": "DUPLO, Aircraft",
+    "parent_id": 0
+  },
+  {
+    "category_id": 641,
+    "category_name": "DUPLO, Furniture",
+    "parent_id": 0
+  },
+  {
+    "category_id": 642,
+    "category_name": "Door, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 643,
+    "category_name": "Container, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 646,
+    "category_name": "Electronics",
+    "parent_id": 0
+  },
+  {
+    "category_id": 707,
+    "category_name": "DUPLO, Doll",
+    "parent_id": 0
+  },
+  {
+    "category_id": 727,
+    "category_name": "Modulex",
+    "parent_id": 0
+  },
+  {
+    "category_id": 728,
+    "category_name": "Modulex, Tile, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 729,
+    "category_name": "Modulex, Brick",
+    "parent_id": 0
+  },
+  {
+    "category_id": 730,
+    "category_name": "Modulex, Window",
+    "parent_id": 0
+  },
+  {
+    "category_id": 735,
+    "category_name": "Electric, Wire & Connector",
+    "parent_id": 0
+  },
+  {
+    "category_id": 736,
+    "category_name": "Brick, Round, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 738,
+    "category_name": "Flag, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 740,
+    "category_name": "Technic, Panel, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 741,
+    "category_name": "Tail, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 749,
+    "category_name": "Hero Factory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 771,
+    "category_name": "Friends",
+    "parent_id": 0
+  },
+  {
+    "category_id": 775,
+    "category_name": "Slope, Curved, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 776,
+    "category_name": "Slope, Inverted, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 777,
+    "category_name": "Technic, Liftarm, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 778,
+    "category_name": "Tile, Modified, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 779,
+    "category_name": "Dish, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 780,
+    "category_name": "Vehicle, Mudguard, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 812,
+    "category_name": "Tile, Round, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 845,
+    "category_name": "DUPLO, Cloth",
+    "parent_id": 0
+  },
+  {
+    "category_id": 846,
+    "category_name": "DUPLO, Baseplate",
+    "parent_id": 0
+  },
+  {
+    "category_id": 847,
+    "category_name": "Minifigure, Hair",
+    "parent_id": 0
+  },
+  {
+    "category_id": 885,
+    "category_name": "Plate, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 890,
+    "category_name": "Plate, Modified, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 911,
+    "category_name": "Mini Doll, Body Part",
+    "parent_id": 0
+  },
+  {
+    "category_id": 912,
+    "category_name": "Mini Doll, Body Wear",
+    "parent_id": 0
+  },
+  {
+    "category_id": 913,
+    "category_name": "Mini Doll, Hair",
+    "parent_id": 0
+  },
+  {
+    "category_id": 914,
+    "category_name": "Mini Doll, Head",
+    "parent_id": 0
+  },
+  {
+    "category_id": 915,
+    "category_name": "Mini Doll, Headgear",
+    "parent_id": 0
+  },
+  {
+    "category_id": 916,
+    "category_name": "Mini Doll, Legs",
+    "parent_id": 0
+  },
+  {
+    "category_id": 917,
+    "category_name": "Mini Doll, Torso",
+    "parent_id": 0
+  },
+  {
+    "category_id": 926,
+    "category_name": "Cylinder, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 943,
+    "category_name": "Minifigure, Utensil, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 961,
+    "category_name": "Special Assembly",
+    "parent_id": 0
+  },
+  {
+    "category_id": 966,
+    "category_name": "Arch, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 974,
+    "category_name": "Cone, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 978,
+    "category_name": "Ball",
+    "parent_id": 0
+  },
+  {
+    "category_id": 989,
+    "category_name": "Ring",
+    "parent_id": 0
+  },
+  {
+    "category_id": 990,
+    "category_name": "Human Tool",
+    "parent_id": 0
+  },
+  {
+    "category_id": 991,
+    "category_name": "Chain",
+    "parent_id": 0
+  },
+  {
+    "category_id": 992,
+    "category_name": "Projectile Launcher",
+    "parent_id": 0
+  },
+  {
+    "category_id": 993,
+    "category_name": "Spring",
+    "parent_id": 0
+  },
+  {
+    "category_id": 994,
+    "category_name": "Energy Effect",
+    "parent_id": 0
+  },
+  {
+    "category_id": 999,
+    "category_name": "Slide",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1012,
+    "category_name": "Aircraft, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1027,
+    "category_name": "Wheel, Accessory",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1037,
+    "category_name": "DUPLO, Plant",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1038,
+    "category_name": "DUPLO, Food",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1039,
+    "category_name": "Tile, Promotional",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1048,
+    "category_name": "Road Sign, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1059,
+    "category_name": "Clikits, Icon Accent",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1060,
+    "category_name": "Cardboard Sleeve",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1078,
+    "category_name": "Felt",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1082,
+    "category_name": "Micro Doll, Body Part",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1090,
+    "category_name": "Plate, Round, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1093,
+    "category_name": "Wedge, Plate, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1097,
+    "category_name": "Minifigure, Torso Assembly, Decor.",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1098,
+    "category_name": "Minifigure, Legs, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1116,
+    "category_name": "Minifigure, Legs, Modified",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1118,
+    "category_name": "Minifigure, Legs, Modified, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1121,
+    "category_name": "DUPLO, Building",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1128,
+    "category_name": "Animal, Body Part, Decorated",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1215,
+    "category_name": "Human Jewelry",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1252,
+    "category_name": "Mini Doll, Utensil",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1253,
+    "category_name": "Brick, Braille",
+    "parent_id": 0
+  },
+  {
+    "category_id": 1283,
+    "category_name": "Mini Doll, Head, Modified",
+    "parent_id": 0
+  }
+]
