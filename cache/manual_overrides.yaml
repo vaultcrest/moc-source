@@ -41,3 +41,291 @@
 #
 # Safe to re-run the whole file any time -- already-applied entries are
 # no-ops.
+
+# --- Reviewed 2026-07-14 (unresolved_rebrickable_parts - updated.csv), 77 entries: 3 corrections + 74 N/A ---
+'4529978':
+  bl_part_no: 47394pb039
+  note: Manually identified BrickLink equivalent, reviewed 2026-07-14 (Duplo Figure Bob / Pageboy Hair
+    Reddish Brown, Shirt with Buttons - Dark Purple Legs)
+'6044780':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso I 'L Brick' CHICAGO Print, Green
+    Arms, Yellow Hands)
+'6412693':
+  bl_part_no: 25727c00pb09
+  note: Manually identified BrickLink equivalent, reviewed 2026-07-14 (Minidoll Hips and Cargo Pants with
+    Nougat Legs and Blue Shoes, White Laces Print [Thin Hinge])
+'6414282':
+  bl_part_no: 92251c00pb20
+  note: Manually identified BrickLink equivalent, reviewed 2026-07-14 (Minidoll Hips and Cropped Trousers
+    with Nougat Legs, Medium Nougat Boots print [Thin Hinge])
+'6560998':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 8 with Black 'LEGO MASTERS
+    ALUMNI' Outline Print)
+'4143729':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Duplo Door / Window with Porthole
+    with Giraffe, Elephant, Savanna print)
+'4612251':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Duplo Brick 2 x 2 x 2 Letter Æ Print)
+'4612252':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Duplo Brick 2 x 2 x 2 with Letter
+    'Ö' and 'Ø' Print)
+'4612253':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Duplo Brick 2 x 2 x 2 with 'Å' Print)
+'4641199':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'BERLIN' Print)
+'6037685':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'TOKYO' Print)
+'6037711':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso I 'L Brick' TOKYO Print, Green
+    Arms, Yellow Hands)
+'6044903':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'COPENHAGEN' Print)
+'6044907':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso Danish Flag and 'COPENHAGEN'
+    Print, Green Arms, Yellow Hands)
+'6044951':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso I 'L Brick' NY Print, Green
+    Arms, Yellow Hands)
+'6006550':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 2 with Print)
+'6006554':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 1 with Phineas and Ferb Game
+    Print)
+'6006555':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 1 with Phineas and Ferb Game
+    Print)
+'6006556':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 1 with Phineas and Ferb Game
+    Print)
+'6006557':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 1 with Phineas and Ferb Game
+    Print)
+'6044834':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'Anaheim' Print)
+'6044841':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'MALAYSIA' Print)
+'6044854':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso I 'L Brick' ANAHEIM Print, Green
+    Arms, Yellow Hands)
+'6044870':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso Malaysian Flag and 'MALAYSIA'
+    Print, Green Arms, Yellow Hands)
+'6044901':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso I 'L Brick' ORLANDO Print, Green
+    Arms, Yellow Hands)
+'6037673':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'PARIS' Print)
+'6037678':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso I 'L Brick' PARIS Print, Green
+    Arms, Yellow Hands)
+'6042510':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Microfig Story Mixer)
+'6043539':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 2 with Two Eyes with White
+    Pupils Print)
+'6057032':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with Lego Friends Logo
+    Print)
+'6178887':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with Captain America SDCC
+    Stylized 'A' print)
+'6178889':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with Captain America White
+    Star Print (SDCC Brickheadz))
+'6178892':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with 3 Vertical Red Stripes
+    Print (Captain America SDCC Brickheadz))
+'6178900':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 4 with Iron Man Arc Reactor
+    Print)
+'6178976':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Slope Brick Curved 2 x 4 x 2/3 No
+    Studs, with Bottom Tubes and Iron Man Mask print)
+'6179009':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 2 with Iron Man Armor Print)
+'6179773':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with Black Panther Torso
+    Print)
+'6179775':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 2 with Black Panther Arm
+    Print)
+'6179798':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with Black Panther Mask
+    Print)
+'6179804':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with Eye of Agamotto print)
+'6179809':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 4 with Doctor Strange Beard
+    Print)
+'6197815':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 2 with Classic Space Logo
+    print)
+'6212136':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with White Insect Print
+    (Venom))
+'6212160':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 2 with White Shape Print
+    (Venom))
+'6212192':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with Black Spider Print
+    (Spiderman))
+'6212193':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 2 with Black Lines Print
+    (Spiderman))
+'6212198':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 4 with Red Spider Print
+    (Spiderman))
+'6212207':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 2 with Black Lines Print
+    (Spiderman))
+'6212210':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 4 with White Triangles Print
+    (Venom))
+'6212211':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with Black Web Print (Spiderman))
+'6212213':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 2 with Black Stripes Print
+    (Spiderman))
+'6236430':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 1 with Orange Star on Side
+    print)
+'6236441':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick 1 x 2 with Orange Small and
+    Large Star)
+'6326501':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 8 with "LEGO Store BEIJING
+    1 YEAR Anniversary" Print)
+'6371340':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with Gold 'HAPPY CHILDREN'S
+    DAY 2021' print)
+'6371345':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'JAPAN 2021' print)
+'6384371':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Panel 1 x 4 x 2 with Side Supports
+    - Hollow Studs with 'LEGO WARSZAWA 2021' print)
+'6384374':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Panel 1 x 4 x 2 with Side Supports
+    - Hollow Studs with "LEGO 5TH AVENUE 2021" print)
+'6409562':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Panel 1 x 4 x 2 with Side Supports
+    - Hollow Studs with "LEGO MALL OF BERLIN 2021" print)
+'6445940':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Brick Curved 4 x 6 Double, 2 x 4 Cutout
+    with Silver Stripes print)
+'6489014':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Minifig Neckwear Ribbon with Medal
+    Gold, White circle with 'LIT')
+'6490065':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 8 with 'THE VAULT' Print)
+'6490448':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Torso with LEGO House Logo, Black
+    Arms, Yellow Hands)
+'6527084':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Panel 1 x 2 x 1 [Rounded Corners]
+    with 'MEMORY LANE' on Light Bluish Gray square)
+'6529020':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Slope Curved 4 x 1 Double with No
+    Studs with print)
+'6529021':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 2 with print)
+'6529022':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 6 with print)
+'6529023':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 6 with print)
+'6529024':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 6 with print)
+'6529025':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 6 with print)
+'6529026':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 6 with print)
+'6539772':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 6 with print)
+'6562291':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 1 x 8 with 'LEGO NYI Factory
+    2025' Print)
+'6564195':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'LEGO BOTANICALS™'
+    Print)
+'6571750':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'I Heart LEGO STORE
+    Scottsdale Quarter, AZ' print)
+'6577540':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'I Heart LEGO STORE
+    Scottsdale Quarter, AZ' print)
+'6582904':
+  bl_part_no: N/A
+  note: Reviewed 2026-07-14, no BrickLink catalog equivalent found (Tile 2 x 4 with 'Heart LEGO STORE
+    Belgrade' print)

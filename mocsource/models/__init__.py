@@ -1,5 +1,7 @@
 from .base import Base
 from .bl_part_catalog import BLPartCatalog
+from .bl_price_guide_monthly import BLPriceGuideMonthly
+from .bl_price_guide_scan_log import BLPriceGuideScanLog
 from .bricklink_alternate import BricklinkAlternate
 from .bricklink_mapping import BricklinkMapping
 from .color import Color
@@ -13,6 +15,8 @@ from .studio_resolution import StudioResolution
 __all__ = [
     "Base",
     "BLPartCatalog",
+    "BLPriceGuideMonthly",
+    "BLPriceGuideScanLog",
     "Color",
     "LegoElement",
     "LegoElementPrice",

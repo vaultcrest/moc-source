@@ -35,7 +35,15 @@ class BLClient:
         self.token_secret = token_secret
 
     def _oauth1_header(self, method: str, url: str) -> str:
-        params = {
+        # OAuth1 requires every query-string param (not just oauth_* ones) in
+        # the signature base string, sorted together -- fetch_item/fetch_colors
+        # never hit this since their URLs carry no query string, but
+        # fetch_price_guide's does (color_id/guide_type/new_or_used/region).
+        parsed = urllib.parse.urlsplit(url)
+        base_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+        query_params = dict(urllib.parse.parse_qsl(parsed.query))
+
+        oauth_params = {
             "oauth_consumer_key":     self.consumer_key,
             "oauth_nonce":            uuid.uuid4().hex,
             "oauth_signature_method": "HMAC-SHA1",
@@ -44,12 +52,13 @@ class BLClient:
             "oauth_version":          "1.0",
         }
         enc = urllib.parse.quote
-        param_string = "&".join(f"{enc(k, safe='')}={enc(v, safe='')}" for k, v in sorted(params.items()))
-        base_string = "&".join([method.upper(), enc(url, safe=""), enc(param_string, safe="")])
+        all_params = {**query_params, **oauth_params}
+        param_string = "&".join(f"{enc(k, safe='')}={enc(v, safe='')}" for k, v in sorted(all_params.items()))
+        base_string = "&".join([method.upper(), enc(base_url, safe=""), enc(param_string, safe="")])
         signing_key = enc(self.consumer_secret, safe="") + "&" + enc(self.token_secret, safe="")
         sig = hmac.new(signing_key.encode(), base_string.encode(), hashlib.sha1).digest()
-        params["oauth_signature"] = base64.b64encode(sig).decode()
-        return "OAuth " + ", ".join(f'{enc(k, safe="")}="{enc(v, safe="")}"' for k, v in sorted(params.items()))
+        oauth_params["oauth_signature"] = base64.b64encode(sig).decode()
+        return "OAuth " + ", ".join(f'{enc(k, safe="")}="{enc(v, safe="")}"' for k, v in sorted(oauth_params.items()))
 
     def _get(self, url: str, label: str, identifier: str):
         """Shared retry loop. Returns (attempted, resp_or_none).
@@ -109,6 +118,27 @@ class BLClient:
             "alternate_no": alternates,
             "year_released": data.get("year_released"),
         }
+
+    def fetch_price_guide(self, part_no: str, color_id: int, new_or_used: str) -> tuple[bool, dict | None]:
+        """Fetch BrickLink's Price Guide (sold, North America only) for one
+        (part_no, color_id, new_or_used) combo. Returns BL's raw {min_price,
+        max_price, avg_price, qty_avg_price, unit_quantity, total_quantity,
+        price_detail: [...]}; price_detail rows carry quantity, unit_price,
+        seller_country_code, buyer_country_code, date_ordered and span up to
+        ~6 months of real sold listings in one call. new_or_used is 'N' or 'U'.
+        A 404 means BL has no sold data for this combo at all (not an error)."""
+        url = (f"{BL_API_BASE}/items/PART/{urllib.parse.quote(part_no, safe='')}/price"
+               f"?color_id={color_id}&guide_type=sold&new_or_used={new_or_used}&region=north_america")
+        attempted, resp = self._get(url, "price guide", f"{part_no}/{color_id}/{new_or_used}")
+        if not attempted:
+            return False, None
+        if resp.status_code == 404:
+            return True, None
+        if resp.status_code != 200:
+            print(f"  BL price guide unexpected status for {part_no}/{color_id}/{new_or_used}: "
+                  f"HTTP {resp.status_code}", file=sys.stderr)
+            return True, None
+        return True, resp.json().get("data") or None
 
     def fetch_colors(self) -> tuple[bool, list[dict] | None]:
         """Fetch BrickLink's full colors catalog: list of {color_id, color_name,
