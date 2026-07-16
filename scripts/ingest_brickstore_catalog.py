@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Ingests BrickLink's bulk Parts/Minifigure catalog from the BrickStore
 public release (see scripts/_brickstore_release.py) into
-brickstore_part_catalog, brickstore_minifig_catalog, bl_part_catalog, and
-bricklink_alternates (alternate_no rows tagged source='brickstore_alternate_ids').
+brickstore_part_catalog, brickstore_minifig_catalog, bl_part_catalog,
+brickstore_part_colors (per-part color availability, from
+part_color_codes.xml), and bricklink_alternates (alternate_no rows tagged
+source='brickstore_alternate_ids').
 
 Replaces scripts/scrape_bl_mold_data.py's live-API role for
 name/item_type/category_id/alternate_no on bl_part_catalog -- all present in
@@ -32,7 +34,7 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
-from _brickstore_release import ensure_latest, iter_minifig_rows, iter_part_rows
+from _brickstore_release import ensure_latest, iter_minifig_rows, iter_part_color_rows, iter_part_rows
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -114,6 +116,26 @@ def ingest_parts(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
     return {"parts": len(part_rows), "alternates": len(alternate_pairs)}
 
 
+def ingest_part_colors(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
+    """Full truncate+reload each run -- single writer, no source tagging needed
+    (unlike bricklink_alternates, which has multiple independent writers)."""
+    color_rows = [(part_no, color_id, now) for part_no, color_id in iter_part_color_rows(extract_dir)]
+
+    if dry_run:
+        print(f"    [dry-run] would replace brickstore_part_colors with {len(color_rows)} rows")
+        return {"part_colors": len(color_rows)}
+
+    cur.execute("TRUNCATE TABLE brickstore_part_colors")
+    if color_rows:
+        psycopg2.extras.execute_values(
+            cur,
+            "INSERT INTO brickstore_part_colors (part_no, color_id, imported_at) VALUES %s",
+            color_rows,
+            page_size=1000,
+        )
+    return {"part_colors": len(color_rows)}
+
+
 def ingest_minifigs(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
     minifig_rows = []
     for row in iter_minifig_rows(extract_dir):
@@ -153,6 +175,7 @@ def main():
     now = datetime.now(timezone.utc)
 
     part_stats = ingest_parts(cur, extract_dir, now, args.dry_run)
+    color_stats = ingest_part_colors(cur, extract_dir, now, args.dry_run)
     minifig_stats = ingest_minifigs(cur, extract_dir, now, args.dry_run)
 
     if not args.dry_run:
@@ -163,9 +186,10 @@ def main():
     duration_s = time.monotonic() - start_time
     mins, secs = divmod(int(duration_s), 60)
     print(f"\nDone in {mins}m {secs}s.")
-    print(f"  Parts     : {part_stats['parts']}")
-    print(f"  Alternates: {part_stats['alternates']}")
-    print(f"  Minifigs  : {minifig_stats['minifigs']}")
+    print(f"  Parts       : {part_stats['parts']}")
+    print(f"  Alternates  : {part_stats['alternates']}")
+    print(f"  Part colors : {color_stats['part_colors']}")
+    print(f"  Minifigs    : {minifig_stats['minifigs']}")
 
 
 if __name__ == "__main__":

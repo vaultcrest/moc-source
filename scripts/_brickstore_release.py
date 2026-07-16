@@ -163,6 +163,36 @@ def iter_assembly_inventory_files(extract_dir: Path):
         yield path.stem, _parse_inventory_xml(path)
 
 
+def _color_name_to_id(extract_dir: Path) -> dict[str, int]:
+    path = extract_dir / "colors.xml"
+    mapping = {}
+    for item in ET.parse(path).getroot().findall("ITEM"):
+        name = item.findtext("COLORNAME")
+        color_id = item.findtext("COLOR")
+        if name and color_id is not None:
+            mapping[name] = int(color_id)
+    return mapping
+
+
+def iter_part_color_rows(extract_dir: Path):
+    """Yields (part_no, color_id) pairs from part_color_codes.xml, joined
+    against colors.xml's COLORNAME -> COLOR (numeric id). Skips any color
+    name with no match in colors.xml (none observed as of 2026-07-16)."""
+    name_to_id = _color_name_to_id(extract_dir)
+    path = extract_dir / "part_color_codes.xml"
+    seen = set()
+    for _, elem in ET.iterparse(path, events=("end",)):
+        if elem.tag != "ITEM":
+            continue
+        if elem.findtext("ITEMTYPE") == "P":
+            part_no = elem.findtext("ITEMID")
+            color_id = name_to_id.get(elem.findtext("COLOR"))
+            if part_no and color_id is not None and (part_no, color_id) not in seen:
+                seen.add((part_no, color_id))
+                yield part_no, color_id
+        elem.clear()
+
+
 def open_mold_relationship_html(extract_dir: Path, filename: str) -> str:
     """filename e.g. 'similar_parts_with_similar_molds_1.html'."""
     path = extract_dir / "relationships" / filename

@@ -31,12 +31,14 @@ produces no monthly rows at all -- still gets marked done instead of being
 retried every run). One scan covers all 4 regions at once (single worldwide
 fetch), so scan_log tracks by (part_no, color_id) only -- no region column.
 
-Deployed at --batch-size 2250 (4,500 calls/night) for the nightly timer --
+Deployed at --batch-size 2500 (5,000 calls/night) for the nightly timer --
 originally sharing BrickLink's ~5,000 calls/day budget with
 scrape_bl_mold_data.py (throttled to 500/night, 2026-07-15), but that script
 was retired 2026-07-16 (replaced by scripts/ingest_brickstore_catalog.py,
-which needs zero BrickLink API calls), freeing that budget back up should
-this batch size ever need to grow.
+which needs zero BrickLink API calls). Bumped from 2,250 to 2,500 pairs on
+2026-07-16 to use the freed 250-pair/500-call headroom, landing at the full
+~5,000/day budget -- an unwritten BrickLink limit, not a documented hard
+cap, so this is treated as the ceiling rather than pushed further.
 
 Emails a per-run summary (or, once the first pass has nothing left, a
 distinct completion notice) via SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/
@@ -50,6 +52,7 @@ Usage:
 import argparse
 import os
 import smtplib
+import statistics
 import sys
 import time
 from datetime import date, datetime, timezone
@@ -57,7 +60,7 @@ from email.mime.text import MIMEText
 
 import psycopg2
 from _bricklink_lookup import BLClient
-from _outlier_filter import bucket_by_month, compute_stats, filter_bucket, month_floor_minus
+from _outlier_filter import _to_cents, bucket_by_month, compute_stats, filter_bucket, month_floor_minus
 from _price_guide_regions import rows_by_region
 from dotenv import load_dotenv
 
@@ -155,10 +158,11 @@ UPSERT_SCAN_LOG_SQL = """
 """
 
 UPSERT_VELOCITY_SQL = """
-    INSERT INTO bl_price_guide_velocity (part_no, color_id, region, new_or_used, avg_monthly_qty, updated_at)
-    VALUES (%(part_no)s, %(color_id)s, %(region)s, %(new_or_used)s, %(avg_monthly_qty)s, %(updated_at)s)
+    INSERT INTO bl_price_guide_velocity (part_no, color_id, region, new_or_used, avg_monthly_qty, price_cv, updated_at)
+    VALUES (%(part_no)s, %(color_id)s, %(region)s, %(new_or_used)s, %(avg_monthly_qty)s, %(price_cv)s, %(updated_at)s)
     ON CONFLICT (part_no, color_id, region, new_or_used) DO UPDATE SET
         avg_monthly_qty = EXCLUDED.avg_monthly_qty,
+        price_cv = EXCLUDED.price_cv,
         updated_at = EXCLUDED.updated_at
 """
 
@@ -183,7 +187,8 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, cutoff_month: 
 
     month_rows = 0
     errors = []
-    volume_by_key: dict[tuple[str, str], list[int]] = {}  # (region, new_or_used) -> [raw_sample_count per month]
+    volume_by_key: dict[tuple[str, str], list[int]] = {}  # (region, new_or_used) -> [qty_sold per month]
+    prices_by_key: dict[tuple[str, str], list[int]] = {}  # (region, new_or_used) -> pooled filtered unit_price cents, all kept months
     for new_or_used, data in responses.items():
         price_detail = (data or {}).get("price_detail") or []
         if not price_detail:
@@ -225,14 +230,26 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, cutoff_month: 
                 # 2026-07-15) that the price outlier filter already exists to reject.
                 qty_sold = sum(int(row.get("quantity", 1)) for row in filtered)
                 volume_by_key.setdefault((region, new_or_used), []).append(qty_sold)
+                prices_by_key.setdefault((region, new_or_used), []).extend(
+                    _to_cents(row["unit_price"]) for row in filtered
+                )
 
     if not dry_run:
         cur.execute(UPSERT_SCAN_LOG_SQL, (part_no, color_id, now))
         for (region, new_or_used), monthly_counts in volume_by_key.items():
             avg_monthly_qty = sum(monthly_counts) / len(monthly_counts)
+            prices = prices_by_key.get((region, new_or_used), [])
+            mean_price = statistics.fmean(prices) if prices else None
+            # Population stdev of the pooled per-sale prices this call returned
+            # (up to ~6 months at once), not stddev-of-monthly-averages -- that
+            # would only show drift between month-to-month averages and miss
+            # real intra-month price spread. Refreshed each run like
+            # avg_monthly_qty, not tracked as its own trend over time.
+            price_cv = (statistics.pstdev(prices) / mean_price) if mean_price else None
             cur.execute(UPSERT_VELOCITY_SQL, {
                 "part_no": part_no, "color_id": color_id, "region": region,
-                "new_or_used": new_or_used, "avg_monthly_qty": avg_monthly_qty, "updated_at": now,
+                "new_or_used": new_or_used, "avg_monthly_qty": avg_monthly_qty,
+                "price_cv": price_cv, "updated_at": now,
             })
 
     return {"status": "processed", "month_rows": month_rows, "errors": errors}
