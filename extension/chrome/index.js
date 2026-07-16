@@ -681,15 +681,21 @@ async function renderProjectDetail(id, content) {
     const list = wlMap[lid];
     if (!list) continue;
     for (const p of (list.parts ?? [])) {
-      const key = `${p.partNo}_${p.colorId}`;
+      const key  = `${p.partNo}_${p.colorId}`;
+      // Pool tracks what's still needed, not raw Want -- pieces already on hand
+      // (Have) count as already satisfied, same as Copy to BL/PAB and every
+      // other quantity consumer in this codebase (Math.max(0, want - have)).
+      const need = Math.max(0, (p.want ?? p.qty ?? 1) - (p.have ?? 0));
       if (poolMap.has(key)) {
-        poolMap.get(key).wantedQty += (p.want ?? p.qty ?? 1);
+        poolMap.get(key).wantedQty += need;
       } else {
-        poolMap.set(key, { ...p, wantedQty: (p.want ?? p.qty ?? 1), pabEntry: null });
+        poolMap.set(key, { ...p, wantedQty: need, pabEntry: null });
       }
     }
   }
-  const poolParts = [...poolMap.values()];
+  // Fully-satisfied parts (need === 0 across all pool lists) don't belong in
+  // the pool at all -- nothing left to source for them.
+  const poolParts = [...poolMap.values()].filter(p => p.wantedQty > 0);
   const totalPoolPieces = poolParts.reduce((s, p) => s + p.wantedQty, 0);
 
   const _projLgCarts = getProjectLegoCarts(project).map(c => ({ ...c, cart: lgMap[c.cartId] })).filter(c => c.cart);
@@ -3267,8 +3273,9 @@ async function renderProjectSetup(id, content) {
         for (const lid of newWlIds) {
           const wl = wantedLists.find(w => w.id === lid);
           for (const p of wl?.parts ?? []) {
-            const key = `${p.partNo}_${p.colorId}`;
-            wantedQtyMap[key] = (wantedQtyMap[key] ?? 0) + (p.want ?? p.qty ?? 1);
+            const key  = `${p.partNo}_${p.colorId}`;
+            const need = Math.max(0, (p.want ?? p.qty ?? 1) - (p.have ?? 0));
+            wantedQtyMap[key] = (wantedQtyMap[key] ?? 0) + need;
           }
         }
 

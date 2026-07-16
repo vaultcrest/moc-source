@@ -2,6 +2,11 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.16] — 2026-07-16
+
+### Extension
+- Fixed: Project pool aggregation (`index.js`, the Cart Jigsaw feature) counted a wanted list's full "Want" quantity toward the pool, ignoring "Have" entirely — a part with Want 4 / Have 2 showed as needing 4, not 2, so parts a user already partially owned inflated the pool total and Auto Allocate would try to source more than was actually needed. Every other quantity consumer in this codebase already used `Math.max(0, want - have)` (Copy to BL cart, Copy to PAB, sort-by-need, etc.) — the pool was the one place that didn't. Now uses the same formula in both pool aggregation and the "newly-added BL cart" allocation-capping path (`renderProjectSetup`'s save handler). Parts that are 100% already owned (need = 0) no longer show up in the pool at all — nothing left to source for them.
+
 ## [0.4.15] — 2026-07-16
 
 ### Extension
