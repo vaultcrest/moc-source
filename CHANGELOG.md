@@ -2,6 +2,11 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.15] — 2026-07-16
+
+### Extension
+- Fixed: newly-added Pick-A-Brick cart rows in Project Config defaulted to "Overflow" role, not "Main" — the "Add Cart" button hardcoded `role: "overflow"` for every blank row it appended (`buildLgRow()`'s own default param of `"overflow"` was actually dead code, since both call sites already passed a role explicitly). Now defaults new rows to "Main," except when a Main row already exists in the editor (then falls back to "Overflow"), since only one cart can hold the Main role — the existing demote-on-change logic elsewhere only fires from a real user interaction, not from a pre-set default value, so an unconditional "Main" default would have let two rows show "Main" at once until the user touched one.
+
 ## [0.4.14] — 2026-07-16
 
 ### Extension

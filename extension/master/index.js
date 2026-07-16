@@ -3209,10 +3209,13 @@ async function renderProjectSetup(id, content) {
     btn.addEventListener("click", () => btn.closest(".lego-cart-row").remove());
   });
 
-  // Add Cart button appends a blank row with role "overflow"
+  // Add Cart button appends a blank row, defaulting to "Main" -- unless a
+  // Main row already exists, since only one cart can hold that role (see the
+  // demote-on-change handler below).
   content.querySelector("#add-lego-cart-btn")?.addEventListener("click", () => {
     if (!lgRowsContainer) return;
-    lgRowsContainer.insertAdjacentHTML("beforeend", buildLgRow("", "overflow"));
+    const hasMain = [...lgRowsContainer.querySelectorAll(".lego-cart-role-sel")].some(sel => sel.value === "main");
+    lgRowsContainer.insertAdjacentHTML("beforeend", buildLgRow("", hasMain ? "overflow" : "main"));
     const newRow = lgRowsContainer.lastElementChild;
     newRow.querySelector(".lego-cart-remove-btn").addEventListener("click", () => newRow.remove());
   });
