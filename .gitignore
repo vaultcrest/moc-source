@@ -21,3 +21,6 @@ Thumbs.db
 
 # Guide source screenshots (duplicated in static/ for the live guide page)
 extension/readme_guide/*.png
+
+# Generated report output, not config data
+cache/bl_catalog_gaps.csv

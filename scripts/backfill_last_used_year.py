@@ -27,12 +27,13 @@ bl_part_no: year_released = MIN(year_from) and last_used_year = MAX(year_to)
 across all its rb_part_nums -- the physical part's true first/last year is
 the outer bound across every variant.
 
-Full pass every run (no batching/resumability marker) -- unlike the
-BrickLink-paced mold-backfill, a complete run here is ~8 minutes, so nightly
-just re-syncs everything fresh. Writes only
+Full pass every run (no batching/resumability marker) -- a complete run here
+is ~8 minutes, so nightly just re-syncs everything fresh. Writes only
 bl_part_catalog(part_no, year_released, last_used_year, looked_up_at) --
-name/item_type/alternate_no remain scrape_bl_mold_data.py's responsibility,
-so the two jobs own disjoint columns and can run independently.
+name/item_type/category_id are now bulk-populated by
+scripts/ingest_brickstore_catalog.py (2026-07-16, replaced the old
+BrickLink-paced scrape_bl_mold_data.py entirely), so the two jobs own
+disjoint columns and can run independently.
 
 Usage:
     DATABASE_URL=... REBRICKABLE_API_KEY=... python scripts/backfill_last_used_year.py [--dry-run]

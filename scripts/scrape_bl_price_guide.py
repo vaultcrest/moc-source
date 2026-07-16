@@ -31,9 +31,12 @@ produces no monthly rows at all -- still gets marked done instead of being
 retried every run). One scan covers all 4 regions at once (single worldwide
 fetch), so scan_log tracks by (part_no, color_id) only -- no region column.
 
-Shares BrickLink's ~5,000 calls/day budget with scrape_bl_mold_data.py (see
-moc-source-infra's throttled batch size there, 2026-07-15) -- deployed at
---batch-size 2250 (4,500 calls/night) for the nightly timer.
+Deployed at --batch-size 2250 (4,500 calls/night) for the nightly timer --
+originally sharing BrickLink's ~5,000 calls/day budget with
+scrape_bl_mold_data.py (throttled to 500/night, 2026-07-15), but that script
+was retired 2026-07-16 (replaced by scripts/ingest_brickstore_catalog.py,
+which needs zero BrickLink API calls), freeing that budget back up should
+this batch size ever need to grow.
 
 Emails a per-run summary (or, once the first pass has nothing left, a
 distinct completion notice) via SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASSWORD/
@@ -151,6 +154,14 @@ UPSERT_SCAN_LOG_SQL = """
     ON CONFLICT (part_no, color_id) DO UPDATE SET scanned_at = EXCLUDED.scanned_at
 """
 
+UPSERT_VELOCITY_SQL = """
+    INSERT INTO bl_price_guide_velocity (part_no, color_id, region, new_or_used, avg_monthly_qty, updated_at)
+    VALUES (%(part_no)s, %(color_id)s, %(region)s, %(new_or_used)s, %(avg_monthly_qty)s, %(updated_at)s)
+    ON CONFLICT (part_no, color_id, region, new_or_used) DO UPDATE SET
+        avg_monthly_qty = EXCLUDED.avg_monthly_qty,
+        updated_at = EXCLUDED.updated_at
+"""
+
 
 def _pab_price_cents(cur, part_no: str, color_id: int) -> int | None:
     cur.execute(PAB_PRICE_SQL, (part_no, color_id))
@@ -172,6 +183,7 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, cutoff_month: 
 
     month_rows = 0
     errors = []
+    volume_by_key: dict[tuple[str, str], list[int]] = {}  # (region, new_or_used) -> [raw_sample_count per month]
     for new_or_used, data in responses.items():
         price_detail = (data or {}).get("price_detail") or []
         if not price_detail:
@@ -207,9 +219,21 @@ def process_pair(cur, part_no: str, color_id: int, now: datetime, cutoff_month: 
                         **stats,
                     })
                 month_rows += 1
+                # Sum actual units sold (quantity), not sale-event count, from the
+                # outlier-filtered rows -- a raw sum would double-count the same
+                # kind of bogus bulk "sale" (e.g. 129 units at $0.00, confirmed
+                # 2026-07-15) that the price outlier filter already exists to reject.
+                qty_sold = sum(int(row.get("quantity", 1)) for row in filtered)
+                volume_by_key.setdefault((region, new_or_used), []).append(qty_sold)
 
     if not dry_run:
         cur.execute(UPSERT_SCAN_LOG_SQL, (part_no, color_id, now))
+        for (region, new_or_used), monthly_counts in volume_by_key.items():
+            avg_monthly_qty = sum(monthly_counts) / len(monthly_counts)
+            cur.execute(UPSERT_VELOCITY_SQL, {
+                "part_no": part_no, "color_id": color_id, "region": region,
+                "new_or_used": new_or_used, "avg_monthly_qty": avg_monthly_qty, "updated_at": now,
+            })
 
     return {"status": "processed", "month_rows": month_rows, "errors": errors}
 

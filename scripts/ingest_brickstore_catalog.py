@@ -1,0 +1,172 @@
+#!/usr/bin/env python3
+"""Ingests BrickLink's bulk Parts/Minifigure catalog from the BrickStore
+public release (see scripts/_brickstore_release.py) into
+brickstore_part_catalog, brickstore_minifig_catalog, bl_part_catalog, and
+bricklink_alternates (alternate_no rows tagged source='brickstore_alternate_ids').
+
+Replaces scripts/scrape_bl_mold_data.py's live-API role for
+name/item_type/category_id/alternate_no on bl_part_catalog -- all present in
+this bulk download for the entire catalog at once, instead of trickling in
+via ~42,000 individual paced BL API calls. Known gap: year_released isn't in
+this download (the live scraper captured it only as a secondary mold-
+succession tie-break signal, never the primary last_used_year signal, which
+comes from Rebrickable) -- not populated here; existing values are left
+untouched, not nulled out.
+
+bricklink_alternates.source distinguishes this script's rows
+('brickstore_alternate_ids', derived from each part's own ALTITEMIDS field)
+from scripts/ingest_brickstore_mold_relationships.py's rows
+('brickstore_mold_group', derived from BrickLink's separate "similar molds"
+relationship pages) -- each script scopes its own delete+reinsert by
+`source` so neither clobbers the other.
+
+Usage:
+    DATABASE_URL=... python scripts/ingest_brickstore_catalog.py [--dry-run]
+    DATABASE_URL=... python scripts/ingest_brickstore_catalog.py --data-dir /path/to/extracted
+"""
+import argparse
+import os
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+
+import psycopg2
+import psycopg2.extras
+from _brickstore_release import ensure_latest, iter_minifig_rows, iter_part_rows
+from dotenv import load_dotenv
+
+load_dotenv()
+
+_raw_url = os.environ.get("DATABASE_URL", "postgresql://mocsource:changeme@localhost/mocsource")
+DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("postgresql+psycopg2://", "postgresql://")
+
+UPSERT_PART_CATALOG_SQL = """
+    INSERT INTO brickstore_part_catalog (part_no, category_id, name, alternate_item_ids, imported_at)
+    VALUES %s
+    ON CONFLICT (part_no) DO UPDATE SET
+        category_id = EXCLUDED.category_id,
+        name = EXCLUDED.name,
+        alternate_item_ids = EXCLUDED.alternate_item_ids,
+        imported_at = EXCLUDED.imported_at
+"""
+
+UPSERT_BL_PART_CATALOG_SQL = """
+    INSERT INTO bl_part_catalog (part_no, name, item_type, category_id, looked_up_at)
+    VALUES %s
+    ON CONFLICT (part_no) DO UPDATE SET
+        name = EXCLUDED.name,
+        item_type = EXCLUDED.item_type,
+        category_id = EXCLUDED.category_id,
+        looked_up_at = EXCLUDED.looked_up_at
+"""
+
+UPSERT_MINIFIG_CATALOG_SQL = """
+    INSERT INTO brickstore_minifig_catalog (minifig_no, category_id, name, imported_at)
+    VALUES %s
+    ON CONFLICT (minifig_no) DO UPDATE SET
+        category_id = EXCLUDED.category_id,
+        name = EXCLUDED.name,
+        imported_at = EXCLUDED.imported_at
+"""
+
+
+def ingest_parts(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
+    part_rows = []
+    bl_catalog_rows = []
+    alternate_pairs = []
+
+    for row in iter_part_rows(extract_dir):
+        part_no = row["part_no"]
+        if not part_no:
+            continue
+        category_id = int(row["category_id"]) if row["category_id"] else None
+        part_rows.append((part_no, category_id, row["name"], row["alternate_item_ids"], now))
+        bl_catalog_rows.append((part_no, row["name"], "PART", category_id, now))
+
+        if row["alternate_item_ids"]:
+            alts = {a.strip() for a in row["alternate_item_ids"].split(",") if a.strip() and a.strip() != part_no}
+            for alt in alts:
+                alternate_pairs.append((part_no, alt))
+
+    if dry_run:
+        print(f"    [dry-run] would upsert {len(part_rows)} brickstore_part_catalog rows, "
+              f"{len(bl_catalog_rows)} bl_part_catalog rows, {len(alternate_pairs)} alternate pairs")
+        return {"parts": len(part_rows), "alternates": len(alternate_pairs)}
+
+    psycopg2.extras.execute_values(cur, UPSERT_PART_CATALOG_SQL, part_rows, page_size=1000)
+    psycopg2.extras.execute_values(cur, UPSERT_BL_PART_CATALOG_SQL, bl_catalog_rows, page_size=1000)
+
+    cur.execute("DELETE FROM bricklink_alternates WHERE source = 'brickstore_alternate_ids'")
+    if alternate_pairs:
+        psycopg2.extras.execute_values(
+            cur,
+            """
+            INSERT INTO bricklink_alternates (part_no, alternate_no, source, updated_at)
+            VALUES %s
+            ON CONFLICT (part_no, alternate_no) DO UPDATE SET
+                source = EXCLUDED.source,
+                updated_at = EXCLUDED.updated_at
+            """,
+            [(p, a, "brickstore_alternate_ids", now) for p, a in alternate_pairs],
+            page_size=1000,
+        )
+
+    return {"parts": len(part_rows), "alternates": len(alternate_pairs)}
+
+
+def ingest_minifigs(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
+    minifig_rows = []
+    for row in iter_minifig_rows(extract_dir):
+        category_id = int(row["category_id"]) if row["category_id"] else None
+        minifig_rows.append((row["minifig_no"], category_id, row["name"], now))
+
+    if dry_run:
+        print(f"    [dry-run] would upsert {len(minifig_rows)} brickstore_minifig_catalog rows")
+        return {"minifigs": len(minifig_rows)}
+
+    psycopg2.extras.execute_values(cur, UPSERT_MINIFIG_CATALOG_SQL, minifig_rows, page_size=1000)
+    return {"minifigs": len(minifig_rows)}
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--data-dir", type=Path, default=None,
+                         help="use an already-extracted brickstore-database dir instead of downloading")
+    parser.add_argument("--dry-run", action="store_true",
+                         help="print what would be written without touching the database")
+    args = parser.parse_args()
+
+    start_time = time.monotonic()
+
+    if args.data_dir:
+        extract_dir = args.data_dir
+        print(f"Using existing extracted data at {extract_dir}")
+    else:
+        extract_dir = ensure_latest()
+        if extract_dir is None:
+            print("No new brickstore-database release to ingest (or fetch failed). Nothing to do.")
+            return
+
+    conn = psycopg2.connect(DB_URL)
+    conn.autocommit = False
+    cur = conn.cursor()
+    now = datetime.now(timezone.utc)
+
+    part_stats = ingest_parts(cur, extract_dir, now, args.dry_run)
+    minifig_stats = ingest_minifigs(cur, extract_dir, now, args.dry_run)
+
+    if not args.dry_run:
+        conn.commit()
+    cur.close()
+    conn.close()
+
+    duration_s = time.monotonic() - start_time
+    mins, secs = divmod(int(duration_s), 60)
+    print(f"\nDone in {mins}m {secs}s.")
+    print(f"  Parts     : {part_stats['parts']}")
+    print(f"  Alternates: {part_stats['alternates']}")
+    print(f"  Minifigs  : {minifig_stats['minifigs']}")
+
+
+if __name__ == "__main__":
+    main()
