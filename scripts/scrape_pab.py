@@ -61,6 +61,13 @@ LOCALE_GROUPS: dict[str, list[str]] = {
 # Representative locale per group for OOS-check runs.
 OOS_LOCALES = ["en-us", "de-de", "ko-kr"]
 
+# Cache purge targets. Cloudflare's per-request "files" purge is capped at 30
+# URLs (batched below); past this many changed elements in one run, a targeted
+# purge would cost more round-trips than it saves, so fall back to one
+# purge_everything call instead.
+PAB_API_BASE = "https://api.moc-source.com/api/v1/parts"
+CF_PURGE_EVERYTHING_THRESHOLD = 150
+
 
 def get_group_siblings(locale: str) -> list[str]:
     for group in LOCALE_GROUPS.values():
@@ -573,7 +580,28 @@ def send_enrichment_report(resolved: list[tuple[int, str, int, str]], unresolved
         print(f"Failed to send enrichment report email: {e}", file=sys.stderr)
 
 
-def write_prices(cur, rows: list[dict]) -> int:
+def write_prices(cur, rows: list[dict]) -> tuple[int, set[int]]:
+    """Upserts price rows, returning (rows written, element_ids whose price_cents
+    or in_stock actually differ from what was already in the DB) -- the latter
+    drives targeted Cloudflare cache purging instead of a blanket purge_everything."""
+    keys = [(r["element_id"], r["locale"]) for r in rows]
+    before: dict[tuple[int, str], tuple[int | None, bool | None]] = {}
+    if keys:
+        element_ids = list({k[0] for k in keys})
+        locales = list({k[1] for k in keys})
+        cur.execute(
+            "SELECT element_id, locale, price_cents, in_stock FROM lego_element_prices "
+            "WHERE element_id = ANY(%s) AND locale = ANY(%s)",
+            (element_ids, locales),
+        )
+        before = {(r[0], r[1]): (r[2], r[3]) for r in cur.fetchall()}
+
+    changed_element_ids: set[int] = set()
+    for r in rows:
+        old = before.get((r["element_id"], r["locale"]))
+        if old != (r["price_cents"], r["in_stock"]):
+            changed_element_ids.add(r["element_id"])
+
     values = [
         (
             r["element_id"], r["locale"], r["channel"],
@@ -583,7 +611,7 @@ def write_prices(cur, rows: list[dict]) -> int:
         for r in rows
     ]
     psycopg2.extras.execute_values(cur, UPSERT_PRICES, values, page_size=500)
-    return len(values)
+    return len(values), changed_element_ids
 
 
 def write_elements_en_us(cur, rows: list[dict], now: datetime) -> int:
@@ -601,27 +629,67 @@ def write_elements_en_us(cur, rows: list[dict], now: datetime) -> int:
 
 # ─── Cloudflare cache purge ──────────────────────────────────────────────────
 
-def purge_cf_cache() -> None:
+def pab_purge_urls(cur, element_ids: set[int]) -> list[str]:
+    """Every cached response URL that could show stale data for a changed
+    element: the part_no/color_id lookup, the part_no-wide listing (which
+    embeds every color of that part), and the element_id lookup."""
+    if not element_ids:
+        return []
+    cur.execute(
+        "SELECT element_id, part_no, color_id FROM bricklink_mappings WHERE element_id = ANY(%s)",
+        (list(element_ids),),
+    )
+    urls: set[str] = set()
+    part_nos: set[str] = set()
+    for element_id, part_no, color_id in cur.fetchall():
+        urls.add(f"{PAB_API_BASE}/pab/price/{part_no}/{color_id}")
+        urls.add(f"{PAB_API_BASE}/element/{element_id}/price")
+        part_nos.add(part_no)
+    for part_no in part_nos:
+        urls.add(f"{PAB_API_BASE}/pab/prices/{part_no}")
+    return sorted(urls)
+
+
+def purge_cf_cache(urls: list[str]) -> None:
+    """Targeted purge of just the URLs that changed. Falls back to a single
+    purge_everything call if the changed set is too large for per-URL purging
+    to be worth the round-trips (CF_PURGE_EVERYTHING_THRESHOLD)."""
     zone_id = os.environ.get("CLOUDFLARE_ZONE_ID", "")
     token   = os.environ.get("CLOUDFLARE_API_TOKEN", "")
-    if not zone_id or not token:
+    if not zone_id or not token or not urls:
         return
+
     import json as _json
     import urllib.request
-    url     = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
-    payload = _json.dumps({"purge_everything": True}).encode()
-    req     = urllib.request.Request(url, data=payload, method="POST")
-    req.add_header("Authorization", f"Bearer {token}")
-    req.add_header("Content-Type", "application/json")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            result = _json.loads(resp.read())
-        if result.get("success"):
-            print("Cloudflare cache purged.", flush=True)
-        else:
+
+    def _call(payload: dict) -> bool:
+        api_url = f"https://api.cloudflare.com/client/v4/zones/{zone_id}/purge_cache"
+        req = urllib.request.Request(api_url, data=_json.dumps(payload).encode(), method="POST")
+        req.add_header("Authorization", f"Bearer {token}")
+        req.add_header("Content-Type", "application/json")
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                result = _json.loads(resp.read())
+            if result.get("success"):
+                return True
             print(f"CF purge failed: {result.get('errors')}", flush=True)
-    except Exception as e:
-        print(f"CF purge error: {e}", flush=True)
+            return False
+        except Exception as e:
+            print(f"CF purge error: {e}", flush=True)
+            return False
+
+    if len(urls) > CF_PURGE_EVERYTHING_THRESHOLD:
+        if _call({"purge_everything": True}):
+            print(f"Cloudflare cache purged (everything -- {len(urls)} changed URLs "
+                  f"exceeded the {CF_PURGE_EVERYTHING_THRESHOLD}-URL targeted threshold).", flush=True)
+        return
+
+    purged = 0
+    for i in range(0, len(urls), 30):
+        batch = urls[i:i + 30]
+        if _call({"files": batch}):
+            purged += len(batch)
+    print(f"Cloudflare cache purged: {purged}/{len(urls)} URLs (targeted).", flush=True)
 
 
 # ─── Email report ────────────────────────────────────────────────────────────
@@ -724,6 +792,7 @@ def main():
     errors: list[str] = []
     locales_done = 0
     run_id: int | None = None
+    run_changed_elements: set[int] = set()
 
     if conn:
         with conn.cursor() as cur:
@@ -791,8 +860,9 @@ def main():
                         # Keeps the stale-element check accurate across all locales.
                         ensure_elements_exist(cur, rows, now)
 
-                    n = write_prices(cur, rows)
+                    n, changed = write_prices(cur, rows)
                     total_prices += n
+                    run_changed_elements.update(changed)
 
                     # Stale detection: only when the scan was complete (all pages and
                     # sibling batches succeeded). A partial scan would falsely mark
@@ -816,6 +886,20 @@ def main():
                     siblings = get_group_siblings(locale)
                     if siblings:
                         with conn.cursor() as cur:
+                            # Snapshot which siblings actually differ before the UPDATE
+                            # touches them -- drives targeted cache purging. The UPDATE
+                            # itself still refreshes updated_at unconditionally on every
+                            # sibling row, same as before, so freshness tracking doesn't change.
+                            cur.execute("""
+                                SELECT target.element_id
+                                FROM lego_element_prices target
+                                JOIN lego_element_prices source
+                                  ON source.element_id = target.element_id AND source.locale = %(rep)s
+                                WHERE target.locale = ANY(%(siblings)s)
+                                  AND target.in_stock IS DISTINCT FROM source.in_stock
+                            """, {"rep": locale, "siblings": siblings})
+                            run_changed_elements.update(row[0] for row in cur.fetchall())
+
                             cur.execute("""
                                 UPDATE lego_element_prices target
                                 SET in_stock = source.in_stock,
@@ -846,6 +930,7 @@ def main():
             conn.commit()
 
     finally:
+        purge_urls: list[str] = []
         if conn and run_id:
             finished = datetime.now(timezone.utc)
             with conn.cursor() as cur:
@@ -857,6 +942,8 @@ def main():
                 """, (finished, locales_done, total_prices, len(errors), len(errors) == 0, run_id))
             conn.commit()
         if conn:
+            with conn.cursor() as cur:
+                purge_urls = pab_purge_urls(cur, run_changed_elements)
             conn.close()
 
     duration_s = time.monotonic() - run_start_time
@@ -866,7 +953,7 @@ def main():
     if not args.dry_run:
         send_scraper_report(locales_done, len(locales), total_prices, total_elements,
                             errors, duration_s)
-        purge_cf_cache()
+        purge_cf_cache(purge_urls)
 
 
 if __name__ == "__main__":
