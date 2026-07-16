@@ -2,6 +2,12 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.14] — 2026-07-16
+
+### Extension
+- Disabled the buy-page "Store location" auto-select (`setupBuyPage()` in `content.js`) — it was clicking the location radio buttons and dispatching change events on the region/country `<select>` while BrickLink's own React app was still rendering, and on large "Buy All" pages (many lots) that render window is long enough for the two to visibly fight each other. The "Lots over max price"/"Lots below Wanted qty" auto-check filters are untouched and still work — only the store-location portion of the function is disabled (`storeLocation` value is read but intentionally unused).
+- Hid the now-inert "Store location" dropdown in both settings surfaces (`popup.html` and the SPA settings page in `index.js`, `display:none`) rather than removing it — the underlying setting/markup stays intact for a quick re-enable once the render-timing issue is sorted out.
+
 ## [Backend] — 2026-07-16
 
 ### BrickStore public catalog ingestion — mold gaps, mold relationships, minifig + assembly tracking; retires the live mold scraper

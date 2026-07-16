@@ -21,23 +21,28 @@
   <h2>MOC Source</h2>
 
   <h3>Buy page — store filter</h3>
-  <label for="storeLocation">Store location</label>
-  <select id="storeLocation">
-    <option value="anywhere">Anywhere</option>
-    <optgroup label="Region">
-      <option value="region:Africa">Africa</option>
-      <option value="region:Asia">Asia</option>
-      <option value="region:Australia &amp; Oceania">Australia &amp; Oceania</option>
-      <option value="region:Europe">Europe</option>
-      <option value="region:European Union">European Union</option>
-      <option value="region:Middle East">Middle East</option>
-      <option value="region:North America">North America</option>
-      <option value="region:South America">South America</option>
-    </optgroup>
-    <optgroup label="Country" id="countryGroup">
-      <!-- populated by popup.js from cached BrickLink country list -->
-    </optgroup>
-  </select>
+  <!-- Store location select temporarily hidden -- the feature it drives is
+       disabled in content.js (was firing mid-render on large Buy All pages).
+       Re-show this when that's re-enabled. -->
+  <div style="display:none">
+    <label for="storeLocation">Store location</label>
+    <select id="storeLocation">
+      <option value="anywhere">Anywhere</option>
+      <optgroup label="Region">
+        <option value="region:Africa">Africa</option>
+        <option value="region:Asia">Asia</option>
+        <option value="region:Australia &amp; Oceania">Australia &amp; Oceania</option>
+        <option value="region:Europe">Europe</option>
+        <option value="region:European Union">European Union</option>
+        <option value="region:Middle East">Middle East</option>
+        <option value="region:North America">North America</option>
+        <option value="region:South America">South America</option>
+      </optgroup>
+      <optgroup label="Country" id="countryGroup">
+        <!-- populated by popup.js from cached BrickLink country list -->
+      </optgroup>
+    </select>
+  </div>
   <label><input type="checkbox" id="filterLotsOverMax"> Auto-check "Lots over max price"</label>
   <label><input type="checkbox" id="filterLotsBelowQty"> Auto-check "Lots below Wanted qty"</label>
 

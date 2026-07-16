@@ -3355,7 +3355,10 @@ async function renderSettings(content) {
 
     <div class="settings-card">
       <h3>Buy Page — Store Filter</h3>
-      <div class="field">
+      <!-- Store location select temporarily hidden -- the feature it drives is
+           disabled in content.js (was firing mid-render on large Buy All pages).
+           Re-show this when that's re-enabled. -->
+      <div class="field" style="display:none">
         <label for="storeLocation">Store location</label>
         <select id="storeLocation">
           <option value="anywhere">Anywhere</option>

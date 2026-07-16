@@ -598,41 +598,11 @@ async function setupBuyPage() {
     if (text.includes("Lots below Wanted qty") && filterLotsBelowQty && !cb.checked) cb.click();
   }
 
-  // Set store location
-  const regionSelect  = [...document.querySelectorAll("select")].find(s => s.options.length === 8);
-  const countrySelect = [...document.querySelectorAll("select")].find(s => s.options.length > 100);
-
-  if (storeLocation === "anywhere") {
-    const r = document.querySelector("input[type=radio][value='0']");
-    if (r && !r.checked) r.click();
-
-  } else if (storeLocation.startsWith("region:")) {
-    const regionName = storeLocation.slice(7); // e.g. "North America"
-    const r = document.querySelector("input[type=radio][value='1']");
-    if (r && !r.checked) r.click();
-    if (regionSelect) {
-      const opt = [...regionSelect.options].find(o => o.text === regionName);
-      if (opt) {
-        regionSelect.value = opt.value;
-        regionSelect.dispatchEvent(new Event("input",  { bubbles: true }));
-        regionSelect.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    }
-
-  } else if (storeLocation.startsWith("country:")) {
-    const countryName = storeLocation.slice(8);
-    const r = document.querySelector("input[type=radio][value='2']");
-    if (r && !r.checked) r.click();
-    if (countrySelect) {
-      const opt = [...countrySelect.options].find(o => o.text === countryName);
-      if (opt) {
-        countrySelect.value = opt.value;
-        countrySelect.dispatchEvent(new Event("input",  { bubbles: true }));
-        countrySelect.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    }
-  }
-
+  // Set store location -- disabled for now. It was firing its radio/select
+  // clicks mid-render on large "Buy All" pages and fighting BrickLink's own
+  // load; re-enable once that's sorted out. storeLocation is read above but
+  // intentionally unused below.
+  void storeLocation;
 }
 
 // ─── BrickLink XML Upload ────────────────────────────────────────────────────
