@@ -657,6 +657,22 @@ async function renderProjects(content) {
 // ─── Project detail view ─────────────────────────────────────────────────────
 
 async function renderProjectDetail(id, content) {
+  // renderProjectDetail(id, content) is called repeatedly on the same
+  // persistent `content` node (after saves, back-button, etc.) -- without
+  // this, each call's addEventListener("click", ...) calls below stack a
+  // fresh set of listeners on top of every prior render's, so a single click
+  // fires N times after N renders (confirmed bug, 2026-07-16: dialogs/saves
+  // needing 3 closes after the view had re-rendered 3 times). Tear down the
+  // previous render's listeners before this render attaches its own.
+  content._projectDetailCleanup?.();
+  const _cleanupFns = [];
+  content._projectDetailCleanup = () => { _cleanupFns.forEach(fn => fn()); _cleanupFns.length = 0; };
+  function addListener(type, handler) {
+    content.addEventListener(type, handler);
+    _cleanupFns.push(() => content.removeEventListener(type, handler));
+  }
+  const addClick = handler => addListener("click", handler);
+
   const { projects = [], wantedLists = [], carts = [], legoCarts = [] } =
     await chrome.storage.local.get(["projects", "wantedLists", "carts", "legoCarts"]);
   const { ignoreLegoFees = false } = await chrome.storage.sync.get({ ignoreLegoFees: false });
@@ -2478,7 +2494,7 @@ async function renderProjectDetail(id, content) {
     setTimeout(() => { btn.textContent = "⚡ Auto Allocate"; }, 2500);
   });
 
-  content.addEventListener("click", async e => {
+  addClick(async e => {
     const unBtn = e.target.closest("[data-unalloc-key]");
     if (unBtn) {
       e.stopPropagation();
@@ -2620,7 +2636,7 @@ async function renderProjectDetail(id, content) {
     if (openBtn) navigate(`list/${openBtn.dataset.type}/${openBtn.dataset.id}`);
   });
 
-  content.addEventListener("click", async e => {
+  addClick(async e => {
     const transferBtn = e.target.closest(".lego-proj-transfer-btn");
     if (!transferBtn) return;
     const channel = transferBtn.dataset.channel;
@@ -2649,7 +2665,7 @@ async function renderProjectDetail(id, content) {
     setTimeout(() => { transferBtn.disabled = false; transferBtn.textContent = origLabel; }, 3000);
   });
 
-  content.addEventListener("change", e => {
+  addListener("change", e => {
     // Select-all checkbox for a section
     const selAll = e.target.closest(".section-sel-all");
     if (selAll) {
@@ -4131,7 +4147,7 @@ function attachDetailListeners(content) {
     if (!cell || cell.querySelector(".qty-edit")) return;
     e.preventDefault();
   });
-  content.addEventListener("click", e => {
+  addClick(e => {
     const td = e.target.closest("td");
     if (!td) return;
     const cb = td.querySelector("input.row-check");

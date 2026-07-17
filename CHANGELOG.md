@@ -2,6 +2,11 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.17] — 2026-07-16
+
+### Extension
+- Fixed: clicks/saves on the Project detail page (Cart Jigsaw) required closing a dialog 3x, and saving Scratch Space popped up 3 list pickers — `renderProjectDetail(id, content)` attaches 4 event listeners (3 `click`, 1 `change`) directly to the persistent `content` container, but the function gets called repeatedly on that same node across a session (after saves, back-button navigation, etc. — at least 4 call sites). `addEventListener` doesn't dedupe fresh closures, so each re-render stacked another full set of listeners on top of every prior render's, and a single click fired once per render the view had gone through. Added a cleanup-then-reattach pattern (`content._projectDetailCleanup()` runs at the top of every call, tearing down the previous render's listeners before attaching new ones) so exactly one set is ever active. `renderProjectSetup` was checked too and doesn't have this bug — its listeners are all on child elements replaced fresh via `innerHTML` each render, not on the persistent container.
+
 ## [0.4.16] — 2026-07-16
 
 ### Extension
