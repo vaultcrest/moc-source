@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "MOC Source",
-  "version": "0.4.18",
+  "version": "0.4.17",
   "description": "PAB price comparison on BrickLink wanted lists and cart",
   "permissions": ["storage", "tabs", "cookies"],
   "host_permissions": [
