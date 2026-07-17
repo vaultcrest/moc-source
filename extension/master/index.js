@@ -2759,7 +2759,7 @@ async function renderProjectDetail(id, content) {
   showAllocatedParts  = false;
   showExcludedParts   = false;
 
-  await Promise.all(poolParts.map(async (p, i) => {
+  await Promise.allSettled(poolParts.map(async (p, i) => {
     poolParts[i].pabEntry = await chrome.runtime.sendMessage({
       type: "GET_PAB_PRICE", partNo: p.partNo, colorId: p.colorId,
     });
@@ -3616,14 +3616,14 @@ async function renderListDetail(listType, listId, content) {
   renderDetailView(content);
 
   if (isLegoCart()) {
-    await Promise.all(currentDetail.parts.map(async (_, i) => {
+    await Promise.allSettled(currentDetail.parts.map(async (_, i) => {
       const p = currentDetail.parts[i];
       currentDetail.parts[i].pabEntry = await chrome.runtime.sendMessage({
         type: "GET_PAB_PRICE_BY_ELEMENT", elementId: p.elementId,
       });
     }));
   } else {
-    await Promise.all(currentDetail.parts.map(async (_, i) => {
+    await Promise.allSettled(currentDetail.parts.map(async (_, i) => {
       const p = currentDetail.parts[i];
       currentDetail.parts[i].pabEntry = await chrome.runtime.sendMessage({
         type: "GET_PAB_PRICE", partNo: p.partNo, colorId: p.colorId,

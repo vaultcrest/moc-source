@@ -2,6 +2,11 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.18] — 2026-07-17
+
+### Extension
+- Fixed: on Wanted List / cart detail pages with many parts (e.g. a 37-part list), the PAB Price column could get stuck showing "…" for every row indefinitely, even though the backend had valid PAB prices for those exact parts (confirmed directly against the API). `renderListDetail` and the Project pool section both fire one `chrome.runtime.sendMessage` per part in parallel and `await Promise.all(...)` on the batch before re-rendering with the resolved prices. If even a single one of those concurrent messages rejects (e.g. a transient MV3 service-worker message-channel hiccup — more likely the more requests fire at once), `Promise.all` rejects the whole batch and the code never reaches the re-render, leaving every row frozen at its initial loading placeholder. Auto Allocate in the Project view doesn't depend on this fetch completing, which is why allocation could look fine even while the price column never populated. Switched all three call sites (`renderListDetail`'s two branches, and the Project pool fetch) from `Promise.all` to `Promise.allSettled` so one bad fetch no longer blocks the rest of the page's prices from rendering.
+
 ## [0.4.17] — 2026-07-16
 
 ### Extension
