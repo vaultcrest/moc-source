@@ -4066,6 +4066,19 @@ function showTransferWarning(skippedParts, isMove) {
 }
 
 function attachDetailListeners(content) {
+  // Called repeatedly on the same persistent `content` node (tab switches, sort
+  // changes, renames, etc. all re-render then call this again) -- tear down the
+  // previous render's content-level listeners before attaching a fresh set, same
+  // pattern as renderProjectDetail's cleanup (see its comment for the full story).
+  content._detailListenersCleanup?.();
+  const _cleanupFns = [];
+  content._detailListenersCleanup = () => { _cleanupFns.forEach(fn => fn()); _cleanupFns.length = 0; };
+  function addListener(type, handler) {
+    content.addEventListener(type, handler);
+    _cleanupFns.push(() => content.removeEventListener(type, handler));
+  }
+  const addClick = handler => addListener("click", handler);
+
   content.querySelector(".back-btn")?.addEventListener("click", () => navigate("lists"));
 
   content.querySelector(".detail-rename-btn")?.addEventListener("click", e => {
@@ -4136,13 +4149,13 @@ function attachDetailListeners(content) {
     for (const cb of getRowChecks()) cb.checked = e.target.checked;
     syncSelectAll();
   });
-  content.addEventListener("change", e => {
+  addListener("change", e => {
     if (e.target.classList.contains("row-check")) syncSelectAll();
   });
   // Prevent blur-on-mousedown from firing before the click handler runs.
   // Without this, clicking a qty-cell fires blur on the active input (moving focus to body)
   // before our click handler sets pendingQtyEditIdx, so the blur save sees no pending cell.
-  content.addEventListener("mousedown", e => {
+  addListener("mousedown", e => {
     const cell = e.target.closest(".qty-cell");
     if (!cell || cell.querySelector(".qty-edit")) return;
     e.preventDefault();
