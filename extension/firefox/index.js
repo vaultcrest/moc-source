@@ -28,6 +28,24 @@ function ceilToCents(amount) {
   return Math.ceil(amount * 100 - 1e-9) / 100;
 }
 
+// Resolves the effective per-unit price for a lot given its ACTUAL full cart
+// quantity (not a partial allocation amount) -- the tier that applies is
+// determined by the real lot quantity, since that's what BrickLink actually
+// bills, regardless of how we're internally attributing portions of it.
+function tierPriceFor(tiers, lotQty) {
+  if (!tiers?.length) return null;
+  let price = tiers[0].price;
+  for (const t of tiers) {
+    if (lotQty >= t.minQty) price = t.price;
+  }
+  return price;
+}
+// Effective price for a cart part, preferring its tier table over the plain
+// native/scraped price when available.
+function effectivePrice(cartPart) {
+  return tierPriceFor(cartPart?.priceTiers, cartPart?.qty ?? 0) ?? parseStorePrice(cartPart?.storePrice);
+}
+
 // Percent the store price is above (+) or below (-) the PAB price, or null if
 // either price is unknown. Computed fresh at render time from real numbers --
 // never scraped/stored, unlike the leaked BrickLink text this replaces.
@@ -184,7 +202,7 @@ function summaryPanel(parts, cart) {
       cats.bl.lots++;
       cats.bl.pieces += qty;
       if (cart) {
-        const sp = parseStorePrice(p.storePrice);
+        const sp = effectivePrice(p);
         if (sp) cats.bl.price += sp * qty;
       } else if (p.maxPrice != null) {
         cats.bl.price += p.maxPrice * qty;
@@ -840,7 +858,7 @@ async function renderProjectDetail(id, content) {
           case "store_price": {
             const cpa = cart?.parts?.find(cp => cp.partNo === pa?.partNo && String(cp.colorId) === String(pa?.colorId));
             const cpb = cart?.parts?.find(cp => cp.partNo === pb?.partNo && String(cp.colorId) === String(pb?.colorId));
-            return d * ((parseStorePrice(cpa?.storePrice) ?? -1) - (parseStorePrice(cpb?.storePrice) ?? -1));
+            return d * ((effectivePrice(cpa) ?? -1) - (effectivePrice(cpb) ?? -1));
           }
           case "pab_price": return d * ((pa?.pabEntry?.price_cents ?? -1) - (pb?.pabEntry?.price_cents ?? -1));
           case "channel": {
@@ -907,7 +925,7 @@ async function renderProjectDetail(id, content) {
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#f3f4f6;color:#6c757d">BL</span>`
         : `<span style="color:#9ca3af">—</span>`;
       const cartPart  = lotCartPart ?? blCart?.parts?.find(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
-      const storeNum  = parseStorePrice(cartPart?.storePrice);
+      const storeNum  = effectivePrice(cartPart);
       const pabNum    = part?.pabEntry?.price_cents ? part.pabEntry.price_cents / 100 : null;
       const pabCheaper = showStore && storeNum != null && pabNum != null && pabNum < storeNum;
       const storeColor = pabCheaper ? "#dc2626" : "#374151";
@@ -1089,7 +1107,7 @@ async function renderProjectDetail(id, content) {
     let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0;
     for (const { key, qty, cartPart } of blAllocs) {
       const part     = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-      const blPrice  = parseStorePrice(cartPart?.storePrice);
+      const blPrice  = effectivePrice(cartPart);
       if (blPrice != null) blTotal += blPrice * qty;
       else blTotalKnown = false;
       if (blPrice != null) {
@@ -1499,7 +1517,7 @@ async function renderProjectDetail(id, content) {
       let total = 0, totalKnown = true;
       for (const { key, qty, cartPart } of blAllocs) {
         const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-        const pr   = parseStorePrice(cartPart?.storePrice);
+        const pr   = effectivePrice(cartPart);
         if (pr != null) {
           total += pr * qty;
           blAllPartsTotal += pr * qty;
@@ -1779,7 +1797,7 @@ async function renderProjectDetail(id, content) {
     }
     const cartParts = cart.parts ?? [];
     const sorted = cartParts
-      .map((cp, idx) => ({ cp, idx, key: `${cp.partNo}_${cp.colorId}`, price: parseStorePrice(cp.storePrice) ?? Infinity }))
+      .map((cp, idx) => ({ cp, idx, key: `${cp.partNo}_${cp.colorId}`, price: effectivePrice(cp) ?? Infinity }))
       .sort((a, b) => a.price - b.price);
     const lotNewQty = new Map(); // original index -> newQty
     const allocLeftCopy = { ...allocLeft };
@@ -3749,8 +3767,8 @@ function sortParts(arr) {
       case "max_price":    return dir * ((a.maxPrice ?? -1) - (b.maxPrice ?? -1));
       case "qty":          return dir * ((a.qty ?? 0) - (b.qty ?? 0));
       case "store_price": {
-        const sa = parseStorePrice(a.storePrice) ?? -1;
-        const sb = parseStorePrice(b.storePrice) ?? -1;
+        const sa = effectivePrice(a) ?? -1;
+        const sb = effectivePrice(b) ?? -1;
         return dir * (sa - sb);
       }
       case "pab_price": {
@@ -4059,7 +4077,7 @@ function buildCartRow(p, idx) {
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
   const flagged = p.flagged;
-  const storeNum = parseStorePrice(p.storePrice);
+  const storeNum = effectivePrice(p);
   const pabNum = p.pabEntry?.price_cents ? p.pabEntry.price_cents / 100 : null;
   const overPAB = storeNum != null && pabNum != null && storeNum > pabNum;
   const rowStyle = overPAB ? ' style="background:#fff5f5"' : '';

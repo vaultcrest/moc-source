@@ -91,6 +91,26 @@ function collectWantedListParts() {
   return parts;
 }
 
+// Parses BrickLink's quantity-break pricing tiers from a price cell's
+// .pricing-box. The native-price <p> is the base/no-minimum tier; additional
+// <p> siblings are either a genuine qty-break tier ("$0.025[10+]") or a
+// one-time sale indicator (strike-through + %, already reflected in the
+// native price) -- skip the latter.
+function parsePriceTiers(priceCell) {
+  const box = priceCell.querySelector(".pricing-box");
+  const nativeEl = box?.querySelector("p.native-price strong");
+  if (!nativeEl) return null;
+  const basePrice = parseFloat(nativeEl.textContent.replace(/[^0-9.]/g, ""));
+  if (isNaN(basePrice)) return null;
+  const tiers = [{ minQty: 1, price: basePrice }];
+  for (const p of box.querySelectorAll(":scope > p:not(.native-price)")) {
+    if (p.querySelector(".strike, .sale-indicator")) continue; // one-time sale, not a qty tier
+    const m = p.textContent.match(/\$([\d.]+).*?\[(\d+)\+\]/);
+    if (m) tiers.push({ minQty: parseInt(m[2], 10), price: parseFloat(m[1]) });
+  }
+  return tiers.sort((a, b) => a.minQty - b.minQty);
+}
+
 function collectCartParts() {
   const parts = [];
   for (const article of document.querySelectorAll("article.store-cart-item")) {
@@ -105,10 +125,12 @@ function collectCartParts() {
     const qty = Math.max(1, parseInt(qtyEl?.value || qtyEl?.textContent?.trim() || "1", 10) || 1);
     const priceCell = article.querySelector("div.price-col");
     let storePrice = null;
+    let priceTiers = null;
     if (priceCell) {
       const nativePrice = priceCell.querySelector(".native-price");
       if (nativePrice) {
         storePrice = nativePrice.textContent.trim();
+        priceTiers = parsePriceTiers(priceCell);
       } else {
         // Fallback for any price-col shape without a .native-price element
         // (unconfirmed on non-discounted lots, or a future BL markup change).
@@ -132,7 +154,7 @@ function collectCartParts() {
         if (/^new$/i.test(t)) { condition = "N"; break; }
       }
     }
-    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice, condition });
+    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice, priceTiers, condition });
   }
   return parts;
 }
