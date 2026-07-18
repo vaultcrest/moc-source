@@ -106,10 +106,17 @@ function collectCartParts() {
     const priceCell = article.querySelector("div.price-col");
     let storePrice = null;
     if (priceCell) {
-      const clone = priceCell.cloneNode(true);
-      clone.querySelectorAll(".moc-source-badge, .moc-source-verdict-caption").forEach(el => el.remove());
-      const text = clone.textContent.trim();
-      if (text) storePrice = text;
+      const nativePrice = priceCell.querySelector(".native-price");
+      if (nativePrice) {
+        storePrice = nativePrice.textContent.trim();
+      } else {
+        // Fallback for any price-col shape without a .native-price element
+        // (unconfirmed on non-discounted lots, or a future BL markup change).
+        const clone = priceCell.cloneNode(true);
+        clone.querySelectorAll(".moc-source-badge, .moc-source-verdict-caption").forEach(el => el.remove());
+        const text = clone.textContent.trim();
+        if (text) storePrice = text;
+      }
     }
     // Detect condition (New vs Used) from the cart item DOM
     let condition = "N";
@@ -820,27 +827,46 @@ async function applyBlCartWriteback() {
     return;
   }
 
-  // Re-query live DOM on every call — BL React re-renders after each save
-  function findArticle(partNo, colorId, storePrice) {
-    return [...document.querySelectorAll("article.store-cart-item")].find(a => {
+  // Re-query live DOM on every call — BL React re-renders after each save.
+  // Matches on identity (partNo+colorId), not price -- price is only a
+  // last-resort tiebreaker when multiple lots of the same part+color+condition
+  // exist, never a hard requirement that can silently fail the whole match.
+  function findArticle(partNo, colorId, condition, storePrice) {
+    const candidates = [...document.querySelectorAll("article.store-cart-item")].filter(a => {
       const img = a.querySelector("img[src*='ItemImage/PT/'], img[src*='ItemImage/PN/']");
       if (!img) return false;
       const m = img.src.match(/\/ItemImage\/P[TN]\/(\d+)\/([^.]+)\.t\d\.png/);
-      if (!m || parseInt(m[1], 10) !== colorId || m[2] !== partNo) return false;
-      if (!storePrice) return true;
-      const priceCell = a.querySelector("div.price-col");
-      if (!priceCell) return true;
-      const clone = priceCell.cloneNode(true);
-      clone.querySelectorAll(".moc-source-badge, .moc-source-verdict-caption").forEach(el => el.remove());
-      return clone.textContent.trim() === storePrice;
+      return m && parseInt(m[1], 10) === colorId && m[2] === partNo;
     });
+    if (candidates.length <= 1) return candidates[0];
+
+    // Ambiguous on partNo+colorId alone -- narrow by condition (New/Used).
+    const byCondition = condition
+      ? candidates.filter(a => {
+          const condEl = a.querySelector("[class*='condition' i], [class*='Condition'], .lot-condition");
+          const cond = condEl && /used/i.test(condEl.textContent) ? "U" : "N";
+          return cond === condition;
+        })
+      : candidates;
+    const narrowed = byCondition.length ? byCondition : candidates;
+    if (narrowed.length <= 1) return narrowed[0];
+
+    // Still ambiguous -- price as a last-resort tiebreaker, best-effort only.
+    if (storePrice) {
+      const exact = narrowed.find(a => {
+        const nativePrice = a.querySelector("div.price-col .native-price");
+        return nativePrice && nativePrice.textContent.trim() === storePrice;
+      });
+      if (exact) return exact;
+    }
+    return narrowed[0]; // give up gracefully: act on *a* matching lot rather than none
   }
 
   const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set;
 
   // Resolve live DOM quantities — compare actual cart state vs allocation target
   const allQtyChanges = changes.filter(c => c.newQty > 0).map(c => {
-    const article = findArticle(c.partNo, c.colorId, c.storePrice);
+    const article = findArticle(c.partNo, c.colorId, c.condition, c.storePrice);
     const liveQty = article ? (parseInt(article.querySelector("input[type='number']")?.value, 10) || 0) : null;
     return { ...c, liveQty };
   });
@@ -863,7 +889,7 @@ async function applyBlCartWriteback() {
     <div>
       <div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removals.length})</div>
       ${removals.map(c => {
-        const qty = parseInt(findArticle(c.partNo, c.colorId, c.storePrice)
+        const qty = parseInt(findArticle(c.partNo, c.colorId, c.condition, c.storePrice)
                       ?.querySelector("input[type='number']")?.value || "0", 10) || "?";
         return `<div style="padding:2px 0;font-size:12px;display:flex;gap:8px">
           <span style="min-width:28px;text-align:right;color:#9ca3af;font-size:12px;flex-shrink:0">×${qty}</span>
@@ -894,8 +920,8 @@ async function applyBlCartWriteback() {
 
     // Step 1: qty changes — sequential with re-lookup and delay to let BL save each
     let qtyDone = 0;
-    for (const { partNo, colorId, storePrice, newQty } of qtyChanges) {
-      const article = findArticle(partNo, colorId, storePrice);
+    for (const { partNo, colorId, condition, storePrice, newQty } of qtyChanges) {
+      const article = findArticle(partNo, colorId, condition, storePrice);
       if (!article) continue;
       const input = article.querySelector("input[type='number']");
       if (!input || parseInt(input.value, 10) === newQty) continue;
@@ -914,8 +940,8 @@ async function applyBlCartWriteback() {
     if (removals.length > 0) {
       window.dispatchEvent(new CustomEvent("moc:confirm-override"));
       let remDone = 0;
-      for (const { partNo, colorId, storePrice } of removals) {
-        const article = findArticle(partNo, colorId, storePrice);
+      for (const { partNo, colorId, condition, storePrice } of removals) {
+        const article = findArticle(partNo, colorId, condition, storePrice);
         if (!article) { remDone++; applyBtn.textContent = `Removing… ${remDone} / ${removals.length}`; continue; }
         const link = [...article.querySelectorAll("a, button, [role='button']")]
           .find(el => /remove/i.test(el.textContent.trim()) && !/remove all/i.test(el.textContent));

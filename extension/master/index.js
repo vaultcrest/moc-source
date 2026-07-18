@@ -1769,7 +1769,7 @@ async function renderProjectDetail(id, content) {
       if (newQty === oldQty) return;
       const pp = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
       changes.push({
-        partNo: cp.partNo, colorId: cp.colorId, storePrice: cp.storePrice,
+        partNo: cp.partNo, colorId: cp.colorId, condition: cp.condition, storePrice: cp.storePrice,
         name: pp?.pabEntry?.bl_part_name || pp?.name || cp.name || cp.partNo,
         colorName: pp?.pabEntry?.bl_color_name || cp.colorName || String(cp.colorId),
         oldQty, newQty
@@ -1829,9 +1829,10 @@ async function renderProjectDetail(id, content) {
         if (changes.length > 0) {
           const { pendingBlCartWriteback = {} } = await chrome.storage.local.get("pendingBlCartWriteback");
           const writebackKey = cart.storeUrl || cart.id;
-          // Include storePrice so the content script can match the exact lot when the same
-          // part+color appears multiple times at different prices
-          pendingBlCartWriteback[writebackKey] = changes.map(c => ({ partNo: c.partNo, colorId: c.colorId, storePrice: c.storePrice, newQty: c.newQty, name: c.name, colorName: c.colorName }));
+          // condition/storePrice are tiebreakers only -- findArticle() matches primarily
+          // on partNo+colorId, falling back to these when multiple lots of the same
+          // part+color exist in the cart.
+          pendingBlCartWriteback[writebackKey] = changes.map(c => ({ partNo: c.partNo, colorId: c.colorId, condition: c.condition, storePrice: c.storePrice, newQty: c.newQty, name: c.name, colorName: c.colorName }));
           await chrome.storage.local.set({ pendingBlCartWriteback });
         }
         modal.remove();
