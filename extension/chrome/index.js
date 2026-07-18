@@ -230,7 +230,7 @@ function summaryPanel(parts, cart) {
           const d = cats[k]; if (!d.lots) return "";
           const lbl = k === "pab" ? "PAB" : k === "bap" ? "STD" : "BrickLink";
           const pl  = k === "bl" ? "Price" : "Price";
-          const pr  = d.hasPrice ? `$${d.price.toFixed(2)}` : "—";
+          const pr  = d.hasPrice ? `$${ceilToCents(d.price).toFixed(2)}` : "—";
           return `<div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid #f3f4f6">
             <span style="font-weight:600;width:150px;flex-shrink:0">${lbl}</span>
             <span style="color:#6c757d;font-size:14px">Lot</span><span style="min-width:40px">${d.lots}</span>
@@ -242,7 +242,7 @@ function summaryPanel(parts, cart) {
           <span style="font-weight:700;width:150px;flex-shrink:0">Total</span>
           <span style="color:#6c757d;font-size:14px">Lot</span><span style="min-width:40px;font-weight:600">${tot.lots}</span>
           <span style="color:#6c757d;font-size:14px">Pieces</span><span style="min-width:50px;font-weight:600">${tot.pieces}</span>
-          <span style="color:#6c757d;font-size:14px">Price</span><span style="font-weight:700">${totHasPrice ? `$${tot.price.toFixed(2)}` : "—"}</span>
+          <span style="color:#6c757d;font-size:14px">Price</span><span style="font-weight:700">${totHasPrice ? `$${ceilToCents(tot.price).toFixed(2)}` : "—"}</span>
         </div>
         ${(() => {
           const os = currentDetail.list?.orderSummary;
@@ -1009,9 +1009,9 @@ async function renderProjectDetail(id, content) {
     const legoGrand = legoParts + svcFee + legShip;
     const legoSummary = allLegoAllocs.length === 0 ? "" : `
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
-        <span>Parts: <strong>${legoPartsKnown ? `$${legoParts.toFixed(2)}` : `~$${legoParts.toFixed(2)}`}</strong></span>
-        ${legoBsParts > 0 ? `<span style="color:#15803d">BS: <strong>$${legoBsParts.toFixed(2)}</strong></span>` : ""}
-        ${legoStdParts > 0 ? `<span style="color:#ca8a04">STD: <strong>$${legoStdParts.toFixed(2)}</strong></span>` : ""}
+        <span>Parts: <strong>${legoPartsKnown ? `$${ceilToCents(legoParts).toFixed(2)}` : `~$${ceilToCents(legoParts).toFixed(2)}`}</strong></span>
+        ${legoBsParts > 0 ? `<span style="color:#15803d">BS: <strong>$${ceilToCents(legoBsParts).toFixed(2)}</strong></span>` : ""}
+        ${legoStdParts > 0 ? `<span style="color:#ca8a04">STD: <strong>$${ceilToCents(legoStdParts).toFixed(2)}</strong></span>` : ""}
         ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>$7.00</strong> <span style="color:#9ca3af;font-weight:400">(under $14 order)</span></span>` : ""}
         ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : `$${legShip.toFixed(2)}`}</strong></span>` : ""}
         ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${ceilToCents(legoGrand).toFixed(2)}` : `~$${ceilToCents(legoGrand).toFixed(2)}`}</span>` : ""}
@@ -1131,7 +1131,7 @@ async function renderProjectDetail(id, content) {
     // vs-PAB: pure part-price delta only (no shipping, no LEGO fees — those belong in totals)
     const pabNetTotal  = pabNetPartsOnly;
     const shipKnown    = !shipIsTbd || (estBlShipping[cart.id] != null);
-    const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${blTotal.toFixed(2)}` : null;
+    const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${ceilToCents(blTotal).toFixed(2)}` : null;
     const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${ceilToCents(blTotal + effShip).toFixed(2)}` : null;
     // Show PAB-comparable store subtotal when BL-only parts are present, so the savings
     // figure isn't confusingly close to the full cart total.
