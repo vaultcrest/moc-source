@@ -177,7 +177,7 @@ function extractRows() {
 function scrapeRowPrice(row) {
   const clone = row.cloneNode(true);
   clone.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
-  const m = clone.textContent.match(/\$([\d,]+\.[\d]{2})/);
+  const m = clone.textContent.match(/\$([\d,]+\.\d+)/);
   return m ? parseFloat(m[1].replace(/,/g, "")) : null;
 }
 
@@ -256,8 +256,8 @@ function injectBadge(row, pabEntry, storePrice) {
     caption.style.cssText =
       `display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:${verdict.level === "full" ? "#15803d" : "#b45309"};`;
     const parts = [];
-    if (verdict.channelPrice != null) parts.push(`${pabEntry.channel === "pab" ? "PAB" : "STD"} $${verdict.channelPrice.toFixed(3)}`);
-    if (verdict.avgPrice != null) parts.push(`BL avg $${verdict.avgPrice.toFixed(3)}`);
+    if (verdict.channelPrice != null) parts.push(`${pabEntry.channel === "pab" ? "PAB" : "STD"} $${verdict.channelPrice.toFixed(2)}`);
+    if (verdict.avgPrice != null) parts.push(`BL avg $${verdict.avgPrice.toFixed(2)}`);
     caption.textContent = `▼ below ${parts.join(" and ")}`;
     badge.insertAdjacentElement("afterend", caption);
   }

@@ -20,6 +20,14 @@ function parseStorePrice(str) {
   return isNaN(n) ? null : n;
 }
 
+// Rounds a dollar amount UP to the nearest cent -- used only for final
+// "what you'll pay" totals, never for per-item/per-category display.
+// The 1e-9 epsilon guards against float noise (e.g. 0.1+0.2=0.30000000000000004)
+// spuriously ceiling-ing a value that's already an exact cent amount.
+function ceilToCents(amount) {
+  return Math.ceil(amount * 100 - 1e-9) / 100;
+}
+
 function isOverPAB(p) {
   const store = parseStorePrice(p.storePrice);
   if (store == null || !p.pabEntry?.price_cents) return false;
@@ -878,7 +886,7 @@ async function renderProjectDetail(id, content) {
       const pabCheaper = showStore && storeNum != null && pabNum != null && pabNum < storeNum;
       const storeColor = pabCheaper ? "#dc2626" : "#374151";
       const storeCell = showStore
-        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${cartPart?.storePrice || "—"}</div>`
+        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${storeNum != null ? `$${storeNum.toFixed(2)}` : "—"}</div>`
         : "";
       const rowBg     = pabCheaper ? "background:#fff5f5;" : "";
       const img = part?.imageUrl
@@ -958,7 +966,7 @@ async function renderProjectDetail(id, content) {
         ${legoStdParts > 0 ? `<span style="color:#ca8a04">STD: <strong>$${legoStdParts.toFixed(2)}</strong></span>` : ""}
         ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>$7.00</strong> <span style="color:#9ca3af;font-weight:400">(under $14 order)</span></span>` : ""}
         ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : `$${legShip.toFixed(2)}`}</strong></span>` : ""}
-        ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${legoGrand.toFixed(2)}` : `~$${legoGrand.toFixed(2)}`}</span>` : ""}
+        ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${ceilToCents(legoGrand).toFixed(2)}` : `~$${ceilToCents(legoGrand).toFixed(2)}`}</span>` : ""}
       </div>`;
     const legoSortOpts = [
       ["name_color",  "Name+Color"],
@@ -1064,7 +1072,7 @@ async function renderProjectDetail(id, content) {
     const pabNetTotal  = pabNetPartsOnly;
     const shipKnown    = !shipIsTbd || (estBlShipping[cart.id] != null);
     const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${blTotal.toFixed(2)}` : null;
-    const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${(blTotal + effShip).toFixed(2)}` : null;
+    const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${ceilToCents(blTotal + effShip).toFixed(2)}` : null;
     // Show PAB-comparable store subtotal when BL-only parts are present, so the savings
     // figure isn't confusingly close to the full cart total.
     const hasBLOnly    = blPabTotal < blTotal - 0.001;
@@ -1467,7 +1475,7 @@ async function renderProjectDetail(id, content) {
       const cartGrand = total + effS;
       grand += cartGrand;
       if (!totalKnown || (isTbd && !(estBlShipping[cart.id] > 0))) grandKnown = false;
-      cartRows.push(`<span style="font-size:12px;color:#374151">${esc(cart.name)}: <strong>${totalKnown ? "" : "~"}$${cartGrand.toFixed(2)}</strong>${isTbd && !(estBlShipping[cart.id] > 0) ? `<span style="color:#9ca3af;font-size:11px"> (ship TBD)</span>` : ""}</span>`);
+      cartRows.push(`<span style="font-size:12px;color:#374151">${esc(cart.name)}: <strong>${totalKnown ? "" : "~"}$${ceilToCents(cartGrand).toFixed(2)}</strong>${isTbd && !(estBlShipping[cart.id] > 0) ? `<span style="color:#9ca3af;font-size:11px"> (ship TBD)</span>` : ""}</span>`);
     }
 
     // LEGO allocations contribute to grand total but are already priced at PAB — no vs-PAB delta
@@ -1484,7 +1492,7 @@ async function renderProjectDetail(id, content) {
       const legoGrand = legoParts + svcFee + legShip;
       grand += legoGrand;
       if (!legoPartsKnown) grandKnown = false;
-      cartRows.push(`<span style="font-size:12px;color:#374151">LEGO: <strong>${legoPartsKnown ? "" : "~"}$${legoGrand.toFixed(2)}</strong></span>`);
+      cartRows.push(`<span style="font-size:12px;color:#374151">LEGO: <strong>${legoPartsKnown ? "" : "~"}$${ceilToCents(legoGrand).toFixed(2)}</strong></span>`);
     }
 
     if (!cartRows.length) return "";
@@ -1502,7 +1510,7 @@ async function renderProjectDetail(id, content) {
       <span style="font-size:13px;font-weight:700;color:#0369a1">Grand Total</span>
       ${cartRows.join("")}
       ${pabSavedStr ? `<span style="font-size:12px;color:${pabSavedColor};font-weight:600">${esc(pabSavedStr)}</span>` : ""}
-      <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1">${grandKnown ? "" : "~"}$${grand.toFixed(2)}</span>
+      <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1">${grandKnown ? "" : "~"}$${ceilToCents(grand).toFixed(2)}</span>
     </div>`;
   }
 
@@ -4022,7 +4030,7 @@ function buildCartRow(p, idx) {
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 1}</strong></td>
-      <td>${p.storePrice ? esc(p.storePrice) : `<span style="color:#adb5bd">—</span>`}</td>
+      <td>${storeNum != null ? `$${storeNum.toFixed(2)}` : `<span style="color:#adb5bd">—</span>`}</td>
       <td>${pabPrice}</td>
       <td>${channelBadge}</td>
       <td>${flagBtn}</td>
@@ -4222,7 +4230,9 @@ function attachDetailListeners(content) {
           want:     p.qty || 1,
           have:     0,
           qty:      p.qty || 1,
-          maxPrice: p.pabEntry?.price_cents ? (p.pabEntry.price_cents / 100).toFixed(4) : null,
+          // maxPrice intentionally omitted -- the PAB price isn't a meaningful
+          // "max price" for the resulting Wanted List entry, and buildWantedRow's
+          // p.maxPrice != null check already treats a missing field as "no max set".
         };
       }).filter(Boolean);
     } else {
