@@ -28,6 +28,14 @@ function ceilToCents(amount) {
   return Math.ceil(amount * 100 - 1e-9) / 100;
 }
 
+// Percent the store price is above (+) or below (-) the PAB price, or null if
+// either price is unknown. Computed fresh at render time from real numbers --
+// never scraped/stored, unlike the leaked BrickLink text this replaces.
+function pctVsPab(storeNum, pabNum) {
+  if (storeNum == null || pabNum == null || pabNum <= 0) return null;
+  return ((storeNum - pabNum) / pabNum) * 100;
+}
+
 function isOverPAB(p) {
   const store = parseStorePrice(p.storePrice);
   if (store == null || !p.pabEntry?.price_cents) return false;
@@ -885,8 +893,12 @@ async function renderProjectDetail(id, content) {
       const pabNum    = part?.pabEntry?.price_cents ? part.pabEntry.price_cents / 100 : null;
       const pabCheaper = showStore && storeNum != null && pabNum != null && pabNum < storeNum;
       const storeColor = pabCheaper ? "#dc2626" : "#374151";
+      const pct        = pctVsPab(storeNum, pabNum);
+      const pctBadge    = pct != null
+        ? `<div style="font-size:10px;font-weight:700;color:${pct < 0 ? "#16a34a" : "#dc2626"}">${pct < 0 ? "▼" : "▲"}${Math.abs(pct).toFixed(0)}%</div>`
+        : "";
       const storeCell = showStore
-        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${storeNum != null ? `$${storeNum.toFixed(2)}` : "—"}</div>`
+        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${storeNum != null ? `$${storeNum.toFixed(2)}` : "—"}${pctBadge}</div>`
         : "";
       const rowBg     = pabCheaper ? "background:#fff5f5;" : "";
       const img = part?.imageUrl
@@ -4015,6 +4027,10 @@ function buildCartRow(p, idx) {
   const pabNum = p.pabEntry?.price_cents ? p.pabEntry.price_cents / 100 : null;
   const overPAB = storeNum != null && pabNum != null && storeNum > pabNum;
   const rowStyle = overPAB ? ' style="background:#fff5f5"' : '';
+  const pct = pctVsPab(storeNum, pabNum);
+  const pctBadge = pct != null
+    ? `<div style="font-size:10px;font-weight:700;color:${pct < 0 ? "#16a34a" : "#dc2626"}">${pct < 0 ? "▼" : "▲"}${Math.abs(pct).toFixed(0)}%</div>`
+    : "";
   const flagBtn = flagged
     ? `<button class="btn flag-btn" data-idx="${idx}" style="border-color:#6c757d;color:#6c757d;padding:3px 8px;font-size:11px">↩ Keep</button>`
     : `<button class="btn btn-danger flag-btn" data-idx="${idx}" style="padding:3px 8px;font-size:11px">Remove</button>`;
@@ -4030,7 +4046,7 @@ function buildCartRow(p, idx) {
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 1}</strong></td>
-      <td>${storeNum != null ? `$${storeNum.toFixed(2)}` : `<span style="color:#adb5bd">—</span>`}</td>
+      <td>${storeNum != null ? `$${storeNum.toFixed(2)}${pctBadge}` : `<span style="color:#adb5bd">—</span>`}</td>
       <td>${pabPrice}</td>
       <td>${channelBadge}</td>
       <td>${flagBtn}</td>

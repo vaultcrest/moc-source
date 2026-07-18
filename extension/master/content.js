@@ -107,7 +107,7 @@ function collectCartParts() {
     let storePrice = null;
     if (priceCell) {
       const clone = priceCell.cloneNode(true);
-      clone.querySelectorAll(".moc-source-badge").forEach(el => el.remove());
+      clone.querySelectorAll(".moc-source-badge, .moc-source-verdict-caption").forEach(el => el.remove());
       const text = clone.textContent.trim();
       if (text) storePrice = text;
     }
@@ -176,7 +176,7 @@ function extractRows() {
 
 function scrapeRowPrice(row) {
   const clone = row.cloneNode(true);
-  clone.querySelectorAll(".moc-source-badge, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
+  clone.querySelectorAll(".moc-source-badge, .moc-source-verdict-caption, div.addToCart, .in-wanted-list, img").forEach(el => el.remove());
   const m = clone.textContent.match(/\$([\d,]+\.\d+)/);
   return m ? parseFloat(m[1].replace(/,/g, "")) : null;
 }
@@ -831,7 +831,7 @@ async function applyBlCartWriteback() {
       const priceCell = a.querySelector("div.price-col");
       if (!priceCell) return true;
       const clone = priceCell.cloneNode(true);
-      clone.querySelectorAll(".moc-source-badge").forEach(el => el.remove());
+      clone.querySelectorAll(".moc-source-badge, .moc-source-verdict-caption").forEach(el => el.remove());
       return clone.textContent.trim() === storePrice;
     });
   }
