@@ -689,6 +689,24 @@ async function renderProjectDetail(id, content) {
   }
   const addClick = handler => addListener("click", handler);
 
+  // Auto-refresh when cart data changes underneath this tab (e.g. content.js
+  // rescraping BrickLink in another tab) -- otherwise this view's blCartList
+  // snapshot goes stale while left open, and totals silently drift from what's
+  // actually in storage. Debounced so a burst of writes collapses into one
+  // re-render; cleaned up via the same pattern as the DOM listeners above so
+  // re-renders don't stack duplicate storage listeners.
+  let storageRefreshTimer = null;
+  function onCartStorageChanged(changes, area) {
+    if (area !== "local" || (!changes.carts && !changes.legoCarts)) return;
+    clearTimeout(storageRefreshTimer);
+    storageRefreshTimer = setTimeout(() => { refresh(); }, 500);
+  }
+  chrome.storage.onChanged.addListener(onCartStorageChanged);
+  _cleanupFns.push(() => {
+    chrome.storage.onChanged.removeListener(onCartStorageChanged);
+    clearTimeout(storageRefreshTimer);
+  });
+
   const { projects = [], wantedLists = [], carts = [], legoCarts = [] } =
     await chrome.storage.local.get(["projects", "wantedLists", "carts", "legoCarts"]);
   const { ignoreLegoFees = false } = await chrome.storage.sync.get({ ignoreLegoFees: false });
@@ -1026,6 +1044,26 @@ async function renderProjectDetail(id, content) {
       ${buildAllocRows(legoAllocs, "lego", "", selectedLegoKeys)}`;
   }
 
+  // Distributes an allocated quantity across a part+color's physical lots in a
+  // cart, cheapest lot first. Shared by buildBlSection (per-cart total) and
+  // buildGrandTotal (project-wide total) so they can never disagree about which
+  // lots an allocation actually covers.
+  function distributeLots(cart, partNo, colorId, allocQty) {
+    const matchingLots = (cart.parts ?? [])
+      .filter(cp => cp.partNo === partNo && String(cp.colorId) === String(colorId))
+      .map(cp => ({ cp, price: parseStorePrice(cp.storePrice) ?? Infinity }))
+      .sort((a, b) => a.price - b.price);
+    const result = [];
+    let remaining = allocQty;
+    for (const { cp } of matchingLots) {
+      if (remaining <= 0) break;
+      const take = Math.min(remaining, cp.qty ?? 1);
+      result.push({ cartPart: cp, qty: take });
+      remaining -= take;
+    }
+    return result;
+  }
+
   function buildBlSection(cart, allocs) {
     // Build one row per lot, but only up to the allocated qty for each part+color.
     // Takes cheapest lots first so expensive extras don't appear when allocQty < total cart qty.
@@ -1034,16 +1072,8 @@ async function renderProjectDetail(id, content) {
       const allocQty = alloc.storeQty?.[cart.id] ?? 0;
       if (allocQty <= 0) continue;
       const [partNo, colorId] = key.split("_");
-      const matchingLots = (cart.parts ?? [])
-        .filter(cp => cp.partNo === partNo && String(cp.colorId) === String(colorId))
-        .map(cp => ({ cp, price: parseStorePrice(cp.storePrice) ?? Infinity }))
-        .sort((a, b) => a.price - b.price);
-      let remaining = allocQty;
-      for (const { cp } of matchingLots) {
-        if (remaining <= 0) break;
-        const take = Math.min(remaining, cp.qty ?? 1);
-        blAllocs.push({ key, qty: take, cartPart: cp });
-        remaining -= take;
+      for (const { cartPart, qty } of distributeLots(cart, partNo, colorId, allocQty)) {
+        blAllocs.push({ key, qty, cartPart });
       }
     }
     const allocPcs   = blAllocs.reduce((s, e) => s + e.qty, 0);
@@ -1456,15 +1486,20 @@ async function renderProjectDetail(id, content) {
     const cartRows = [];
 
     for (const cart of blCartList) {
-      const blAllocs = Object.entries(currentAllocs)
-        .filter(([, a]) => (a.storeQty?.[cart.id] ?? 0) > 0)
-        .map(([key, a]) => ({ key, qty: a.storeQty[cart.id] }));
+      const blAllocs = [];
+      for (const [key, alloc] of Object.entries(currentAllocs)) {
+        const allocQty = alloc.storeQty?.[cart.id] ?? 0;
+        if (allocQty <= 0) continue;
+        const [partNo, colorId] = key.split("_");
+        for (const { cartPart, qty } of distributeLots(cart, partNo, colorId, allocQty)) {
+          blAllocs.push({ key, qty, cartPart });
+        }
+      }
       if (!blAllocs.length) continue;
       let total = 0, totalKnown = true;
-      for (const { key, qty } of blAllocs) {
+      for (const { key, qty, cartPart } of blAllocs) {
         const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-        const cp   = cart.parts?.find(c => c.partNo === part?.partNo && String(c.colorId) === String(part?.colorId));
-        const pr   = parseStorePrice(cp?.storePrice);
+        const pr   = parseStorePrice(cartPart?.storePrice);
         if (pr != null) {
           total += pr * qty;
           blAllPartsTotal += pr * qty;
