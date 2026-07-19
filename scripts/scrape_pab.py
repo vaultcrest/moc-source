@@ -21,7 +21,7 @@ import sys
 import time
 import urllib.parse
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from email.mime.text import MIMEText
 
 import psycopg2
@@ -60,6 +60,13 @@ LOCALE_GROUPS: dict[str, list[str]] = {
 }
 # Representative locale per group for OOS-check runs.
 OOS_LOCALES = ["en-us", "de-de", "ko-kr"]
+
+# Reverse of LOCALE_GROUPS: locale -> group key. Used to bucket stock-volatility
+# events (lego_element_stock_monthly / lego_element_stock_state) by region
+# instead of raw locale, since stock is confirmed identical within each group.
+LOCALE_TO_GROUP: dict[str, str] = {
+    locale: group for group, locales in LOCALE_GROUPS.items() for locale in locales
+}
 
 # Cache purge targets. Cloudflare's per-request "files" purge is capped at 30
 # URLs (batched below); past this many changed elements in one run, a targeted
@@ -390,6 +397,40 @@ SET    in_stock   = false,
 WHERE  locale     = %(locale)s
   AND  updated_at < %(run_start)s
   AND  in_stock   = true
+RETURNING element_id
+"""
+
+# PAB stock-status volatility history. One row per (element_id, region, month),
+# accumulated across every representative-locale observation in that month --
+# deliberately additive (+=, OR), not an overwrite, since each write is one
+# incremental event, not a full-month recompute (unlike bl_price_guide_monthly's
+# overwrite-style upsert).
+UPSERT_STOCK_MONTHLY = """
+INSERT INTO lego_element_stock_monthly
+    (element_id, region, month, to_in_stock_count, to_out_of_stock_count,
+     seen_in_stock, seen_out_of_stock, updated_at)
+VALUES %s
+ON CONFLICT (element_id, region, month) DO UPDATE SET
+    to_in_stock_count     = lego_element_stock_monthly.to_in_stock_count + EXCLUDED.to_in_stock_count,
+    to_out_of_stock_count = lego_element_stock_monthly.to_out_of_stock_count + EXCLUDED.to_out_of_stock_count,
+    seen_in_stock          = lego_element_stock_monthly.seen_in_stock OR EXCLUDED.seen_in_stock,
+    seen_out_of_stock      = lego_element_stock_monthly.seen_out_of_stock OR EXCLUDED.seen_out_of_stock,
+    updated_at             = EXCLUDED.updated_at
+"""
+
+# Current-state pointer, separate from the monthly log since "current" has no
+# month dimension. Rows are created lazily on first observation only -- an
+# element never seen on PAB never gets a row here (see record_stock_observation).
+UPSERT_STOCK_STATE = """
+INSERT INTO lego_element_stock_state
+    (element_id, region, currently_in_stock, last_seen_in_stock_at, updated_at)
+VALUES %s
+ON CONFLICT (element_id, region) DO UPDATE SET
+    currently_in_stock    = EXCLUDED.currently_in_stock,
+    last_seen_in_stock_at = CASE WHEN EXCLUDED.currently_in_stock
+                                  THEN EXCLUDED.updated_at
+                                  ELSE lego_element_stock_state.last_seen_in_stock_at END,
+    updated_at             = EXCLUDED.updated_at
 """
 
 # For en-us canonical table: channel → 'oos' for anything not seen this run.
@@ -580,10 +621,50 @@ def send_enrichment_report(resolved: list[tuple[int, str, int, str]], unresolved
         print(f"Failed to send enrichment report email: {e}", file=sys.stderr)
 
 
-def write_prices(cur, rows: list[dict]) -> tuple[int, set[int]]:
+def record_stock_events(cur, events: list[tuple[int, str, bool | None, bool]], now: datetime) -> int:
+    """events: (element_id, locale, old_in_stock, new_in_stock) tuples for
+    representative-locale observations only (locale in OOS_LOCALES -- callers
+    must filter before building this list, region bucketing here assumes it).
+    Builds and upserts lego_element_stock_monthly + lego_element_stock_state.
+    old_in_stock is None for a first-ever observation, which is never a flip.
+    Returns the number of distinct (element_id, region) pairs touched."""
+    if not events:
+        return 0
+    # De-dup by (element_id, region), keeping the last occurrence -- a single
+    # locale's rows shouldn't contain the same element twice, but a duplicate
+    # would otherwise crash the upsert ("ON CONFLICT DO UPDATE command cannot
+    # affect row a second time") rather than silently being a no-op.
+    deduped: dict[tuple[int, str], tuple[bool | None, bool]] = {}
+    for element_id, locale, old_in_stock, new_in_stock in events:
+        deduped[(element_id, LOCALE_TO_GROUP[locale])] = (old_in_stock, new_in_stock)
+
+    month = date(now.year, now.month, 1)
+    monthly_rows = []
+    state_rows = []
+    for (element_id, region), (old_in_stock, new_in_stock) in deduped.items():
+        is_flip = old_in_stock is not None and old_in_stock != new_in_stock
+        to_in_stock_count = 1 if (is_flip and new_in_stock) else 0
+        to_out_of_stock_count = 1 if (is_flip and not new_in_stock) else 0
+        monthly_rows.append((
+            element_id, region, month,
+            to_in_stock_count, to_out_of_stock_count,
+            bool(new_in_stock), not new_in_stock, now,
+        ))
+        state_rows.append((
+            element_id, region, new_in_stock,
+            now if new_in_stock else None, now,
+        ))
+    psycopg2.extras.execute_values(cur, UPSERT_STOCK_MONTHLY, monthly_rows, page_size=500)
+    psycopg2.extras.execute_values(cur, UPSERT_STOCK_STATE, state_rows, page_size=500)
+    return len(deduped)
+
+
+def write_prices(cur, rows: list[dict], now: datetime) -> tuple[int, set[int]]:
     """Upserts price rows, returning (rows written, element_ids whose price_cents
     or in_stock actually differ from what was already in the DB) -- the latter
-    drives targeted Cloudflare cache purging instead of a blanket purge_everything."""
+    drives targeted Cloudflare cache purging instead of a blanket purge_everything.
+    Also feeds representative-locale in_stock transitions into
+    lego_element_stock_monthly/lego_element_stock_state via record_stock_events."""
     keys = [(r["element_id"], r["locale"]) for r in rows]
     before: dict[tuple[int, str], tuple[int | None, bool | None]] = {}
     if keys:
@@ -595,6 +676,18 @@ def write_prices(cur, rows: list[dict]) -> tuple[int, set[int]]:
             (element_ids, locales),
         )
         before = {(r[0], r[1]): (r[2], r[3]) for r in cur.fetchall()}
+
+    # Only representative locales drive stock-volatility bookkeeping -- sibling
+    # locales in the same group would re-observe the same real-world transition
+    # and inflate the counts (see LOCALE_TO_GROUP / record_stock_events).
+    stock_events = []
+    for r in rows:
+        if r["locale"] not in OOS_LOCALES:
+            continue
+        old = before.get((r["element_id"], r["locale"]))
+        old_in_stock = old[1] if old is not None else None
+        stock_events.append((r["element_id"], r["locale"], old_in_stock, r["in_stock"]))
+    record_stock_events(cur, stock_events, now)
 
     changed_element_ids: set[int] = set()
     for r in rows:
@@ -860,7 +953,7 @@ def main():
                         # Keeps the stale-element check accurate across all locales.
                         ensure_elements_exist(cur, rows, now)
 
-                    n, changed = write_prices(cur, rows)
+                    n, changed = write_prices(cur, rows, now)
                     total_prices += n
                     run_changed_elements.update(changed)
 
@@ -870,9 +963,16 @@ def main():
                     # since it intentionally fetches only a partial catalog.
                     if args.mode == "full" and scan_complete:
                         cur.execute(MARK_STALE_PRICES_OOS, {"now": now, "locale": locale, "run_start": locale_start})
-                        stale_p = cur.rowcount
+                        stale_rows = cur.fetchall()
+                        stale_p = len(stale_rows)
                         if stale_p:
                             print(f"  [{locale}] {stale_p} price rows marked out-of-stock (left catalog)", flush=True)
+                            # Every returned row is a genuine true->false transition
+                            # (the UPDATE's WHERE clause requires in_stock = true),
+                            # so old_in_stock is unconditionally True here.
+                            if locale in OOS_LOCALES:
+                                stale_events = [(row[0], locale, True, False) for row in stale_rows]
+                                record_stock_events(cur, stale_events, now)
                     elif args.mode == "full" and not scan_complete:
                         print(f"  [{locale}] scan incomplete — skipping stale detection to avoid false OOS", flush=True)
 
