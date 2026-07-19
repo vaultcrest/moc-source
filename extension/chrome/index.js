@@ -180,6 +180,132 @@ const ROLE_LABELS = {
   "pab-overflow": "Bestseller Overflow", "bap-overflow": "Standard Overflow",
 };
 
+// ── GWP threshold-aware multi-cart allocation planning ──────────────────────
+// Pure functions (no DOM/storage access) used by showLegoSaveDiff()'s save flow
+// to decide which of a project's linked Pick-A-Brick carts each lot lands in.
+
+// Largest-lot-value-first (first-fit-decreasing style) fill order. Heuristic,
+// not an exact bin-pack solve: can overshoot a cart's GWP threshold by up to one
+// lot's value, and never backtracks across carts to minimize total overshoot.
+// Acceptable because hard lot/qty limits are unaffected either way, and the goal
+// is "reduce which carts miss GWP," not exact optimization.
+function sortByFillHeuristic(parts) {
+  return [...parts].sort((a, b) => (b.qty * b.priceCents) - (a.qty * a.priceCents));
+}
+
+// Resolves, per channel, the ordered list of destination carts to fill in turn.
+// main (if present) is always the primary for both channels; pab-only/bap-only
+// only come into play when there's no main. Array order within a role is fill
+// priority -- already load-bearing today (it's how the old overflowCarts[0]
+// picked "the" overflow cart), just formalized here instead of accidental.
+function resolveLegoDestinationChains(projLgCarts) {
+  const byRole = role => projLgCarts.filter(c => c.role === role);
+  const main = byRole("main")[0] ?? null;
+
+  const pabPrimary = main ?? byRole("pab-only")[0] ?? null;
+  const bapPrimary = main ?? byRole("bap-only")[0] ?? null;
+
+  const sharedOverflow = byRole("overflow");
+  const pabOverflow = [...byRole("pab-overflow"), ...sharedOverflow];
+  const bapOverflow = [...byRole("bap-overflow"), ...sharedOverflow];
+
+  return {
+    pab: [pabPrimary, ...pabOverflow].filter(Boolean),
+    bap: [bapPrimary, ...bapOverflow].filter(Boolean),
+  };
+}
+
+// Fills `chain` with `parts` (already channel-filtered, each carrying
+// qty/priceCents). lotCounts is keyed "${cartId}:${channel}" since LEGO's
+// 200-lot cap applies per live channel-cart even when PAB+STD share one local
+// cart record; dollarTotals is keyed by cartId alone since the GWP threshold is
+// checked against the combined PAB+STD total per destination cart. Both maps
+// are shared across the pab/bap/forced-overflow calls in planLegoDistribution
+// so limits are enforced cumulatively, not reset per call.
+function fillChannelIntoChain(parts, chain, channel, threshold, lotCounts, dollarTotals) {
+  const placements = new Map(chain.map(c => [c.cart.id, []]));
+  const forcedOverflow = [];
+  const unplaced = [];
+
+  // Pre-split any lot whose own qty exceeds the hard per-lot cap -- unaffected
+  // by threshold/chain, identical to the original splitChannel_ behavior.
+  const toPlace = [];
+  for (const lot of parts) {
+    if (lot.qty > LEGO_CART_QTY_LIMIT) {
+      toPlace.push({ ...lot, qty: LEGO_CART_QTY_LIMIT });
+      forcedOverflow.push({ ...lot, qty: lot.qty - LEGO_CART_QTY_LIMIT });
+    } else {
+      toPlace.push(lot);
+    }
+  }
+
+  const sorted = sortByFillHeuristic(toPlace);
+  let chainIdx = 0;
+  for (const lot of sorted) {
+    let placed = false;
+    while (chainIdx < chain.length) {
+      const dest = chain[chainIdx];
+      const cartId = dest.cart.id;
+      const lotKey = `${cartId}:${channel}`;
+      const curLots  = lotCounts.get(lotKey) ?? 0;
+      const curTotal = dollarTotals.get(cartId) ?? 0;
+
+      if (curLots >= LEGO_CART_LOT_LIMIT) { chainIdx++; continue; }
+      if (threshold > 0 && curTotal >= threshold) { chainIdx++; continue; }
+
+      placements.get(cartId).push(lot);
+      lotCounts.set(lotKey, curLots + 1);
+      dollarTotals.set(cartId, curTotal + (lot.qty * lot.priceCents) / 100);
+      placed = true;
+      break;
+    }
+    if (!placed) unplaced.push(lot);
+  }
+
+  return { placements, forcedOverflow, unplaced };
+}
+
+// Top-level: resolves destination chains, fills PAB fully then BAP (fixed,
+// deterministic order so a shared "overflow" cart's combined total reflects
+// both channels), then folds forced (999-qty) overflow back through a second
+// pass against the same chains/state rather than special-casing it -- it lands
+// wherever there's still hard-limit room, same as any other lot.
+function planLegoDistribution(newParts, projLgCarts, threshold) {
+  const chains = resolveLegoDestinationChains(projLgCarts);
+  const lotCounts = new Map();
+  const dollarTotals = new Map();
+
+  const pabParts = newParts.filter(p => p.channel === "pab");
+  const bapParts = newParts.filter(p => p.channel === "bap");
+
+  const pabResult = fillChannelIntoChain(pabParts, chains.pab, "pab", threshold, lotCounts, dollarTotals);
+  const bapResult = fillChannelIntoChain(bapParts, chains.bap, "bap", threshold, lotCounts, dollarTotals);
+  const forcedPab = fillChannelIntoChain(pabResult.forcedOverflow, chains.pab, "pab", threshold, lotCounts, dollarTotals);
+  const forcedBap = fillChannelIntoChain(bapResult.forcedOverflow, chains.bap, "bap", threshold, lotCounts, dollarTotals);
+
+  const perCart = new Map();
+  const mergeInto = placements => {
+    for (const [cartId, lots] of placements) {
+      if (!lots.length) continue;
+      if (!perCart.has(cartId)) perCart.set(cartId, []);
+      perCart.get(cartId).push(...lots);
+    }
+  };
+  mergeInto(pabResult.placements);
+  mergeInto(bapResult.placements);
+  mergeInto(forcedPab.placements);
+  mergeInto(forcedBap.placements);
+
+  return {
+    perCart,
+    unplaced: {
+      pab: [...pabResult.unplaced, ...forcedPab.unplaced],
+      bap: [...bapResult.unplaced, ...forcedBap.unplaced],
+    },
+    chains,
+  };
+}
+
 function summaryPanel(parts, cart) {
   const cats = {
     pab: { lots: 0, pieces: 0, price: 0, hasPrice: true },
@@ -1591,7 +1717,10 @@ async function renderProjectDetail(id, content) {
     if (!legoCart) return;
     if (document.querySelector(".lego-diff-modal")) return;
 
-    // Build the new parts list from current LEGO allocations
+    // Build the new parts list from current LEGO allocations, with priceCents
+    // attached -- needed by the fill heuristic and every $ total below. PAB
+    // pricing has no bulk tiers (unlike BL store carts), so a flat multiply is
+    // correct: qty * priceCents/100, no distributeLots/tierPriceFor involved.
     const newParts = Object.entries(currentAllocs)
       .filter(([, a]) => (a.legoQty ?? 0) > 0)
       .map(([key, a]) => {
@@ -1599,76 +1728,140 @@ async function renderProjectDetail(id, content) {
         const eid  = part?.pabEntry?.element_id;
         if (!eid) return null;
         return {
-          elementId: eid,
-          designId:  part.pabEntry.design_id || part.partNo,
-          name:      part.pabEntry.bl_part_name || part.name || key,
-          qty:       a.legoQty,
-          channel:   part.pabEntry.channel,
+          elementId:  eid,
+          designId:   part.pabEntry.design_id || part.partNo,
+          name:       part.pabEntry.bl_part_name || part.name || key,
+          qty:        a.legoQty,
+          channel:    part.pabEntry.channel,
+          priceCents: part.pabEntry.price_cents ?? 0,
         };
       }).filter(Boolean);
 
-    const curParts = legoCart.parts ?? [];
-    const curMap   = new Map(curParts.map(p => [p.elementId, p]));
-    const newMap   = new Map(newParts.map(p => [p.elementId, p]));
-
-    const added   = newParts.filter(p => !curMap.has(p.elementId));
-    const removed = curParts.filter(p => !newMap.has(p.elementId));
-    const changed = newParts.filter(p => {
-      const cur = curMap.get(p.elementId);
-      return cur && cur.qty !== p.qty;
-    });
-    const unchanged = newParts.filter(p => {
-      const cur = curMap.get(p.elementId);
-      return cur && cur.qty === p.qty;
-    });
-
-    const fmt = p => `<div style="padding:2px 0;font-size:12px">${esc(p.name)}<span style="color:#9ca3af;margin-left:6px">${p.elementId}</span></div>`;
-    const fmtChg = p => {
-      const old = curMap.get(p.elementId)?.qty ?? "?";
-      return `<div style="padding:2px 0;font-size:12px">${esc(p.name)} <span style="color:#9ca3af">${old} → <strong>${p.qty}</strong></span></div>`;
-    };
-
-    const noChanges = added.length === 0 && removed.length === 0 && changed.length === 0;
-
-    // Overflow detection
-    const pabLots    = newParts.filter(p => p.channel === "pab").length;
-    const bapLots    = newParts.filter(p => p.channel === "bap").length;
-    const qtyOverParts = newParts.filter(p => p.qty > LEGO_CART_QTY_LIMIT);
-    const isOverLimit  = pabLots > LEGO_CART_LOT_LIMIT || bapLots > LEGO_CART_LOT_LIMIT || qtyOverParts.length > 0;
+    // Parts with no resolved pab/bap channel have no destination chain to route
+    // through -- preserved as-is into the primary cart, same as today.
+    const routedParts = newParts.filter(p => p.channel === "pab" || p.channel === "bap");
+    const otherParts   = newParts.filter(p => p.channel !== "pab" && p.channel !== "bap");
 
     const overflowCarts = _projLgCarts.filter(c =>
       ["overflow", "pab-overflow", "bap-overflow"].includes(c.role)
     );
     const hasConfiguredOverflow = overflowCarts.length > 0;
+    const threshold = project.gwpThreshold ?? 0;
 
-    const overflowBanner = isOverLimit ? `
-      <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;margin-top:12px;font-size:13px">
-        <div style="font-weight:700;color:#dc2626;margin-bottom:4px">&#9888; Exceeds LEGO's transfer limits</div>
-        ${pabLots > LEGO_CART_LOT_LIMIT ? `<div style="color:#7f1d1d">PAB Bestseller: <strong>${pabLots} lots</strong> — ${pabLots - LEGO_CART_LOT_LIMIT} over the ${LEGO_CART_LOT_LIMIT}-lot limit</div>` : ""}
-        ${bapLots > LEGO_CART_LOT_LIMIT ? `<div style="color:#7f1d1d">PAB Standard: <strong>${bapLots} lots</strong> — ${bapLots - LEGO_CART_LOT_LIMIT} over the ${LEGO_CART_LOT_LIMIT}-lot limit</div>` : ""}
-        ${qtyOverParts.map(p => `<div style="color:#7f1d1d">${esc(p.name)}: qty <strong>${p.qty}</strong> — ${p.qty - LEGO_CART_QTY_LIMIT} over the ${LEGO_CART_QTY_LIMIT}-unit limit</div>`).join("")}
-        <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">
-          <button id="lego-diff-save-overflow" style="padding:5px 12px;font-size:12px;font-weight:600;background:#dc2626;color:#fff;border:none;border-radius:4px;cursor:pointer">${hasConfiguredOverflow ? `Save → ${esc(overflowCarts[0].cart.name)}` : "Save + Create Overflow Cart"}</button>
-          ${!hasConfiguredOverflow ? `<button id="lego-diff-add-overflow-cart" style="padding:5px 12px;font-size:12px;background:#fff;border:1px solid #d1d5db;border-radius:4px;cursor:pointer">Add Overflow Cart to Project &#8594;</button>` : ""}
-        </div>
+    const plan = planLegoDistribution(routedParts, _projLgCarts, threshold);
+
+    // otherParts always land in the primary (main-or-first) cart, unrouted --
+    // matches today's unconditional keepList.push(otherParts_) exactly.
+    if (otherParts.length) {
+      if (!plan.perCart.has(legoCart.id)) plan.perCart.set(legoCart.id, []);
+      plan.perCart.get(legoCart.id).unshift(...otherParts);
+    }
+
+    const totalUnplaced = plan.unplaced.pab.length + plan.unplaced.bap.length;
+
+    let fallbackCart = null; // only set when auto-creating the no-overflow-configured catch-all
+    if (totalUnplaced > 0 && !hasConfiguredOverflow) {
+      // No overflow-family cart configured at all -- same escape hatch as
+      // before: dump everything unplaced into one brand-new uncapped,
+      // threshold-less cart rather than blocking the save. A threshold-aware
+      // auto-created cart would just need its own overflow in turn, which is
+      // exactly what the "configure an overflow cart" nudge below is for.
+      fallbackCart = {
+        id:         String(Date.now()),
+        name:       `${legoCart.name} — Overflow`,
+        savedAt:    new Date().toISOString(),
+        locale:     legoCart.locale,
+        partsCount: totalUnplaced,
+        parts:      [...plan.unplaced.pab, ...plan.unplaced.bap],
+      };
+    }
+    // Real exhaustion: overflow carts ARE configured but every destination in
+    // the chain is already at its hard 200-lot cap. Never silently drop parts
+    // -- block save and point at Setup instead.
+    const isExhausted = totalUnplaced > 0 && hasConfiguredOverflow;
+
+    // One diff section per destination cart actually touched by the plan (or
+    // that currently holds parts belonging to this project's cart set, so a
+    // cart the plan emptied out still shows its removals).
+    const sectionCartIds = new Set([
+      ...plan.perCart.keys(),
+      ..._projLgCarts.filter(c => (c.cart.parts ?? []).length).map(c => c.cartId),
+    ]);
+    const sections = _projLgCarts
+      .filter(c => sectionCartIds.has(c.cartId))
+      .map(c => {
+        const plannedParts = plan.perCart.get(c.cartId) ?? [];
+        const curParts = c.cart.parts ?? [];
+        const curMap = new Map(curParts.map(p => [p.elementId, p]));
+        const newMap = new Map(plannedParts.map(p => [p.elementId, p]));
+        return {
+          cartRef: c,
+          plannedParts,
+          added:     plannedParts.filter(p => !curMap.has(p.elementId)),
+          removed:   curParts.filter(p => !newMap.has(p.elementId)),
+          changed:   plannedParts.filter(p => { const cur = curMap.get(p.elementId); return cur && cur.qty !== p.qty; }),
+          unchanged: plannedParts.filter(p => { const cur = curMap.get(p.elementId); return cur && cur.qty === p.qty; }),
+          total:     plannedParts.reduce((s, p) => s + (p.qty * p.priceCents) / 100, 0),
+        };
+      })
+      // Primary (main-or-first) first, then the rest in configured order.
+      .sort((a, b) => (a.cartRef.cart.id === legoCart.id ? -1 : 0) - (b.cartRef.cart.id === legoCart.id ? -1 : 0));
+
+    const noChanges = !isExhausted && !fallbackCart &&
+      sections.every(s => s.added.length === 0 && s.removed.length === 0 && s.changed.length === 0);
+
+    const fmt = p => `<div style="padding:2px 0;font-size:12px">${esc(p.name)}<span style="color:#9ca3af;margin-left:6px">${p.elementId}</span></div>`;
+    const fmtChg = (p, curMap) => {
+      const old = curMap.get(p.elementId)?.qty ?? "?";
+      return `<div style="padding:2px 0;font-size:12px">${esc(p.name)} <span style="color:#9ca3af">${old} → <strong>${p.qty}</strong></span></div>`;
+    };
+
+    const sectionHtml = sections.map(s => {
+      const curMap = new Map((s.cartRef.cart.parts ?? []).map(p => [p.elementId, p]));
+      const roleLabel = ROLE_LABELS[s.cartRef.role] ?? s.cartRef.role;
+      return `
+        <div style="margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid #f3f4f6">
+          <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px">
+            <div style="font-size:13px;font-weight:700">${esc(s.cartRef.cart.name)} <span style="font-weight:400;color:#9ca3af;font-size:11px">(${esc(roleLabel)})</span></div>
+            <div style="font-size:11px;color:#6c757d">${s.plannedParts.length} lots · $${ceilToCents(s.total).toFixed(2)}</div>
+          </div>
+          ${s.added.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added (${s.added.length})</div>${s.added.map(fmt).join("")}</div>` : ""}
+          ${s.removed.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${s.removed.length})</div>${s.removed.map(fmt).join("")}</div>` : ""}
+          ${s.changed.length ? `<div style="margin-bottom:8px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty changed (${s.changed.length})</div>${s.changed.map(p => fmtChg(p, curMap)).join("")}</div>` : ""}
+          ${!s.added.length && !s.removed.length && !s.changed.length ? `<div style="font-size:12px;color:#9ca3af">No changes.</div>` : ""}
+        </div>`;
+    }).join("");
+
+    const fallbackHtml = fallbackCart ? `
+      <div style="background:#fefce8;border:1px solid #fde047;border-radius:6px;padding:10px 14px;margin-top:8px;font-size:13px">
+        <div style="font-weight:700;color:#a16207;margin-bottom:4px">No overflow cart configured</div>
+        <div style="color:#854d0e">"${esc(fallbackCart.name)}" will be created to hold ${fallbackCart.partsCount} lots that don't fit in ${esc(legoCart.name)}.</div>
+      </div>` : "";
+
+    const stuckChannels = [
+      plan.unplaced.pab.length ? `${plan.unplaced.pab.length} Bestseller` : null,
+      plan.unplaced.bap.length ? `${plan.unplaced.bap.length} Standard` : null,
+    ].filter(Boolean);
+    const exhaustedHtml = isExhausted ? `
+      <div style="background:#fef2f2;border:1px solid #fca5a5;border-radius:6px;padding:10px 14px;margin-top:8px;font-size:13px">
+        <div style="font-weight:700;color:#dc2626;margin-bottom:4px">&#9888; Not enough cart capacity</div>
+        <div style="color:#7f1d1d">Every configured cart is at the ${LEGO_CART_LOT_LIMIT}-lot limit — <strong>${stuckChannels.join(" and ")} lots</strong> have nowhere to go.</div>
+        <div style="margin-top:6px"><button id="lego-diff-add-overflow-cart" style="padding:5px 12px;font-size:12px;background:#fff;border:1px solid #d1d5db;border-radius:4px;cursor:pointer">Add Overflow Cart to Project &#8594;</button></div>
       </div>` : "";
 
     const modal = document.createElement("div");
     modal.style.cssText = "position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:16px";
     modal.innerHTML = `
-      <div style="background:#fff;border-radius:8px;padding:24px;max-width:480px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
-        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save to Pick-A-Brick Cart</div>
-        <div style="font-size:12px;color:#6c757d;margin-bottom:16px">Replacing <strong>${esc(legoCart.name)}</strong> · ${unchanged.length + added.length + changed.length} lots</div>
-        ${noChanges ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — cart is already up to date.</div>` : `
-          <div style="overflow-y:auto;flex:1;min-height:0">
-            ${added.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#16a34a;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Added (${added.length})</div>${added.map(fmt).join("")}</div>` : ""}
-            ${removed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#dc2626;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Removed (${removed.length})</div>${removed.map(fmt).join("")}</div>` : ""}
-            ${changed.length ? `<div style="margin-bottom:12px"><div style="font-size:11px;font-weight:700;color:#d97706;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px">Qty changed (${changed.length})</div>${changed.map(fmtChg).join("")}</div>` : ""}
-          </div>`}
-        ${overflowBanner}
+      <div style="background:#fff;border-radius:8px;padding:24px;max-width:520px;width:100%;max-height:80vh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,0.3)">
+        <div style="font-size:16px;font-weight:700;margin-bottom:4px">Save to Pick-A-Brick Cart${sections.length > 1 || fallbackCart ? "s" : ""}</div>
+        <div style="font-size:12px;color:#6c757d;margin-bottom:16px">${sections.length} destination cart${sections.length === 1 ? "" : "s"}${threshold > 0 ? ` · GWP threshold $${threshold.toFixed(2)}` : ""}</div>
+        ${noChanges ? `<div style="padding:12px;background:#f0fdf4;border-radius:6px;font-size:13px;color:#16a34a">No changes — cart${sections.length === 1 ? " is" : "s are"} already up to date.</div>` : `
+          <div style="overflow-y:auto;flex:1;min-height:0">${sectionHtml}</div>`}
+        ${fallbackHtml}
+        ${exhaustedHtml}
         <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;padding-top:16px;border-top:1px solid #f3f4f6">
           <button id="lego-diff-cancel" class="btn">Cancel</button>
-          ${!noChanges ? `<button id="lego-diff-confirm" class="btn btn-danger">Replace Cart</button>` : ""}
+          ${!noChanges && !isExhausted ? `<button id="lego-diff-save-plan" class="btn btn-danger">${sections.length > 1 || fallbackCart ? `Save → ${sections.length + (fallbackCart ? 1 : 0)} carts` : "Replace Cart"}</button>` : ""}
         </div>
       </div>`;
 
@@ -1678,111 +1871,42 @@ async function renderProjectDetail(id, content) {
     modal.querySelector("#lego-diff-cancel").addEventListener("click", () => modal.remove());
     modal.addEventListener("click", e => { if (e.target === modal) modal.remove(); });
 
-    // Overflow: "Add Overflow Cart to Project →" — navigate to project setup
     modal.querySelector("#lego-diff-add-overflow-cart")?.addEventListener("click", () => {
       modal.remove();
       renderProjectSetup(id, content);
     });
 
-    // Overflow: "Save + Create Overflow Cart" — split into keep + overflow, create new cart
-    modal.querySelector("#lego-diff-save-overflow")?.addEventListener("click", async () => {
-      const limit    = LEGO_CART_LOT_LIMIT;
-      const qtyLimit = LEGO_CART_QTY_LIMIT;
-
-      const pabParts_   = newParts.filter(p => p.channel === "pab");
-      const bapParts_   = newParts.filter(p => p.channel === "bap");
-      const otherParts_ = newParts.filter(p => p.channel !== "pab" && p.channel !== "bap");
-
-      const keepList = [];
-      const overList = [];
-
-      function splitChannel_(parts) {
-        for (const p of parts.slice(0, limit)) {
-          if (p.qty > qtyLimit) {
-            keepList.push({ ...p, qty: qtyLimit });
-            overList.push({ ...p, qty: p.qty - qtyLimit });
-          } else {
-            keepList.push(p);
-          }
-        }
-        for (const p of parts.slice(limit)) overList.push(p);
-      }
-
-      splitChannel_(pabParts_);
-      splitChannel_(bapParts_);
-      for (const p of otherParts_) keepList.push(p);
-
+    modal.querySelector("#lego-diff-save-plan")?.addEventListener("click", async () => {
       const { legoCarts: allCarts = [] } = await chrome.storage.local.get("legoCarts");
-      const cartToUpdate = allCarts.find(c => c.id === legoCart.id);
-      if (cartToUpdate) {
-        cartToUpdate.parts      = keepList;
-        cartToUpdate.savedAt    = new Date().toISOString();
-        cartToUpdate.partsCount = keepList.length;
-      }
 
-      let toastMsg;
-      if (hasConfiguredOverflow && overList.length) {
-        const oc = overflowCarts[0].cart;
-        const ocStorage = allCarts.find(c => c.id === oc.id);
-        if (ocStorage) {
-          const ocMap = new Map((ocStorage.parts ?? []).map(p => [p.elementId, p]));
-          for (const p of overList) {
-            if (ocMap.has(p.elementId)) {
-              ocMap.get(p.elementId).qty += p.qty;
-            } else {
-              ocMap.set(p.elementId, { ...p });
-            }
-          }
-          ocStorage.parts      = [...ocMap.values()];
-          ocStorage.partsCount = ocStorage.parts.length;
-          ocStorage.savedAt    = new Date().toISOString();
-        }
-        toastMsg = `Saved. ${overList.length} lots routed to "${oc.name}".`;
-      } else if (overList.length) {
-        const overflowCart = {
-          id:         String(Date.now()),
-          name:       `${legoCart.name} — Overflow`,
-          savedAt:    new Date().toISOString(),
-          locale:     legoCart.locale,
-          partsCount: overList.length,
-          parts:      overList,
-        };
-        allCarts.push(overflowCart);
-        toastMsg = `Saved. "${overflowCart.name}" created with ${overList.length} lots.`;
-      } else {
-        toastMsg = "Saved. No overflow parts to separate.";
+      for (const s of sections) {
+        const cartToUpdate = allCarts.find(c => c.id === s.cartRef.cartId);
+        if (!cartToUpdate) continue;
+        cartToUpdate.parts      = s.plannedParts;
+        cartToUpdate.savedAt    = new Date().toISOString();
+        cartToUpdate.partsCount = s.plannedParts.length;
+        if (cartToUpdate.id === legoCart.id) legoCart.parts = s.plannedParts; // in-memory ref
       }
+      if (fallbackCart) allCarts.push(fallbackCart);
 
       await chrome.storage.local.set({ legoCarts: allCarts });
-      legoCart.parts = keepList;
       modal.remove();
       refreshLegoSection();
       refreshGrandTotal();
 
+      const toastParts = sections
+        .filter(s => s.plannedParts.length)
+        .map(s => {
+          const cleared = threshold > 0 && s.total >= threshold ? ", cleared GWP" : "";
+          return `${s.cartRef.cart.name}: ${s.plannedParts.length} lots ($${ceilToCents(s.total).toFixed(2)}${cleared})`;
+        });
+      if (fallbackCart) toastParts.push(`${fallbackCart.name}: ${fallbackCart.partsCount} lots`);
       const toast = document.createElement("div");
-      toast.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#15803d;color:#fff;padding:10px 24px;border-radius:6px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2)";
-      toast.textContent = toastMsg;
+      toast.style.cssText = "position:fixed;top:20px;left:50%;transform:translateX(-50%);background:#15803d;color:#fff;padding:10px 24px;border-radius:6px;font-size:14px;font-weight:600;z-index:9999;box-shadow:0 4px 12px rgba(0,0,0,.2);max-width:80vw";
+      toast.textContent = `Saved. ${toastParts.join(" · ") || "No changes."}`;
       document.body.appendChild(toast);
-      setTimeout(() => toast.remove(), 4000);
+      setTimeout(() => toast.remove(), 4500);
     });
-
-    const confirmBtn = modal.querySelector("#lego-diff-confirm");
-    if (confirmBtn) {
-      confirmBtn.addEventListener("click", async () => {
-        const { legoCarts = [] } = await chrome.storage.local.get("legoCarts");
-        const cart = legoCarts.find(c => c.id === legoCart.id);
-        if (cart) {
-          cart.parts     = newParts;
-          cart.savedAt   = new Date().toISOString();
-          cart.partsCount = newParts.length;
-          await chrome.storage.local.set({ legoCarts });
-          legoCart.parts = newParts; // update in-memory reference
-        }
-        modal.remove();
-        refreshLegoSection();
-        refreshGrandTotal();
-      });
-    }
   }
 
   function showBlCartSave(cart) {
@@ -3262,6 +3386,13 @@ async function renderProjectSetup(id, content) {
             ? `<div id="lego-cart-rows">${existingLgRows || ""}</div>`
             : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No Pick-A-Brick carts saved yet. Save a cart from a LEGO PAB transfer first.</div>`}
         </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:2px 16px 10px">
+          <label for="gwp-threshold-input" style="font-size:11px;color:#6c757d">GWP threshold $</label>
+          <input id="gwp-threshold-input" type="number" min="0" step="1" placeholder="off"
+            value="${project.gwpThreshold || ""}"
+            style="width:70px;font-size:12px;padding:3px 6px;border:1px solid #d1d5db;border-radius:4px">
+          <span style="font-size:11px;color:#9ca3af">each destination cart's combined total tries to clear this before spilling to the next</span>
+        </div>
       </div>
 
       <div class="section">
@@ -3316,11 +3447,17 @@ async function renderProjectSetup(id, content) {
     newRow.querySelector(".lego-cart-remove-btn").addEventListener("click", () => newRow.remove());
   });
 
-  // Enforce single Main role: demote previous Main to Overflow when a new Main is selected
+  // Enforce single-cart-per-primary-role: main, pab-only, and bap-only are each
+  // consulted as `[0]` by resolveLegoDestinationChains(), so a second row with
+  // the same role would silently be unreachable. Demote the previous holder to
+  // Overflow when a new row claims one of these roles. overflow/pab-overflow/
+  // bap-overflow are legitimately multi-cart chains and are left alone.
+  const SINGLE_CART_ROLES = new Set(["main", "pab-only", "bap-only"]);
   lgRowsContainer?.addEventListener("change", e => {
-    if (!e.target.classList.contains("lego-cart-role-sel") || e.target.value !== "main") return;
+    if (!e.target.classList.contains("lego-cart-role-sel") || !SINGLE_CART_ROLES.has(e.target.value)) return;
+    const role = e.target.value;
     for (const sel of lgRowsContainer.querySelectorAll(".lego-cart-role-sel")) {
-      if (sel !== e.target && sel.value === "main") sel.value = "overflow";
+      if (sel !== e.target && sel.value === role) sel.value = "overflow";
     }
   });
 
@@ -3334,6 +3471,8 @@ async function renderProjectSetup(id, content) {
       .map(row => ({ cartId: row.querySelector(".lego-cart-sel").value, role: row.querySelector(".lego-cart-role-sel").value }))
       .filter(c => c.cartId);
     const newScratch = scratchSelect.value || null;
+    const gwpVal = parseFloat(content.querySelector("#gwp-threshold-input")?.value);
+    const newGwpThreshold = (!isNaN(gwpVal) && gwpVal > 0) ? gwpVal : null;
 
     const { projects: cur = [], wantedLists = [], carts = [] } =
       await chrome.storage.local.get(["projects", "wantedLists", "carts"]);
@@ -3399,6 +3538,7 @@ async function renderProjectSetup(id, content) {
       proj.legoCartIds         = newLegoCartIds;
       delete proj.legoCartId;
       proj.scratchWantedListId = newScratch;
+      proj.gwpThreshold        = newGwpThreshold;
       await chrome.storage.local.set({ projects: cur });
     }
     renderProjectDetail(id, content);
