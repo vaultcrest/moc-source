@@ -2,7 +2,7 @@
 
 All notable changes to MOC Source are documented here.
 
-## [Unreleased]
+## [0.4.18] — 2026-07-18
 
 ### Extension
 - Fixed (actual root cause): every Wanted List / Cart detail page has been permanently unable to load PAB prices since v0.4.17. That release's Project-detail listener-stacking fix accidentally also touched `attachDetailListeners` (a completely unrelated function used by all list/cart detail pages), converting a working `content.addEventListener("click", ...)` call into `addClick(...)` — but `addClick` is only defined as a local helper inside `renderProjectDetail`, not here. Calling it threw `ReferenceError: addClick is not defined` on every single page visit, which aborted `renderDetailView()` — and since that call happens *before* `renderListDetail`'s PAB-price fetch loop, the fetch loop never ran at all, leaving every row frozen at its initial "…" placeholder. (Confirmed via `git log -p` showing the accidental find-replace, and by reproducing the exact call chain in Node to verify the fetch never fires once the throw happens.) Gave `attachDetailListeners` its own cleanup-tracked `addListener`/`addClick` helpers (same pattern as `renderProjectDetail`'s, since this function has the identical repeated-call-on-persistent-container structure) and converted its other two direct `content.addEventListener` calls to use them too, so they stop stacking across re-renders as well.
