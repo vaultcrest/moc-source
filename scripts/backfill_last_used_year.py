@@ -27,6 +27,15 @@ bl_part_no: year_released = MIN(year_from) and last_used_year = MAX(year_to)
 across all its rb_part_nums -- the physical part's true first/last year is
 the outer bound across every variant.
 
+last_used_year also floors at the current year for any part_no with an
+element currently in-stock somewhere on PAB (2026-07-21) -- Rebrickable's
+year_to only advances once it has catalogued a set released this year that
+contains the part, which lags real-world PAB availability by months for an
+in-progress year, and never even gets Rebrickable data at all for
+still-in-production molds too new to appear in any catalogued set yet. This
+never lowers a value Rebrickable already reported, only raises unresolved
+or stale-current-year ones.
+
 Full pass every run (no batching/resumability marker) -- a complete run here
 is ~8 minutes, so nightly just re-syncs everything fresh. Writes only
 bl_part_catalog(part_no, year_released, last_used_year, looked_up_at) --
@@ -143,13 +152,36 @@ def main():
 
     years = resolve_part_years_bulk(rb_part_nums, REBRICKABLE_API_KEY, inter_call_delay=INTER_CALL_DELAY)
 
+    # Rebrickable's year_to only advances once it has catalogued a set released
+    # this year that contains the part -- for the current, still-in-progress
+    # year that lags well behind real-world PAB availability (confirmed
+    # 2026-07-21: ~1,100 parts currently in-stock on PAB still showed a stale
+    # year_to). A part in stock on PAB right now is directly proof it's in use
+    # this year, so that floors last_used_year at the current year -- it never
+    # lowers a value Rebrickable already reported, and it resolves parts
+    # Rebrickable has no record for at all (still-in-production molds too new
+    # to have a catalogued set yet).
+    cur.execute("""
+        SELECT DISTINCT bm.part_no
+        FROM bricklink_mappings bm
+        JOIN lego_element_prices lep ON lep.element_id = bm.element_id
+        WHERE lep.in_stock = true AND bm.part_no IS NOT NULL
+    """)
+    pab_active_part_nos = {r[0] for r in cur.fetchall()}
+    print(f"{len(pab_active_part_nos)} part_no(s) currently in-stock somewhere on PAB")
+
     now = datetime.now(timezone.utc)
-    resolved = unresolved = 0
+    current_year = now.year
+    resolved = unresolved = pab_corroborated = 0
     for i, (bl_part_no, rbparts) in enumerate(sorted(bl_to_rbparts.items())):
         froms = [years[rb][0] for rb in rbparts if rb in years and years[rb][0] is not None]
         tos = [years[rb][1] for rb in rbparts if rb in years and years[rb][1] is not None]
         year_released = min(froms) if froms else None
         last_used_year = max(tos) if tos else None
+
+        if bl_part_no in pab_active_part_nos and (last_used_year is None or last_used_year < current_year):
+            last_used_year = current_year
+            pab_corroborated += 1
 
         if year_released is None and last_used_year is None:
             unresolved += 1
@@ -183,7 +215,8 @@ def main():
 
     duration_s = time.monotonic() - start_time
     mins, secs = divmod(int(duration_s), 60)
-    print(f"\nDone. Resolved: {resolved}, unresolved: {unresolved}. Duration: {mins}m {secs}s")
+    print(f"\nDone. Resolved: {resolved} ({pab_corroborated} via PAB in-stock), "
+          f"unresolved: {unresolved}. Duration: {mins}m {secs}s")
 
     if not args.dry_run:
         send_report(resolved, unresolved, duration_s)
