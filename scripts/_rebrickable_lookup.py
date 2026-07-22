@@ -61,16 +61,28 @@ MAX_URL_LENGTH = 10000
 DEFAULT_RETRY_AFTER = 5.0
 
 
-def _chunk_by_length(items: list[str], base_overhead: int, max_chars: int = MAX_URL_LENGTH) -> list[list[str]]:
+def _chunk_by_length(
+    items: list[str], base_overhead: int, max_chars: int = MAX_URL_LENGTH,
+    max_items: int = MAX_PART_NUMS_PER_CALL,
+) -> list[list[str]]:
     """Group items into chunks whose comma-joined length (plus base_overhead
-    for the URL/other params) stays under max_chars. See MAX_URL_LENGTH's
-    comment for why this replaced fixed-item-count chunking."""
+    for the URL/other params) stays under max_chars, AND whose item count
+    stays under max_items. Both caps are required: for short part_nums the
+    character budget alone permits well over 1,000 items per chunk (short
+    numeric strings like "4429" pack tight), but page_size gets sent as
+    min(chunk_size, MAX_PART_NUMS_PER_CALL) -- an uncapped chunk bigger than
+    that silently re-triggers the exact page_size truncation this module
+    already had to fix once (see MAX_PART_NUMS_PER_CALL's comment), just via
+    a different trigger. Confirmed live 2026-07-21: this exact gap silently
+    dropped a reproducible 812 real parts (rechecked twice, identical both
+    times, zero HTTP errors either time -- the request itself looked fine,
+    Rebrickable just never got asked about the truncated tail)."""
     chunks: list[list[str]] = []
     current: list[str] = []
     current_chars = base_overhead
     for item in items:
         added = len(item) + (1 if current else 0)  # +1 for the joining comma
-        if current and current_chars + added > max_chars:
+        if current and (current_chars + added > max_chars or len(current) >= max_items):
             chunks.append(current)
             current = []
             current_chars = base_overhead
