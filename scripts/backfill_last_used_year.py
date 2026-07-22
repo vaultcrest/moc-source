@@ -69,7 +69,13 @@ load_dotenv()
 REBRICKABLE_API_KEY = os.environ.get("REBRICKABLE_API_KEY", "")
 INTER_CALL_DELAY = 1.2  # matches the pacing already established in _rebrickable_lookup.py callers
 
-_SERVER_DEFAULT = Path("/opt/mocsource/data/elements.csv")
+# Canonical location as of 2026-07-21: previously a second, independently
+# hand-maintained copy at /opt/mocsource/data/elements.csv, separate from
+# import_rebrickable.py's own brick_palettes_generator copy -- the two
+# drifted out of sync since each was refreshed by hand on its own schedule.
+# Both now point at scripts/download_rebrickable_data.py's single output
+# directory instead, refreshed weekly via mocsource-refresh-rebrickable-data.
+_SERVER_DEFAULT = Path("/opt/mocsource/data/rebrickable/elements.csv")
 try:
     _DEV_DEFAULT = Path(__file__).resolve().parents[2] / "brick_palettes_generator/data/rebrickable/elements.csv"
 except IndexError:

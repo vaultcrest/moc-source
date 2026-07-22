@@ -19,7 +19,15 @@ translate are skipped, not written with a guessed/raw value.
 Usage:
     DATABASE_URL=... REBRICKABLE_API_KEY=... python scripts/import_rebrickable.py [rebrickable_dir]
 
-Default rebrickable_dir: ../../brick_palettes_generator/data/rebrickable/
+Default rebrickable_dir: /opt/mocsource/data/rebrickable/ if present (kept
+fresh weekly by scripts/download_rebrickable_data.py + the
+mocsource-refresh-rebrickable-data timer, added 2026-07-21 -- previously a
+second, independently hand-maintained copy from
+../../brick_palettes_generator/data/rebrickable/, which drifted out of sync
+with backfill_last_used_year.py's own separate elements.csv copy since each
+was refreshed by hand on its own schedule). Falls back to the
+brick_palettes_generator copy for local dev where the server path doesn't
+exist.
 """
 import csv
 import os
@@ -33,10 +41,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_SERVER_DEFAULT = Path("/opt/mocsource/data/rebrickable")
 try:
-    DEFAULT_RB_DIR = Path(__file__).resolve().parents[2] / "brick_palettes_generator/data/rebrickable"
+    _DEV_DEFAULT = Path(__file__).resolve().parents[2] / "brick_palettes_generator/data/rebrickable"
 except IndexError:
-    DEFAULT_RB_DIR = Path("rebrickable")
+    _DEV_DEFAULT = Path("rebrickable")
+DEFAULT_RB_DIR = _SERVER_DEFAULT if _SERVER_DEFAULT.exists() else _DEV_DEFAULT
 
 REBRICKABLE_API_KEY = os.environ.get("REBRICKABLE_API_KEY", "")
 

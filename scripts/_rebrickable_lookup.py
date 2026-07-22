@@ -10,7 +10,7 @@ empirically (2026-07-14): base numbers can differ entirely between the two
 systems (Rebrickable "102220pr0001" -> BrickLink "47205pb098"), so this must
 always be a live lookup, never a regex.
 
-Three entry points:
+Five entry points:
   resolve_bl_part_nos_bulk()      -- efficient, chunked to stay under
                                       MAX_URL_LENGTH per call (up to 1,000
                                       part_nums/call, fewer if they're long)
@@ -21,6 +21,15 @@ Three entry points:
                                         miss (Rebrickable sometimes
                                         renumbers print variants; the
                                         element_id stays stable)
+  resolve_bl_part_no_reverse()    -- opposite direction: given a real
+                                      BrickLink part_no with zero known
+                                      Rebrickable mapping at all, find
+                                      Rebrickable's part_num for it (or None)
+  resolve_part_colors_elements()  -- given a Rebrickable part_num, list its
+                                      known element_ids per color (pairs with
+                                      resolve_bl_part_no_reverse() to turn a
+                                      reverse-lookup match into real,
+                                      element_id-keyed bricklink_mappings rows)
 
 All retry on HTTP 429 honoring Retry-After, and the caller is expected to
 pace at >=1.2s between calls to stay under Rebrickable's stated 1 req/sec
@@ -234,3 +243,60 @@ def resolve_element_via_rebrickable(element_id: int, api_key: str) -> dict | Non
         "bl_part_no": bl_part_ids[0] if bl_part_ids else None,
         "bl_color_id": int(bl_color_ids[0]) if bl_color_ids else None,
     }
+
+
+def resolve_bl_part_no_reverse(bl_part_no: str, api_key: str) -> str | None:
+    """Given a real BrickLink part_no with zero bricklink_mappings row at
+    all, find Rebrickable's own part_num for it via the bulk /parts/
+    endpoint's bricklink_id= filter -- the reverse direction from every
+    other function here, all of which start from a Rebrickable part_num.
+
+    bricklink_id= is undocumented but real and exact-match, confirmed live
+    2026-07-21 against 5 real never-mapped part_nos, all correct
+    (cross-checked external_ids.BrickLink on each result contained exactly
+    the queried value). It's single-value only -- comma-joining multiple
+    part_nos returns 0 results, and repeated query-string keys only honor
+    the last one (Django's request.GET.get() behavior) -- so this is always
+    one API call per part_no, no bulk form exists.
+
+    Returns the matched Rebrickable part_num, or None if Rebrickable has no
+    record under any numbering for this BrickLink part at all.
+    """
+    if not api_key or not bl_part_no:
+        return None
+    url = f"{REBRICKABLE_API_BASE}/parts/"
+    headers = {"Authorization": f"key {api_key}", "User-Agent": "mocsource/1.0"}
+    resp = _get_with_retry(url, {"bricklink_id": bl_part_no, "inc_part_details": 1}, headers)
+    if resp is None or resp.status_code != 200:
+        return None
+    results = resp.json().get("results", [])
+    if not results:
+        return None
+    return results[0].get("part_num")
+
+
+def resolve_part_colors_elements(rb_part_num: str, api_key: str) -> list[int]:
+    """Given a Rebrickable part_num, return every known element_id across
+    all its colors via /lego/parts/{part_num}/colors/.
+
+    A part can legitimately have zero elements for some or all colors --
+    confirmed live 2026-07-21 on an obscure 1980-81 electric part
+    (266ac01), which returned one color with an empty elements list. That's
+    real "no element data tracked" for that part+color, not an error -- a
+    well-populated part (e.g. 3001) returns real element_ids per color.
+    """
+    if not api_key or not rb_part_num:
+        return []
+    url = f"{REBRICKABLE_API_BASE}/parts/{rb_part_num}/colors/"
+    headers = {"Authorization": f"key {api_key}", "User-Agent": "mocsource/1.0"}
+    resp = _get_with_retry(url, {}, headers)
+    if resp is None or resp.status_code != 200:
+        return []
+    element_ids: list[int] = []
+    for result in resp.json().get("results", []):
+        for eid in result.get("elements") or []:
+            try:
+                element_ids.append(int(eid))
+            except (TypeError, ValueError):
+                pass
+    return element_ids
