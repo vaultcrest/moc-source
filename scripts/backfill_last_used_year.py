@@ -2,16 +2,18 @@
 """Backfill last_used_year and year_released on bl_part_catalog via
 Rebrickable's bulk parts API instead of per-part BrickLink calls.
 
-Rebrickable's /lego/parts/?part_nums=...&inc_part_details=1 (100 part_nums
-per call) already returns year_from/year_to per part -- confirmed live
+Rebrickable's /lego/parts/?part_nums=...&inc_part_details=1&page_size=1000
+(1,000 part_nums per call -- page_size must be passed explicitly, the
+endpoint's own default page_size is 100 and silently truncates beyond that
+with no error) already returns year_from/year_to per part -- confirmed live
 2026-07-14 (part 3001 -> year_from=1979, year_to=2026). That's the exact
 first-year/last-year pair scrape_bl_mold_data.py used to compute via a
 paced BrickLink /supersets call per part_no, cross-referenced against the
 local lego_sets table -- ~11.5 hours of BrickLink traffic for 41,473 distinct
 part_nos, and incomplete for series lego_sets doesn't cover (e.g. Collectible
 Minifigures, BrickLink's "col##-#" numbering). This script replaces that
-entirely: no BrickLink calls, no lego_sets dependency, ~415 bulk Rebrickable
-calls (~8 minutes) for the same coverage, and fixes the CMF-style gap at the
+entirely: no BrickLink calls, no lego_sets dependency, ~42 bulk Rebrickable
+calls (~10 minutes) for the same coverage, and fixes the CMF-style gap at the
 root since it doesn't depend on lego_sets at all.
 
 Turning a BrickLink part_no into the Rebrickable part_num(s) needed for the
@@ -37,7 +39,7 @@ never lowers a value Rebrickable already reported, only raises unresolved
 or stale-current-year ones.
 
 Full pass every run (no batching/resumability marker) -- a complete run here
-is ~8 minutes, so nightly just re-syncs everything fresh. Writes only
+is ~10 minutes, so nightly just re-syncs everything fresh. Writes only
 bl_part_catalog(part_no, year_released, last_used_year, looked_up_at) --
 name/item_type/category_id are now bulk-populated by
 scripts/ingest_brickstore_catalog.py (2026-07-16, replaced the old

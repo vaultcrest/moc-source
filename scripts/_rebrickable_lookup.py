@@ -31,11 +31,12 @@ import time
 import requests
 
 REBRICKABLE_API_BASE = "https://rebrickable.com/api/v3/lego"
-# Rebrickable's bulk parts endpoint silently truncates results beyond this
-# many part_nums per call (confirmed empirically: a 200-part_num request
-# returned only 100 results, no error) -- so this is a hard ceiling, not a
-# tunable preference.
-MAX_PART_NUMS_PER_CALL = 100
+# The bulk parts endpoint's default page_size is 100 -- a request with more
+# part_nums than that silently returns only the first page, no error (this
+# was previously mistaken for a hard ceiling on the endpoint itself). Passing
+# page_size explicitly raises that: confirmed live 2026-07-21, 1,000 part_nums
+# + page_size=1000 returned all 851 real matches in one call, no pagination.
+MAX_PART_NUMS_PER_CALL = 1000
 DEFAULT_RETRY_AFTER = 5.0
 
 
@@ -79,7 +80,7 @@ def resolve_bl_part_nos_bulk(part_nums: list[str], api_key: str, inter_call_dela
     resolved: dict[str, str] = {}
     for i in range(0, len(part_nums), MAX_PART_NUMS_PER_CALL):
         chunk = part_nums[i : i + MAX_PART_NUMS_PER_CALL]
-        params = {"part_nums": ",".join(chunk), "inc_part_details": 1}
+        params = {"part_nums": ",".join(chunk), "inc_part_details": 1, "page_size": MAX_PART_NUMS_PER_CALL}
         resp = _get_with_retry(url, params, headers)
         if resp is None or resp.status_code != 200:
             continue
@@ -110,7 +111,7 @@ def resolve_part_years_bulk(
     resolved: dict[str, tuple[int | None, int | None]] = {}
     for i in range(0, len(part_nums), MAX_PART_NUMS_PER_CALL):
         chunk = part_nums[i : i + MAX_PART_NUMS_PER_CALL]
-        params = {"part_nums": ",".join(chunk), "inc_part_details": 1}
+        params = {"part_nums": ",".join(chunk), "inc_part_details": 1, "page_size": MAX_PART_NUMS_PER_CALL}
         resp = _get_with_retry(url, params, headers)
         if resp is None or resp.status_code != 200:
             continue
