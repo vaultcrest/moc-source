@@ -1,6 +1,6 @@
 """add is_low_priority to bl_catalog_gap_fixes
 
-Revision ID: a1b2c3d4
+Revision ID: b6c7d8e9
 Revises: 0c7ce1a2
 Create Date: 2026-07-22 00:00:00.000000
 
@@ -22,7 +22,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "a1b2c3d4"
+revision: str = "b6c7d8e9"
 down_revision: Union[str, None] = "0c7ce1a2"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
