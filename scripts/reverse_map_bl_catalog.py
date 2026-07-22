@@ -136,6 +136,12 @@ UPSERT_FIX_SQL = """
         attempted_at = EXCLUDED.attempted_at
 """
 
+INSERT_ELEMENT_SQL = """
+    INSERT INTO lego_elements (element_id, design_id)
+    VALUES (%s, %s)
+    ON CONFLICT (element_id) DO NOTHING
+"""
+
 INSERT_MAPPING_SQL = """
     INSERT INTO bricklink_mappings (element_id, part_no, color_id, part_name, source)
     VALUES (%s, %s, %s, %s, 'rebrickable_reverse')
@@ -177,6 +183,16 @@ def resolve_one(cur, bl_part_no: str, dry_run: bool) -> tuple[str | None, int]:
             print(f"    [dry-run] element_id={element_id} color_id={info['bl_color_id']} -> {bl_part_no}", flush=True)
             created += 1
             continue
+        # bricklink_mappings.element_id FK's to lego_elements -- import_rebrickable.py
+        # always inserts both together from the same elements.csv row; this
+        # reverse-lookup path pulls element_ids live from Rebrickable's API
+        # instead, which can include element_ids that were never in our local
+        # elements.csv snapshot at all (confirmed live 2026-07-21: a real
+        # ForeignKeyViolation on element_id 6002757, not present in
+        # lego_elements). Same design_id-or-fallback-to-part_num rule as
+        # import_rebrickable.py's own insert.
+        design_id = info.get("design_id") or rb_part_num
+        cur.execute(INSERT_ELEMENT_SQL, (element_id, design_id))
         cur.execute(INSERT_MAPPING_SQL, (element_id, bl_part_no, info["bl_color_id"], info.get("part_name")))
         if cur.rowcount > 0:
             created += 1

@@ -211,6 +211,10 @@ def resolve_element_via_rebrickable(element_id: int, api_key: str) -> dict | Non
                       differ from a previously-stored value if Rebrickable
                       renumbered/consolidated the print variant since)
       part_name   -- Rebrickable's part name, or None
+      design_id   -- Rebrickable's design_id for this element (top-level
+                      field on the response, not part.*) -- lego_elements'
+                      own PK-adjacent column, required alongside element_id
+                      by bricklink_mappings' FK to lego_elements
       year_from   -- Rebrickable's first-year-used for this part, or None
       year_to     -- Rebrickable's last-year-used for this part, or None
       bl_part_no  -- BrickLink part number (str), or None if untranslated
@@ -238,6 +242,7 @@ def resolve_element_via_rebrickable(element_id: int, api_key: str) -> dict | Non
     return {
         "part_num": part.get("part_num"),
         "part_name": part.get("name"),
+        "design_id": data.get("design_id"),
         "year_from": part.get("year_from"),
         "year_to": part.get("year_to"),
         "bl_part_no": bl_part_ids[0] if bl_part_ids else None,
