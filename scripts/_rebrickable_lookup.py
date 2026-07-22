@@ -41,13 +41,23 @@ DEFAULT_RETRY_AFTER = 5.0
 
 
 def _get_with_retry(url: str, params: dict, headers: dict, max_retries: int = 3):
-    """GET with 429 retry honoring Retry-After. Returns Response, or None if
-    retries were exhausted or a network error occurred."""
+    """GET with retry on 429 (honoring Retry-After) and on transient 5xx/network
+    errors (fixed backoff) -- confirmed live 2026-07-21: switching the bulk
+    parts endpoint to 1,000-item batches (page_size bump) hit a run of
+    Cloudflare 520s ("Web Server Returned an Unknown Error") across 6
+    consecutive chunks. Previously only 429 was retried, so each of those
+    chunks was silently abandoned with zero retry -- costing ~1,000 unresolved
+    part_nums per failed chunk instead of ~100, since bigger batches raise the
+    stakes of any single request failing. Returns Response, or None if
+    retries were exhausted or every attempt hit a network error."""
     for attempt in range(max_retries):
         try:
             resp = requests.get(url, params=params, headers=headers, timeout=25)
         except requests.exceptions.RequestException as e:
-            print(f"  Rebrickable network error for {url}: {e}", flush=True)
+            print(f"  Rebrickable network error (attempt {attempt + 1}/{max_retries}): {e}", flush=True)
+            if attempt < max_retries - 1:
+                time.sleep(DEFAULT_RETRY_AFTER)
+                continue
             return None
         if resp.status_code == 429:
             retry_after = resp.headers.get("Retry-After")
@@ -59,8 +69,14 @@ def _get_with_retry(url: str, params: dict, headers: dict, max_retries: int = 3)
                   f"Retry-After={delay}s: {url}", flush=True)
             time.sleep(delay)
             continue
+        if 500 <= resp.status_code < 600:
+            print(f"  Rebrickable {resp.status_code} server error (attempt {attempt + 1}/{max_retries}): {url}", flush=True)
+            if attempt < max_retries - 1:
+                time.sleep(DEFAULT_RETRY_AFTER)
+                continue
+            return resp
         return resp
-    print(f"  Rebrickable 429 retries exhausted for {url}", flush=True)
+    print(f"  Rebrickable retries exhausted for {url}", flush=True)
     return None
 
 
