@@ -135,7 +135,7 @@ PostgreSQL 18 on `app.home.arpa`. See [`docs/database-schema.png`](docs/database
 
 | Script | Purpose | Frequency |
 |--------|---------|-----------|
-| `scrape_pab.py` | Scrapes 18 LEGO locales → `lego_element_prices` | Hourly via systemd timer |
+| `scrape_pab.py` | Two hourly modes, both writing `lego_element_prices`: `--mode oos` (3 representative locales, propagates `in_stock` to sibling locales) and `--mode full --one-locale` (round-robins one of the 18 locales per run, ~18hr per full-price-refresh cycle). Corrects a stale claim of "hourly full scrape" — the split into these two jobs predates this doc catching up, and a leftover orphaned `mocsource-scrape-pab.timer`/`.service` pair (an old single-job, once-daily version) was found still on disk, disabled and unmanaged by current Ansible, and removed 2026-07-22 | Hourly via 2 systemd timers (`scrape-pab-oos` at :00, `scrape-pab-price` at :30) |
 | `seed.py` | Seeds `lego_elements`, `bricklink_mappings` etc. from `canonical_mapping.json` | On data refresh |
 | `seed_colors.py` | Seeds `colors` table from `color_database.json` | Once or twice a year |
 | `seed_bl_categories.py` | Seeds `bl_categories` table from `cache/bl_part_categories.json` (static, hand-curated — see `bl_categories` above) | Once, or after re-generating the JSON if BrickLink adds new part categories |
