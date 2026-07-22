@@ -103,20 +103,26 @@ FIND_STICKER_CATEGORIES_SQL = """
 """
 
 # is_printed: either a "Decorated"/"Printed" category name, or a printed-style
-# part_no suffix (pb/pat/pr followed by digits) -- combined signal, confirmed
-# live 2026-07-21 against the real gap: 45,693/52,678 (87%) match at least one,
-# 6,985 (13%) match neither and are the priority target.
+# part_no suffix (pb/pat/pr/px followed by digits) -- combined signal,
+# confirmed live 2026-07-21 against the real gap: 45,693/52,678 (87%) match
+# at least one, 6,985 (13%) match neither and are the priority target. px
+# added 2026-07-22 (Sean's spot-check: all sampled px part_nos have
+# "Pattern" in their name -- 536 previously-plain candidates reclassified).
 #
 # is_low_priority: a "c" + number suffix (BrickLink's "Complete assembly"
 # marker, e.g. ac01/bc02) or a Baseplate-category part -- both disproportion-
 # ately represent BrickLink part_nos that have been superseded/deprecated on
 # BrickLink's own side (see module docstring), so they sink behind both the
 # plain and printed tiers rather than compete for the same nightly budget.
+# NOT extended to "bb"-prefixed (BrickLink-synthetic) part_nos -- spot-
+# checked live 2026-07-22 (bb0260 -> 43023c01, resolved cleanly), no
+# evidence they're any less likely to resolve than average.
 CANDIDATES_CTE = """
     candidates AS (
         SELECT bpc.part_no,
             (bc.category_name ILIKE '%%decorated%%' OR bc.category_name ILIKE '%%printed%%'
-             OR bpc.part_no ~ 'pb[0-9]+' OR bpc.part_no ~ 'pat[0-9]+' OR bpc.part_no ~ 'pr[0-9]+') AS is_printed,
+             OR bpc.part_no ~ 'pb[0-9]+' OR bpc.part_no ~ 'pat[0-9]+' OR bpc.part_no ~ 'pr[0-9]+'
+             OR bpc.part_no ~ 'px[0-9]+') AS is_printed,
             (bpc.part_no ~ 'c[0-9]+$' OR bc.category_name ILIKE '%%baseplate%%') AS is_low_priority
         FROM brickstore_part_catalog bpc
         LEFT JOIN bl_categories bc ON bc.category_id = bpc.category_id
