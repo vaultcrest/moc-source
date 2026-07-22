@@ -534,7 +534,7 @@ ON CONFLICT (element_id) DO NOTHING
 
 
 def enrich_new_elements(
-    cur, new_element_ids: list[int], now: datetime
+    cur, new_element_ids: list[int], now: datetime, dry_run: bool = False
 ) -> tuple[list[tuple[int, str, int, str]], list[int]]:
     """Resolve BL part_no/color_id for brand-new LEGO elements.
 
@@ -544,6 +544,9 @@ def enrich_new_elements(
     Returns (resolved, unresolved) — resolved is a list of
     (element_id, bl_part_no, bl_color_id, source) tuples where source is
     "bricklink" or "rebrickable"; unresolved is element_ids neither had data for.
+
+    dry_run=True skips the bricklink_mappings write, e.g. for
+    retry_unmapped_elements.py's --dry-run.
     """
     if not BRICKLINK_CONSUMER_KEY and not REBRICKABLE_API_KEY:
         return [], list(new_element_ids)
@@ -571,7 +574,7 @@ def enrich_new_elements(
             unresolved.append(element_id)
         if i < len(new_element_ids) - 1:
             time.sleep(1)  # polite pacing — this only runs for a handful of new elements/day
-    if values:
+    if values and not dry_run:
         psycopg2.extras.execute_values(cur, INSERT_BL_MAPPING_NEW_ONLY, values, page_size=100)
     return resolved, unresolved
 
