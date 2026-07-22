@@ -130,8 +130,10 @@ def main():
     print(f"{len(rows)} bricklink_mappings row(s) to resolve")
 
     bl_to_rbparts: dict[str, set[str]] = {}
+    bl_to_element_ids: dict[str, list[int]] = {}
     missing_element_ids: list[tuple[int, str]] = []
     for element_id, bl_part_no in rows:
+        bl_to_element_ids.setdefault(bl_part_no, []).append(element_id)
         rb_part = eid_to_rbpart.get(element_id)
         if rb_part:
             bl_to_rbparts.setdefault(bl_part_no, set()).add(rb_part)
@@ -153,6 +155,34 @@ def main():
           f"({-(-len(rb_part_nums) // 100)} call(s))")
 
     years = resolve_part_years_bulk(rb_part_nums, REBRICKABLE_API_KEY, inter_call_delay=INTER_CALL_DELAY)
+
+    # A stored rb part_num can 404 against the bulk endpoint even though the
+    # element_id is correct -- Rebrickable renumbers/consolidates print
+    # variants over time (confirmed live 2026-07-21 via Rebrickable's own
+    # part changelog: 92456c10pr0241 -> 92456c25pr0001, renamed 2026-07-10,
+    # well after our local elements.csv snapshot). The element_id stays
+    # stable across renumbering, so retry via the per-element endpoint for
+    # anything the bulk call found zero record of at all -- cheap, since
+    # this only ever runs for the handful still unresolved after the bulk
+    # pass (58 as of 2026-07-21), not the whole dataset.
+    stale_part_nos = [
+        bl_part_no for bl_part_no, rbparts in bl_to_rbparts.items()
+        if not any(rb in years for rb in rbparts)
+    ]
+    if stale_part_nos:
+        print(f"{len(stale_part_nos)} part_no(s) had no bulk match at all -- retrying via per-element lookup", flush=True)
+        for bl_part_no in stale_part_nos:
+            found_any = False
+            for element_id in bl_to_element_ids.get(bl_part_no, []):
+                info = resolve_element_via_rebrickable(element_id, REBRICKABLE_API_KEY)
+                time.sleep(INTER_CALL_DELAY)
+                if info and info.get("part_num") and (info.get("year_from") is not None or info.get("year_to") is not None):
+                    new_rb_part = info["part_num"]
+                    bl_to_rbparts[bl_part_no].add(new_rb_part)
+                    years[new_rb_part] = (info.get("year_from"), info.get("year_to"))
+                    found_any = True
+            if not found_any:
+                print(f"  {bl_part_no}: no year data via element fallback either", flush=True)
 
     # Rebrickable's year_to only advances once it has catalogued a set released
     # this year that contains the part -- for the current, still-in-progress

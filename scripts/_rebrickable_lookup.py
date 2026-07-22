@@ -202,9 +202,17 @@ def resolve_element_via_rebrickable(element_id: int, api_key: str) -> dict | Non
                       differ from a previously-stored value if Rebrickable
                       renumbered/consolidated the print variant since)
       part_name   -- Rebrickable's part name, or None
+      year_from   -- Rebrickable's first-year-used for this part, or None
+      year_to     -- Rebrickable's last-year-used for this part, or None
       bl_part_no  -- BrickLink part number (str), or None if untranslated
       bl_color_id -- BrickLink color id (int), or None if untranslated
     or None if the element itself wasn't found / the request failed.
+
+    year_from/year_to come free in this same response (confirmed live
+    2026-07-21) -- useful when a stored part_num 404s against the bulk
+    /parts/ endpoint because Rebrickable renumbered it since our local
+    elements.csv snapshot was taken (element_id stays stable across
+    renumbering, so this is the reliable path when that happens).
     """
     if not api_key:
         return None
@@ -221,6 +229,8 @@ def resolve_element_via_rebrickable(element_id: int, api_key: str) -> dict | Non
     return {
         "part_num": part.get("part_num"),
         "part_name": part.get("name"),
+        "year_from": part.get("year_from"),
+        "year_to": part.get("year_to"),
         "bl_part_no": bl_part_ids[0] if bl_part_ids else None,
         "bl_color_id": int(bl_color_ids[0]) if bl_color_ids else None,
     }
