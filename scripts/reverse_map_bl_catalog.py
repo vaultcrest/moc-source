@@ -45,6 +45,18 @@ scripts, not a shared module) at selection time -- so a brand-new
 candidate is correctly tiered immediately, no backfill needed as the gap
 changes over time.
 
+is_low_priority (added 2026-07-22, Sean's call): BrickLink "c" + number
+suffix parts (e.g. 08010ac01 -- BrickLink's "Complete assembly" marker) and
+Baseplate-category parts sink behind BOTH the plain and printed tiers.
+Confirmed by hand: 08010ac01/08010bc02 aren't unmapped because Rebrickable
+never indexed them, they're unmapped because BrickLink itself has
+superseded/deprecated them in favor of newer part numbers for the same
+physical assembly (08010ac01 -> 265bc01, 08010bc02 -> 266bc02) -- a
+reverse lookup on the dead part_no will legitimately find nothing even
+though Rebrickable has good data under the replacement number. These are
+real candidates, just much less likely to resolve per attempt, so they
+shouldn't compete with the rest of the backlog for nightly budget.
+
 Same "never permanently done" philosophy as rebrickable_part_no_fixes --
 unresolved rows stay retry-eligible (deprioritized behind never-attempted
 rows within their own is_printed tier), since Rebrickable's catalog keeps
@@ -94,11 +106,18 @@ FIND_STICKER_CATEGORIES_SQL = """
 # part_no suffix (pb/pat/pr followed by digits) -- combined signal, confirmed
 # live 2026-07-21 against the real gap: 45,693/52,678 (87%) match at least one,
 # 6,985 (13%) match neither and are the priority target.
+#
+# is_low_priority: a "c" + number suffix (BrickLink's "Complete assembly"
+# marker, e.g. ac01/bc02) or a Baseplate-category part -- both disproportion-
+# ately represent BrickLink part_nos that have been superseded/deprecated on
+# BrickLink's own side (see module docstring), so they sink behind both the
+# plain and printed tiers rather than compete for the same nightly budget.
 CANDIDATES_CTE = """
     candidates AS (
         SELECT bpc.part_no,
             (bc.category_name ILIKE '%%decorated%%' OR bc.category_name ILIKE '%%printed%%'
-             OR bpc.part_no ~ 'pb[0-9]+' OR bpc.part_no ~ 'pat[0-9]+' OR bpc.part_no ~ 'pr[0-9]+') AS is_printed
+             OR bpc.part_no ~ 'pb[0-9]+' OR bpc.part_no ~ 'pat[0-9]+' OR bpc.part_no ~ 'pr[0-9]+') AS is_printed,
+            (bpc.part_no ~ 'c[0-9]+$' OR bc.category_name ILIKE '%%baseplate%%') AS is_low_priority
         FROM brickstore_part_catalog bpc
         LEFT JOIN bl_categories bc ON bc.category_id = bpc.category_id
         WHERE NOT EXISTS (SELECT 1 FROM bricklink_mappings bm WHERE bm.part_no = bpc.part_no)
@@ -108,29 +127,31 @@ CANDIDATES_CTE = """
 
 BATCH_SQL = f"""
     WITH {CANDIDATES_CTE}
-    SELECT c.part_no, c.is_printed
+    SELECT c.part_no, c.is_printed, c.is_low_priority
     FROM candidates c
     LEFT JOIN bl_catalog_gap_fixes f ON f.old_part_no = c.part_no
     WHERE f.old_part_no IS NULL OR f.method = 'unresolved'
-    ORDER BY c.is_printed ASC, f.attempted_at ASC NULLS FIRST, c.part_no
+    ORDER BY c.is_low_priority ASC, c.is_printed ASC, f.attempted_at ASC NULLS FIRST, c.part_no
     LIMIT %(limit)s
 """
 
 COUNT_SQL = f"""
     WITH {CANDIDATES_CTE}
-    SELECT c.is_printed, count(*)
+    SELECT c.is_low_priority, c.is_printed, count(*)
     FROM candidates c
     LEFT JOIN bl_catalog_gap_fixes f ON f.old_part_no = c.part_no
     WHERE f.old_part_no IS NULL OR f.method = 'unresolved'
-    GROUP BY c.is_printed
+    GROUP BY c.is_low_priority, c.is_printed
 """
 
 UPSERT_FIX_SQL = """
-    INSERT INTO bl_catalog_gap_fixes (old_part_no, rb_part_num, is_printed, method, elements_created, attempted_at)
-    VALUES (%s, %s, %s, %s, %s, %s)
+    INSERT INTO bl_catalog_gap_fixes
+        (old_part_no, rb_part_num, is_printed, is_low_priority, method, elements_created, attempted_at)
+    VALUES (%s, %s, %s, %s, %s, %s, %s)
     ON CONFLICT (old_part_no) DO UPDATE SET
         rb_part_num = EXCLUDED.rb_part_num,
         is_printed = EXCLUDED.is_printed,
+        is_low_priority = EXCLUDED.is_low_priority,
         method = EXCLUDED.method,
         elements_created = EXCLUDED.elements_created,
         attempted_at = EXCLUDED.attempted_at
@@ -199,32 +220,35 @@ def resolve_one(cur, bl_part_no: str, dry_run: bool) -> tuple[str | None, int]:
     return rb_part_num, created
 
 
-def process_batch(cur, candidates: list[tuple[str, bool]], dry_run: bool) -> dict:
-    stats = {"resolved": 0, "unresolved": 0, "elements_created": 0, "plain_resolved": 0, "printed_resolved": 0}
-    for i, (bl_part_no, is_printed) in enumerate(candidates):
+def process_batch(cur, candidates: list[tuple[str, bool, bool]], dry_run: bool) -> dict:
+    stats = {"resolved": 0, "unresolved": 0, "elements_created": 0, "plain_resolved": 0, "printed_resolved": 0, "low_priority_resolved": 0}
+    for i, (bl_part_no, is_printed, is_low_priority) in enumerate(candidates):
         now = datetime.now(timezone.utc)
         rb_part_num, created = resolve_one(cur, bl_part_no, dry_run)
         tier = "printed" if is_printed else "plain"
+        label = tier + ("+low-priority" if is_low_priority else "")
 
         if rb_part_num:
             stats["resolved"] += 1
             stats["elements_created"] += created
             stats[f"{tier}_resolved"] += 1
-            print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({tier}) -> {rb_part_num}, {created} element(s)", flush=True)
+            if is_low_priority:
+                stats["low_priority_resolved"] += 1
+            print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({label}) -> {rb_part_num}, {created} element(s)", flush=True)
             if not dry_run:
-                cur.execute(UPSERT_FIX_SQL, (bl_part_no, rb_part_num, is_printed, "reverse_lookup", created, now))
+                cur.execute(UPSERT_FIX_SQL, (bl_part_no, rb_part_num, is_printed, is_low_priority, "reverse_lookup", created, now))
         else:
             stats["unresolved"] += 1
-            print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({tier}) -> UNRESOLVED (retry-eligible)", flush=True)
+            print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({label}) -> UNRESOLVED (retry-eligible)", flush=True)
             if not dry_run:
-                cur.execute(UPSERT_FIX_SQL, (bl_part_no, None, is_printed, "unresolved", 0, now))
+                cur.execute(UPSERT_FIX_SQL, (bl_part_no, None, is_printed, is_low_priority, "unresolved", 0, now))
 
         if not dry_run:
             cur.connection.commit()
     return stats
 
 
-def send_report(stats: dict, remaining: dict[bool, int], duration_s: float) -> None:
+def send_report(stats: dict, remaining: dict[tuple[bool, bool], int], duration_s: float) -> None:
     smtp_host     = os.environ.get("SMTP_HOST", "")
     smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user     = os.environ.get("SMTP_USER", "")
@@ -236,18 +260,23 @@ def send_report(stats: dict, remaining: dict[bool, int], duration_s: float) -> N
 
     mins, secs = divmod(int(duration_s), 60)
     total = stats["resolved"] + stats["unresolved"]
-    remaining_plain = remaining.get(False, 0)
-    remaining_printed = remaining.get(True, 0)
+    # remaining is keyed (is_low_priority, is_printed) -> count
+    remaining_plain = remaining.get((False, False), 0)
+    remaining_printed = remaining.get((False, True), 0)
+    remaining_low_priority = remaining.get((True, False), 0) + remaining.get((True, True), 0)
     subject = (f"[MOC Source] BL catalog reverse-map: {total} processed, "
-               f"{remaining_plain:,} plain + {remaining_printed:,} printed remaining")
+               f"{remaining_plain:,} plain + {remaining_printed:,} printed + "
+               f"{remaining_low_priority:,} low-priority remaining")
     body = (
         f"BrickLink catalog reverse-mapping run complete.\n\n"
-        f"Resolved (plain parts)   : {stats['plain_resolved']}\n"
-        f"Resolved (printed parts) : {stats['printed_resolved']}\n"
+        f"Resolved (plain parts)     : {stats['plain_resolved']}\n"
+        f"Resolved (printed parts)   : {stats['printed_resolved']}\n"
+        f"  of which low-priority    : {stats['low_priority_resolved']}\n"
         f"Unresolved (retry-eligible): {stats['unresolved']}\n"
         f"bricklink_mappings rows created: {stats['elements_created']}\n"
-        f"Remaining -- plain parts   : {remaining_plain:,}\n"
-        f"Remaining -- printed parts : {remaining_printed:,}\n"
+        f"Remaining -- plain parts        : {remaining_plain:,}\n"
+        f"Remaining -- printed parts      : {remaining_printed:,}\n"
+        f"Remaining -- low-priority (c-number/baseplate, either tier) : {remaining_low_priority:,}\n"
         f"Duration                   : {mins}m {secs}s\n"
     )
     msg = MIMEText(body)
@@ -290,16 +319,18 @@ def main():
     sticker_ids = sticker_category_ids(cur)
 
     if args.part_no:
-        candidates = [(pn, False) for pn in args.part_no]
+        candidates = [(pn, False, False) for pn in args.part_no]
         print(f"Processing {len(candidates)} explicitly-specified part_no(s)")
     else:
         cur.execute(COUNT_SQL, {"sticker_ids": sticker_ids})
-        remaining_before = dict(cur.fetchall())
+        remaining_before = {(low, printed): n for low, printed, n in cur.fetchall()}
         cur.execute(BATCH_SQL, {"sticker_ids": sticker_ids, "limit": args.batch_size})
         candidates = cur.fetchall()
-        print(f"{remaining_before.get(False, 0):,} plain + {remaining_before.get(True, 0):,} printed "
-              f"retry-eligible total; selected {len(candidates)} for this run "
-              f"(priority: plain parts first)")
+        low_priority_total = remaining_before.get((True, False), 0) + remaining_before.get((True, True), 0)
+        print(f"{remaining_before.get((False, False), 0):,} plain + {remaining_before.get((False, True), 0):,} printed + "
+              f"{low_priority_total:,} low-priority (c-number/baseplate) retry-eligible total; "
+              f"selected {len(candidates)} for this run "
+              f"(priority: plain, then printed, then low-priority last)")
 
     if not candidates:
         print("Nothing to do.")
@@ -310,15 +341,19 @@ def main():
     stats = process_batch(cur, candidates, args.dry_run)
 
     cur.execute(COUNT_SQL, {"sticker_ids": sticker_ids})
-    remaining_after = dict(cur.fetchall())
+    remaining_after = {(low, printed): n for low, printed, n in cur.fetchall()}
 
     cur.close()
     conn.close()
 
+    low_priority_remaining = remaining_after.get((True, False), 0) + remaining_after.get((True, True), 0)
     print(f"\nDone. Resolved: {stats['resolved']} ({stats['plain_resolved']} plain, "
-          f"{stats['printed_resolved']} printed), unresolved: {stats['unresolved']}, "
+          f"{stats['printed_resolved']} printed, {stats['low_priority_resolved']} of which low-priority), "
+          f"unresolved: {stats['unresolved']}, "
           f"{stats['elements_created']} bricklink_mappings row(s) created.")
-    print(f"  Remaining: {remaining_after.get(False, 0):,} plain, {remaining_after.get(True, 0):,} printed")
+    print(f"  Remaining: {remaining_after.get((False, False), 0):,} plain, "
+          f"{remaining_after.get((False, True), 0):,} printed, "
+          f"{low_priority_remaining:,} low-priority")
 
     if not args.dry_run:
         duration_s = time.monotonic() - start_time
