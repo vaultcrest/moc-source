@@ -11,7 +11,9 @@ systems (Rebrickable "102220pr0001" -> BrickLink "47205pb098"), so this must
 always be a live lookup, never a regex.
 
 Three entry points:
-  resolve_bl_part_nos_bulk()      -- efficient, up to 100 part_nums/call
+  resolve_bl_part_nos_bulk()      -- efficient, chunked to stay under
+                                      MAX_URL_LENGTH per call (up to 1,000
+                                      part_nums/call, fewer if they're long)
   resolve_part_years_bulk()       -- same bulk endpoint, year_from/year_to
                                       instead of the BrickLink translation
   resolve_element_via_rebrickable() -- per-element_id fallback for stale/
@@ -36,8 +38,48 @@ REBRICKABLE_API_BASE = "https://rebrickable.com/api/v3/lego"
 # was previously mistaken for a hard ceiling on the endpoint itself). Passing
 # page_size explicitly raises that: confirmed live 2026-07-21, 1,000 part_nums
 # + page_size=1000 returned all 851 real matches in one call, no pagination.
+#
+# BUT batching by a fixed item count alone isn't safe: part_num string length
+# varies a lot (short like "3639" vs long print-variant codes like
+# "973pb1782c01"), so a 1,000-item chunk's real URL length can swing wildly
+# depending on content -- confirmed live 2026-07-21, chunks of the same
+# nominal size ranged from url_len=8,565 to url_len=16,044 chars in a single
+# real run. Some intermediate proxy/edge (not Rebrickable's own backend --
+# the failure was instant, ~0.2s, not a timeout) rejects requests past some
+# undocumented length with an HTTP 520, no error detail. Reproduced directly:
+# the exact same 1,000-item chunk (url_len=16,044) failed every time, split
+# into two ~8,065-char halves both succeeded. A 13,616-char chunk succeeded
+# elsewhere in the same run, so the real cutoff sits somewhere in
+# 13.6-15.3KB -- MAX_URL_LENGTH below stays well under that with margin.
+# So chunking is by character budget, not item count; MAX_PART_NUMS_PER_CALL
+# is now just the per-call ceiling used for page_size (must be >= the
+# largest chunk _chunk_by_length can produce, which it always is since that
+# function's char budget caps a chunk at far fewer than 1,000 items whenever
+# individual part_nums are unusually long).
 MAX_PART_NUMS_PER_CALL = 1000
+MAX_URL_LENGTH = 10000
 DEFAULT_RETRY_AFTER = 5.0
+
+
+def _chunk_by_length(items: list[str], base_overhead: int, max_chars: int = MAX_URL_LENGTH) -> list[list[str]]:
+    """Group items into chunks whose comma-joined length (plus base_overhead
+    for the URL/other params) stays under max_chars. See MAX_URL_LENGTH's
+    comment for why this replaced fixed-item-count chunking."""
+    chunks: list[list[str]] = []
+    current: list[str] = []
+    current_chars = base_overhead
+    for item in items:
+        added = len(item) + (1 if current else 0)  # +1 for the joining comma
+        if current and current_chars + added > max_chars:
+            chunks.append(current)
+            current = []
+            current_chars = base_overhead
+            added = len(item)
+        current.append(item)
+        current_chars += added
+    if current:
+        chunks.append(current)
+    return chunks
 
 
 def _get_with_retry(url: str, params: dict, headers: dict, max_retries: int = 3):
@@ -93,10 +135,11 @@ def resolve_bl_part_nos_bulk(part_nums: list[str], api_key: str, inter_call_dela
         return {}
     headers = {"Authorization": f"key {api_key}", "User-Agent": "mocsource/1.0"}
     url = f"{REBRICKABLE_API_BASE}/parts/"
+    base_overhead = len(url) + len("?part_nums=&inc_part_details=1&page_size=1000")
+    chunks = _chunk_by_length(part_nums, base_overhead)
     resolved: dict[str, str] = {}
-    for i in range(0, len(part_nums), MAX_PART_NUMS_PER_CALL):
-        chunk = part_nums[i : i + MAX_PART_NUMS_PER_CALL]
-        params = {"part_nums": ",".join(chunk), "inc_part_details": 1, "page_size": MAX_PART_NUMS_PER_CALL}
+    for i, chunk in enumerate(chunks):
+        params = {"part_nums": ",".join(chunk), "inc_part_details": 1, "page_size": min(len(chunk), MAX_PART_NUMS_PER_CALL)}
         resp = _get_with_retry(url, params, headers)
         if resp is None or resp.status_code != 200:
             continue
@@ -104,7 +147,7 @@ def resolve_bl_part_nos_bulk(part_nums: list[str], api_key: str, inter_call_dela
             bl_ids = (result.get("external_ids") or {}).get("BrickLink") or []
             if bl_ids:
                 resolved[result["part_num"]] = bl_ids[0]
-        if i + MAX_PART_NUMS_PER_CALL < len(part_nums):
+        if i + 1 < len(chunks):
             time.sleep(inter_call_delay)
     return resolved
 
@@ -124,16 +167,17 @@ def resolve_part_years_bulk(
         return {}
     headers = {"Authorization": f"key {api_key}", "User-Agent": "mocsource/1.0"}
     url = f"{REBRICKABLE_API_BASE}/parts/"
+    base_overhead = len(url) + len("?part_nums=&inc_part_details=1&page_size=1000")
+    chunks = _chunk_by_length(part_nums, base_overhead)
     resolved: dict[str, tuple[int | None, int | None]] = {}
-    for i in range(0, len(part_nums), MAX_PART_NUMS_PER_CALL):
-        chunk = part_nums[i : i + MAX_PART_NUMS_PER_CALL]
-        params = {"part_nums": ",".join(chunk), "inc_part_details": 1, "page_size": MAX_PART_NUMS_PER_CALL}
+    for i, chunk in enumerate(chunks):
+        params = {"part_nums": ",".join(chunk), "inc_part_details": 1, "page_size": min(len(chunk), MAX_PART_NUMS_PER_CALL)}
         resp = _get_with_retry(url, params, headers)
         if resp is None or resp.status_code != 200:
             continue
         for result in resp.json().get("results", []):
             resolved[result["part_num"]] = (result.get("year_from"), result.get("year_to"))
-        if i + MAX_PART_NUMS_PER_CALL < len(part_nums):
+        if i + 1 < len(chunks):
             time.sleep(inter_call_delay)
     return resolved
 
