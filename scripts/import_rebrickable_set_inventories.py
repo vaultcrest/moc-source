@@ -199,7 +199,7 @@ def main():
     now = datetime.now(timezone.utc)
     processed = 0
     total_rows = 0
-    warnings = 0
+    total_inserted = 0
 
     for set_num in pending:
         raw_rows = rows_by_set.get(set_num, [])
@@ -209,13 +209,22 @@ def main():
             print(f"    [dry-run] {set_num}: {len(deduped)} row(s)")
         else:
             if deduped:
+                # page_size must be >= len(deduped): execute_values() pages
+                # internally (default page_size=100) by issuing multiple
+                # separate INSERT statements, and cur.rowcount only reflects
+                # the LAST one -- confirmed live 2026-07-22. Matches
+                # import_rebrickable.py's existing page_size=BATCH pattern.
+                # (rowcount can still legitimately be < len(deduped): that
+                # just means some rows already existed from a prior run,
+                # e.g. a --set-num reprocess -- not a bug, dedupe_sum's key
+                # exactly matches the UNIQUE constraint so an in-batch
+                # duplicate slipping through is structurally impossible.)
                 psycopg2.extras.execute_values(
                     cur, INSERT_SQL,
                     [(set_num, *row) for row in deduped],
+                    page_size=min(max(len(deduped), 1), 5000),
                 )
-                if cur.rowcount != len(deduped):
-                    warnings += 1
-                    print(f"  WARNING: {set_num} -- expected {len(deduped)} inserted, got {cur.rowcount}", file=sys.stderr)
+                total_inserted += cur.rowcount
             cur.execute(
                 "UPDATE lego_sets SET inventory_imported_at = %s WHERE set_num = %s",
                 (now, set_num),
@@ -236,7 +245,8 @@ def main():
     mins, secs = divmod(int(duration_s), 60)
     print(f"\nDone in {mins}m {secs}s. Sets processed: {processed} "
           f"({len(no_inventory)} with no Rebrickable inventory record), "
-          f"rows written: {total_rows}, warnings: {warnings}")
+          f"rows seen: {total_rows}, new rows inserted: {total_inserted} "
+          f"({total_rows - total_inserted} already existed)")
 
 
 if __name__ == "__main__":
