@@ -18,3 +18,4 @@ class LegoSet(Base):
     num_parts: Mapped[int | None] = mapped_column(Integer)
     img_url: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime)
+    inventory_imported_at: Mapped[datetime | None] = mapped_column(DateTime)

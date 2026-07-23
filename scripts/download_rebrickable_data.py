@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Downloads Rebrickable's bulk parts.csv/elements.csv/colors.csv to a local
-directory, refreshing the static snapshot import_rebrickable.py and
-backfill_last_used_year.py read from.
+"""Downloads Rebrickable's bulk parts.csv/elements.csv/colors.csv/
+inventories.csv/inventory_parts.csv to a local directory, refreshing the
+static snapshot import_rebrickable.py, backfill_last_used_year.py, and
+import_rebrickable_set_inventories.py read from.
 
 Root cause this replaces (found 2026-07-21): those two files previously
 lived as two independently hand-maintained copies
@@ -27,8 +28,14 @@ is refreshing that persisted copy, following ingest_brickstore_catalog.py's
 BrickStore release cache convention (DEFAULT_DATA_DIR env override, same
 style as scripts/_brickstore_release.py).
 
+inventories.csv/inventory_parts.csv added 2026-07-22 for
+import_rebrickable_set_inventories.py -- same CDN base, confirmed live
+that both download fine (inventory_parts.csv is the big one, ~1.5M rows
+across every set/version combined).
+
 No DB writes, no API key needed (unauthenticated CDN downloads). Run
-scripts/import_rebrickable.py afterward to actually load the fresh data.
+scripts/import_rebrickable.py / import_rebrickable_set_inventories.py
+afterward to actually load the fresh data.
 
 Usage:
     python scripts/download_rebrickable_data.py [--data-dir PATH]
@@ -42,7 +49,7 @@ from pathlib import Path
 import requests
 
 CDN_BASE = "https://cdn.rebrickable.com/media/downloads"
-FILES = ["parts.csv", "elements.csv", "colors.csv"]
+FILES = ["parts.csv", "elements.csv", "colors.csv", "inventories.csv", "inventory_parts.csv"]
 
 DEFAULT_DATA_DIR = Path(os.environ.get("REBRICKABLE_DATA_DIR", "/opt/mocsource/data/rebrickable"))
 
@@ -67,7 +74,7 @@ def download_file(name: str, data_dir: Path) -> int:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data-dir", type=Path, default=DEFAULT_DATA_DIR,
-                         help=f"directory to write parts.csv/elements.csv/colors.csv into (default {DEFAULT_DATA_DIR})")
+                         help=f"directory to write {', '.join(FILES)} into (default {DEFAULT_DATA_DIR})")
     args = parser.parse_args()
 
     args.data_dir.mkdir(parents=True, exist_ok=True)
