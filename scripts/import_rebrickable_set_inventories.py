@@ -243,10 +243,12 @@ def main():
 
     duration_s = time.monotonic() - start_time
     mins, secs = divmod(int(duration_s), 60)
+    insert_summary = (f"rows seen: {total_rows}" if args.dry_run else
+                       f"rows seen: {total_rows}, new rows inserted: {total_inserted} "
+                       f"({total_rows - total_inserted} already existed)")
     print(f"\nDone in {mins}m {secs}s. Sets processed: {processed} "
           f"({len(no_inventory)} with no Rebrickable inventory record), "
-          f"rows seen: {total_rows}, new rows inserted: {total_inserted} "
-          f"({total_rows - total_inserted} already existed)")
+          f"{insert_summary}")
 
 
 if __name__ == "__main__":
