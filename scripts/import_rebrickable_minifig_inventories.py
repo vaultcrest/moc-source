@@ -56,17 +56,16 @@ INSERT_SQL = """
     ON CONFLICT (minifig_no, rb_part_num, rb_color_id) DO NOTHING
 """
 
-CONFLICT_CHECK_SQL = """
-    SELECT rb.minifig_no, rb.rb_part_num, rb.bl_color_id, rb.quantity,
-           bs.part_no, bs.color_id, bs.qty
-    FROM rebrickable_minifig_inventory_items rb
-    LEFT JOIN brickstore_minifig_inventory_items bs
-      ON bs.minifig_no = rb.minifig_no
-     AND bs.color_id = rb.bl_color_id
-     AND bs.part_no = rb.rb_part_num
-     AND bs.item_type = 'PART'
-     AND bs.is_extra = false
-    WHERE rb.minifig_no = ANY(%s)
+RB_ROWS_SQL = """
+    SELECT minifig_no, rb_part_num, rb_color_id, bl_color_id, quantity
+    FROM rebrickable_minifig_inventory_items
+    WHERE minifig_no = ANY(%s)
+"""
+
+BS_ROWS_SQL = """
+    SELECT minifig_no, part_no, color_id, qty
+    FROM brickstore_minifig_inventory_items
+    WHERE minifig_no = ANY(%s) AND item_type = 'P' AND is_extra = false
 """
 
 
@@ -76,6 +75,41 @@ def load_color_map(conn) -> dict[int, int]:
     result = {rb_id: bl_id for bl_id, rb_id in cur.fetchall()}
     cur.close()
     return result
+
+
+def load_rb_to_bl_part_translation(conn, data_dir: Path) -> dict[tuple[str, int], str]:
+    """{(rb_part_num, rb_color_id): bl_part_no}, bridged through element_id
+    -- confirmed live 2026-07-23 that Rebrickable's elements.csv and this
+    project's bricklink_mappings share the same element_id space (both
+    resolve element_id 4190230 to the same physical part/color). Used ONLY
+    for the conflict report below, never stored: rebrickable_minifig_
+    inventory_items keeps rb_part_num untranslated by design (see this
+    script's docstring) -- this translation is a read-only comparison aid,
+    not a replacement for that stored column. Coverage is partial (not
+    every element has a bricklink_mappings row), so a miss here means
+    "untranslatable", not "confirmed absent" -- handled as its own bucket
+    in the report rather than folded into rb_only."""
+    element_map: dict[tuple[str, int], int] = {}  # (rb_part_num, rb_color_id) -> element_id
+    with open(data_dir / "elements.csv", newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            try:
+                rb_color_id = int(row["color_id"])
+                element_id = int(row["element_id"])
+            except (ValueError, KeyError):
+                continue
+            element_map[(row["part_num"], rb_color_id)] = element_id
+
+    cur = conn.cursor()
+    cur.execute("SELECT element_id, part_no FROM bricklink_mappings")
+    bl_by_element = dict(cur.fetchall())
+    cur.close()
+
+    translation: dict[tuple[str, int], str] = {}
+    for key, element_id in element_map.items():
+        bl_part_no = bl_by_element.get(element_id)
+        if bl_part_no:
+            translation[key] = bl_part_no
+    return translation
 
 
 def find_winning_minifig_inventories(data_dir: Path, pending_figs: set[str]) -> tuple[dict[int, str], dict[int, int]]:
@@ -143,36 +177,68 @@ def dedupe_sum(raw_rows: list[tuple]) -> list[tuple]:
     return [tuple(v) for v in folded.values()]
 
 
-def print_conflict_report(conn, minifig_nos: list[str]) -> None:
-    """For minifigs present in both sources, diff (part, color, qty).
+def print_conflict_report(conn, data_dir: Path, minifig_nos: list[str]) -> None:
+    """For minifigs present in both sources, diff (part, color, qty) using
+    the rb_part_num -> bl_part_no translation (via elements.csv +
+    bricklink_mappings, see load_rb_to_bl_part_translation) so the
+    comparison is apples-to-apples rather than comparing two different
+    numbering schemes directly. Rows whose part has no element_id mapping
+    are bucketed separately as 'untranslatable' rather than counted as a
+    conflict -- a miss there means "can't tell", not "confirmed absent".
     Report only -- resolving real discrepancies is a human judgment call."""
     if not minifig_nos:
         return
+    translation = load_rb_to_bl_part_translation(conn, data_dir)
+
     cur = conn.cursor()
-    cur.execute(CONFLICT_CHECK_SQL, (minifig_nos,))
-    rows = cur.fetchall()
+    cur.execute(RB_ROWS_SQL, (minifig_nos,))
+    rb_rows = cur.fetchall()
+    cur.execute(BS_ROWS_SQL, (minifig_nos,))
+    bs_rows = cur.fetchall()
     cur.close()
 
-    by_minifig: dict[str, dict] = defaultdict(lambda: {"both": 0, "rb_only": [], "mismatched_qty": []})
-    for minifig_no, rb_part, rb_color, rb_qty, bs_part, bs_color, bs_qty in rows:
-        stats = by_minifig[minifig_no]
-        if bs_part is None:
-            stats["rb_only"].append((rb_part, rb_color, rb_qty))
-        elif bs_qty != rb_qty:
-            stats["mismatched_qty"].append((rb_part, rb_color, rb_qty, bs_qty))
-        else:
-            stats["both"] += 1
+    bs_by_minifig: dict[str, dict[tuple[str, int], int]] = defaultdict(dict)
+    for minifig_no, part_no, color_id, qty in bs_rows:
+        bs_by_minifig[minifig_no][(part_no, color_id)] = qty
 
-    with_any_conflict = {m: s for m, s in by_minifig.items() if s["rb_only"] or s["mismatched_qty"]}
-    print(f"\nConflict report: {len(by_minifig)} minifig(s) present in both sources, "
-          f"{len(with_any_conflict)} with at least one discrepancy")
+    by_minifig: dict[str, dict] = defaultdict(
+        lambda: {"matching": 0, "rb_only": [], "mismatched_qty": [], "untranslatable": []}
+    )
+    matched_bs_keys: dict[str, set[tuple[str, int]]] = defaultdict(set)
+    for minifig_no, rb_part, rb_color, bl_color, rb_qty in rb_rows:
+        stats = by_minifig[minifig_no]
+        # elements.csv (the translation source) is keyed by Rebrickable's OWN
+        # color_id, so the lookup uses rb_color -- but brickstore_minifig_
+        # inventory_items.color_id is BrickLink's numbering, so the actual
+        # comparison against it must use bl_color (already translated at
+        # import time via colors.rebrickable_id, same as the stored column).
+        bl_part_no = translation.get((rb_part, rb_color))
+        if bl_part_no is None or bl_color is None:
+            stats["untranslatable"].append((rb_part, rb_color, rb_qty))
+            continue
+        bs_qty = bs_by_minifig.get(minifig_no, {}).get((bl_part_no, bl_color))
+        if bs_qty is None:
+            stats["rb_only"].append((rb_part, bl_part_no, bl_color, rb_qty))
+        elif bs_qty != rb_qty:
+            stats["mismatched_qty"].append((rb_part, bl_part_no, bl_color, rb_qty, bs_qty))
+        else:
+            stats["matching"] += 1
+            matched_bs_keys[minifig_no].add((bl_part_no, bl_color))
+
+    both_sources = {m for m in by_minifig if m in bs_by_minifig}
+    with_any_conflict = {m: s for m in both_sources
+                          if (s := by_minifig[m])["rb_only"] or s["mismatched_qty"]}
+    print(f"\nConflict report: {len(both_sources)} minifig(s) present in both sources, "
+          f"{len(with_any_conflict)} with at least one discrepancy (untranslatable parts excluded)")
     for minifig_no, s in list(with_any_conflict.items())[:20]:
-        print(f"  {minifig_no}: {s['both']} matching, {len(s['rb_only'])} RB-only, "
-              f"{len(s['mismatched_qty'])} qty-mismatched")
-        for rb_part, rb_color, rb_qty in s["rb_only"][:3]:
-            print(f"      RB-only: part {rb_part} color {rb_color} qty {rb_qty}")
-        for rb_part, rb_color, rb_qty, bs_qty in s["mismatched_qty"][:3]:
-            print(f"      qty mismatch: part {rb_part} color {rb_color}: RB={rb_qty} BrickStore={bs_qty}")
+        bs_only_count = len(bs_by_minifig[minifig_no]) - len(matched_bs_keys[minifig_no])
+        print(f"  {minifig_no}: {s['matching']} matching, {len(s['rb_only'])} RB-only, "
+              f"{len(s['mismatched_qty'])} qty-mismatched, {bs_only_count} BrickStore-only, "
+              f"{len(s['untranslatable'])} untranslatable")
+        for rb_part, bl_part, bl_color, rb_qty in s["rb_only"][:3]:
+            print(f"      RB-only: part {rb_part} (bl:{bl_part}) color {bl_color} qty {rb_qty}")
+        for rb_part, bl_part, bl_color, rb_qty, bs_qty in s["mismatched_qty"][:3]:
+            print(f"      qty mismatch: part {rb_part} (bl:{bl_part}) color {bl_color}: RB={rb_qty} BrickStore={bs_qty}")
     if len(with_any_conflict) > 20:
         print(f"  ... and {len(with_any_conflict) - 20} more")
 
@@ -274,7 +340,7 @@ def main():
         conn.commit()
 
     if imported_minifig_nos:
-        print_conflict_report(conn, imported_minifig_nos)
+        print_conflict_report(conn, args.data_dir, imported_minifig_nos)
 
     cur.close()
     conn.close()
