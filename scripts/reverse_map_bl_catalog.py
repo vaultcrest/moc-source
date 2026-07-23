@@ -62,6 +62,21 @@ unresolved rows stay retry-eligible (deprioritized behind never-attempted
 rows within their own is_printed tier), since Rebrickable's catalog keeps
 growing.
 
+method='matched_no_elements' (added 2026-07-22, real bug found + fixed):
+a reverse lookup can find a real rb_part_num whose elements are ALL already
+claimed by a different BL part_no (element_id is a hard 1:1 PK in
+bricklink_mappings; see resolve_one()'s ON CONFLICT DO NOTHING comment).
+That's a real outcome (found live: 08010ac01's mold family -- 3001old/
+3001oldb matched Rebrickable's 3001a/3001b but got 0 new elements each) and
+was originally written with method='reverse_lookup', the same as a true
+success -- which meant it silently exited the retry queue forever despite
+closing nothing. Confirmed live 2026-07-22: this was the outcome for
+1,649 of 1,909 (86%) of what an earlier version of this script counted as
+"resolved". Now tracked as its own method value and kept retry-eligible
+like 'unresolved' -- a future fix_rebrickable_part_nos.py correction
+elsewhere, or Rebrickable adding more elements to the matched part_num,
+could still free it up.
+
 Usage:
     DATABASE_URL=... REBRICKABLE_API_KEY=... python scripts/reverse_map_bl_catalog.py [--batch-size N] [--dry-run]
     DATABASE_URL=... REBRICKABLE_API_KEY=... python scripts/reverse_map_bl_catalog.py --part-no 08010ac01 [--dry-run]
@@ -136,7 +151,7 @@ BATCH_SQL = f"""
     SELECT c.part_no, c.is_printed, c.is_low_priority
     FROM candidates c
     LEFT JOIN bl_catalog_gap_fixes f ON f.old_part_no = c.part_no
-    WHERE f.old_part_no IS NULL OR f.method = 'unresolved'
+    WHERE f.old_part_no IS NULL OR f.method IN ('unresolved', 'matched_no_elements')
     ORDER BY c.is_low_priority ASC, c.is_printed ASC, f.attempted_at ASC NULLS FIRST, c.part_no
     LIMIT %(limit)s
 """
@@ -146,7 +161,7 @@ COUNT_SQL = f"""
     SELECT c.is_low_priority, c.is_printed, count(*)
     FROM candidates c
     LEFT JOIN bl_catalog_gap_fixes f ON f.old_part_no = c.part_no
-    WHERE f.old_part_no IS NULL OR f.method = 'unresolved'
+    WHERE f.old_part_no IS NULL OR f.method IN ('unresolved', 'matched_no_elements')
     GROUP BY c.is_low_priority, c.is_printed
 """
 
@@ -227,14 +242,17 @@ def resolve_one(cur, bl_part_no: str, dry_run: bool) -> tuple[str | None, int]:
 
 
 def process_batch(cur, candidates: list[tuple[str, bool, bool]], dry_run: bool) -> dict:
-    stats = {"resolved": 0, "unresolved": 0, "elements_created": 0, "plain_resolved": 0, "printed_resolved": 0, "low_priority_resolved": 0}
+    stats = {
+        "resolved": 0, "matched_no_elements": 0, "unresolved": 0, "elements_created": 0,
+        "plain_resolved": 0, "printed_resolved": 0, "low_priority_resolved": 0,
+    }
     for i, (bl_part_no, is_printed, is_low_priority) in enumerate(candidates):
         now = datetime.now(timezone.utc)
         rb_part_num, created = resolve_one(cur, bl_part_no, dry_run)
         tier = "printed" if is_printed else "plain"
         label = tier + ("+low-priority" if is_low_priority else "")
 
-        if rb_part_num:
+        if rb_part_num and created > 0:
             stats["resolved"] += 1
             stats["elements_created"] += created
             stats[f"{tier}_resolved"] += 1
@@ -243,6 +261,20 @@ def process_batch(cur, candidates: list[tuple[str, bool, bool]], dry_run: bool) 
             print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({label}) -> {rb_part_num}, {created} element(s)", flush=True)
             if not dry_run:
                 cur.execute(UPSERT_FIX_SQL, (bl_part_no, rb_part_num, is_printed, is_low_priority, "reverse_lookup", created, now))
+        elif rb_part_num:
+            # Rebrickable matched a part_num, but every element under it was
+            # already claimed by a different BL part_no (element_id is a hard
+            # 1:1 PK, ON CONFLICT DO NOTHING correctly refused to steal it --
+            # see resolve_one()'s comment). This closes nothing, so unlike a
+            # real success it stays retry-eligible: a future
+            # fix_rebrickable_part_nos.py correction elsewhere, or Rebrickable
+            # adding more elements to this part_num, could free it up later.
+            # Found 2026-07-22: this was the outcome for 1,649/1,909 (86%) of
+            # what a since-fixed version of this script counted as "resolved".
+            stats["matched_no_elements"] += 1
+            print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({label}) -> {rb_part_num}, 0 elements (all already owned elsewhere, retry-eligible)", flush=True)
+            if not dry_run:
+                cur.execute(UPSERT_FIX_SQL, (bl_part_no, rb_part_num, is_printed, is_low_priority, "matched_no_elements", 0, now))
         else:
             stats["unresolved"] += 1
             print(f"  [{i + 1}/{len(candidates)}] {bl_part_no} ({label}) -> UNRESOLVED (retry-eligible)", flush=True)
@@ -265,7 +297,7 @@ def send_report(stats: dict, remaining: dict[tuple[bool, bool], int], duration_s
         return
 
     mins, secs = divmod(int(duration_s), 60)
-    total = stats["resolved"] + stats["unresolved"]
+    total = stats["resolved"] + stats["matched_no_elements"] + stats["unresolved"]
     # remaining is keyed (is_low_priority, is_printed) -> count
     remaining_plain = remaining.get((False, False), 0)
     remaining_printed = remaining.get((False, True), 0)
@@ -275,10 +307,11 @@ def send_report(stats: dict, remaining: dict[tuple[bool, bool], int], duration_s
                f"{remaining_low_priority:,} low-priority remaining")
     body = (
         f"BrickLink catalog reverse-mapping run complete.\n\n"
-        f"Resolved (plain parts)     : {stats['plain_resolved']}\n"
-        f"Resolved (printed parts)   : {stats['printed_resolved']}\n"
-        f"  of which low-priority    : {stats['low_priority_resolved']}\n"
-        f"Unresolved (retry-eligible): {stats['unresolved']}\n"
+        f"Resolved (plain parts)       : {stats['plain_resolved']}\n"
+        f"Resolved (printed parts)     : {stats['printed_resolved']}\n"
+        f"  of which low-priority      : {stats['low_priority_resolved']}\n"
+        f"Matched but 0 elements created (retry-eligible -- elements already owned by another BL part_no): {stats['matched_no_elements']}\n"
+        f"Unresolved (retry-eligible)  : {stats['unresolved']}\n"
         f"bricklink_mappings rows created: {stats['elements_created']}\n"
         f"Remaining -- plain parts        : {remaining_plain:,}\n"
         f"Remaining -- printed parts      : {remaining_printed:,}\n"
@@ -355,6 +388,7 @@ def main():
     low_priority_remaining = remaining_after.get((True, False), 0) + remaining_after.get((True, True), 0)
     print(f"\nDone. Resolved: {stats['resolved']} ({stats['plain_resolved']} plain, "
           f"{stats['printed_resolved']} printed, {stats['low_priority_resolved']} of which low-priority), "
+          f"matched but 0 elements created: {stats['matched_no_elements']} (retry-eligible), "
           f"unresolved: {stats['unresolved']}, "
           f"{stats['elements_created']} bricklink_mappings row(s) created.")
     print(f"  Remaining: {remaining_after.get((False, False), 0):,} plain, "
