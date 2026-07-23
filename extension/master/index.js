@@ -3734,6 +3734,7 @@ function footerCardsHtml() {
       <h3>Disclaimer</h3>
       <p>MOC Source is a community tool and is not authorized by or affiliated with the LEGO Group. Price data is sourced from LEGO's public PAB service and may not always be accurate or current. Always verify before purchasing.</p>
       <p style="margin-top:8px">LEGO® is a trademark of the LEGO Group.</p>
+      <p style="margin-top:8px">The term "BrickLink" is a trademark of the LEGO Group BrickLink. This application uses the BrickLink API but is not endorsed or certified by LEGO BrickLink, Inc.</p>
     </div>
 
     <div class="info-card">
