@@ -8,6 +8,10 @@ BLClient bundles the four BrickLink OAuth1 credentials once and exposes:
   fetch_item(item_type, no)  -- catalog detail for any item type (PART, SET,
                                  MINIFIG, ...): name, item_type, year_released,
                                  alternate_no (when present)
+  fetch_subsets(set_no)      -- a SET's MINIFIG-typed subset entries
+                                 (no, name, quantity); used for fig_num <->
+                                 minifig_no mapping (2026-07-23, see
+                                 scripts/map_rebrickable_minifigs.py)
 
 Retries on network errors / 429 / 5xx (3 attempts, exponential backoff),
 mirroring the retry contract already established in scrape_bl_mold_data.py:
@@ -155,6 +159,37 @@ class BLClient:
                   f"HTTP {resp.status_code}", file=sys.stderr)
             return True, None
         return True, resp.json().get("data") or None
+
+    def fetch_subsets(self, set_no: str) -> tuple[bool, list[dict] | None]:
+        """Fetch a SET's subset breakdown (GET /items/SET/{no}/subsets) and
+        return only its MINIFIG-typed entries, flattened out of BL's nested
+        match_no/entries[] structure: [{no, name, quantity}, ...]. Used by
+        scripts/map_rebrickable_minifigs.py to cross-reference against
+        Rebrickable's inventory_minifigs.csv (which shares set_num with BL,
+        unlike minifig numbering itself -- see that script's docstring).
+        A 404 means BL has no subset breakdown for this set (not an error)."""
+        url = f"{BL_API_BASE}/items/SET/{urllib.parse.quote(set_no, safe='')}/subsets"
+        attempted, resp = self._get(url, "subsets", set_no)
+        if not attempted:
+            return False, None
+        if resp.status_code == 404:
+            return True, []
+        if resp.status_code != 200:
+            print(f"  BL subsets unexpected status for {set_no}: HTTP {resp.status_code}", file=sys.stderr)
+            return True, []
+
+        minifigs = []
+        for group in resp.json().get("data") or []:
+            for entry in group.get("entries") or []:
+                item = entry.get("item") or {}
+                if item.get("type") != "MINIFIG":
+                    continue
+                minifigs.append({
+                    "no": item.get("no"),
+                    "name": item.get("name"),
+                    "quantity": entry.get("quantity", 0),
+                })
+        return True, minifigs
 
     def fetch_colors(self) -> tuple[bool, list[dict] | None]:
         """Fetch BrickLink's full colors catalog: list of {color_id, color_name,

@@ -12,7 +12,9 @@ from .lego_element_stock_monthly import LegoElementStockMonthly
 from .lego_element_stock_state import LegoElementStockState
 from .lego_set import LegoSet
 from .lego_set_inventory_item import LegoSetInventoryItem
+from .minifig_mapping import MinifigMapping
 from .multipack import Multipack, MultipackComponent
+from .rebrickable_minifig_inventory_item import RebrickableMinifigInventoryItem
 from .studio_resolution import StudioResolution
 
 __all__ = [
@@ -27,6 +29,8 @@ __all__ = [
     "LegoElementStockState",
     "LegoSet",
     "LegoSetInventoryItem",
+    "MinifigMapping",
+    "RebrickableMinifigInventoryItem",
     "BricklinkMapping",
     "BricklinkAlternate",
     "StudioResolution",

@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Downloads Rebrickable's bulk parts.csv/elements.csv/colors.csv/
-inventories.csv/inventory_parts.csv to a local directory, refreshing the
-static snapshot import_rebrickable.py, backfill_last_used_year.py, and
-import_rebrickable_set_inventories.py read from.
+inventories.csv/inventory_parts.csv/minifigs.csv/inventory_minifigs.csv to
+a local directory, refreshing the static snapshot import_rebrickable.py,
+backfill_last_used_year.py, import_rebrickable_set_inventories.py, and
+map_rebrickable_minifigs.py read from.
 
 Root cause this replaces (found 2026-07-21): those two files previously
 lived as two independently hand-maintained copies
@@ -33,6 +34,16 @@ import_rebrickable_set_inventories.py -- same CDN base, confirmed live
 that both download fine (inventory_parts.csv is the big one, ~1.5M rows
 across every set/version combined).
 
+minifigs.csv/inventory_minifigs.csv added 2026-07-23 for
+map_rebrickable_minifigs.py / import_rebrickable_minifig_inventories.py --
+same CDN base. minifigs.csv (~17K rows, fig_num/name/num_parts) supplies
+the names used for token-overlap disambiguation when a set has more than
+one minifig; inventory_minifigs.csv (~23K rows, inventory_id/fig_num/qty)
+supplies which fig_nums are in which set, the anchor used to bridge
+Rebrickable's fig_num numbering to BrickLink's unrelated minifig_no
+numbering (see map_rebrickable_minifigs.py's docstring for why no direct
+mapping exists).
+
 No DB writes, no API key needed (unauthenticated CDN downloads). Run
 scripts/import_rebrickable.py / import_rebrickable_set_inventories.py
 afterward to actually load the fresh data.
@@ -49,7 +60,8 @@ from pathlib import Path
 import requests
 
 CDN_BASE = "https://cdn.rebrickable.com/media/downloads"
-FILES = ["parts.csv", "elements.csv", "colors.csv", "inventories.csv", "inventory_parts.csv"]
+FILES = ["parts.csv", "elements.csv", "colors.csv", "inventories.csv", "inventory_parts.csv",
+         "minifigs.csv", "inventory_minifigs.csv"]
 
 DEFAULT_DATA_DIR = Path(os.environ.get("REBRICKABLE_DATA_DIR", "/opt/mocsource/data/rebrickable"))
 
