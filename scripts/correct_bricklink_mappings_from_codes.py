@@ -88,6 +88,20 @@ def load_codes(path: Path) -> dict[str, tuple[str, str]]:
     return codes
 
 
+# codes.xml's <COLOR> text doesn't always match colors.bl_name verbatim --
+# found live 2026-07-23 checking all 173 distinct codes.xml color strings
+# against colors.bl_name: 3 are pure naming variants (case/spacing/label),
+# not missing data, applied before the color_map lookup. The other 2
+# mismatches ("Pearl Dark Gray", "Rose Pink") have no equivalent bl_id in
+# our colors table at all -- a real gap in that table, not a naming issue,
+# left unmatched rather than guessed at.
+COLOR_NAME_ALIASES = {
+    "(Not Applicable)": "None",
+    "Glow In Dark Opaque": "Glow in Dark Opaque",
+    "Royal Blue (Old Blue-Violet)": "Royal Blue(Old Blue-Violet)",
+}
+
+
 def load_color_map(conn) -> dict[str, int]:
     cur = conn.cursor()
     cur.execute("SELECT bl_name, bl_id FROM colors WHERE bl_name IS NOT NULL")
@@ -138,7 +152,7 @@ def main():
             no_code += 1
             continue
         bl_part_no, color_name = code
-        bl_color_id = color_map.get(color_name)
+        bl_color_id = color_map.get(COLOR_NAME_ALIASES.get(color_name, color_name))
         if bl_color_id is None:
             color_unmatched += 1
             continue
