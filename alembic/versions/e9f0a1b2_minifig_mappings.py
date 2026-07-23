@@ -1,6 +1,6 @@
 """add minifig_mappings + rebrickable_minifig_inventory_items tables
 
-Revision ID: d4e5f6a7
+Revision ID: e9f0a1b2
 Revises: c2d3e4f5
 Create Date: 2026-07-23 00:00:00.000000
 
@@ -46,7 +46,7 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "d4e5f6a7"
+revision: str = "e9f0a1b2"
 down_revision: Union[str, None] = "c2d3e4f5"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
