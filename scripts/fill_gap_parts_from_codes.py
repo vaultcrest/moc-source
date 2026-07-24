@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Fills BL part_nos with ZERO bricklink_mappings row (the
-reverse_map_bl_catalog.py backlog) using BrickLink's own codes.xml,
-wherever codes.xml already has an element code for that part_no --
-free, local, no BrickLink/Rebrickable API calls.
+"""Fills BL (part_no, color) pairs with no bricklink_mappings row -- both
+part_nos with ZERO mapping at all, and part_nos that already have SOME
+color mapped but are missing others -- using BrickLink's own codes.xml,
+wherever codes.xml already has an element code for that pair. Free, local,
+no BrickLink/Rebrickable API calls.
 
 Found 2026-07-23: of the ~55K part_nos with no mapping at all, only
 ~5,100 (9%) have any codes.xml element code -- the other 91% are
@@ -12,6 +13,18 @@ based discovery can find those). This script handles the reachable 9%
 directly instead of waiting for the nightly Rebrickable-budget-limited
 scan to eventually get to them.
 
+Found 2026-07-24: the "zero mapping at all" definition of the gap was
+itself incomplete -- a part_no with even one mapped color was previously
+invisible to this script forever, regardless of how many *other* known
+colors (per brickstore_part_colors) it was still missing. Live count:
+5,035 part_nos / 5,322 missing (part_no, color_id) pairs fall in that
+category, of which 640 pairs are closeable via codes.xml right now.
+Candidate selection now checks per-color, not per-part_no; a per-color
+"already covered" check (color_map_existing) skips codes.xml elements
+whose (part_no, color) is already mapped under some other element_id,
+so already-partially-filled parts only get their genuinely-missing colors
+filled, not a redundant second row for a color already covered.
+
 correct_bricklink_mappings_from_codes.py already handles the case where
 the blocking element_id already has a (wrong) bricklink_mappings row --
 run that first. This script handles the other case: the element_id from
@@ -20,11 +33,12 @@ genuine INSERT, not a correction -- same design_id-or-fallback pattern as
 reverse_map_bl_catalog.py's resolve_one(), just design_id falls back to
 the BL part_no (codes.xml has no design_id equivalent to offer).
 
-A gap part_no with a codes.xml code that still can't be filled means the
-blocking element_id already has a *verified* (source='bricklink') row
-elsewhere -- a genuine BrickLink-vs-BrickLink-catalog-download disagreement,
-left alone rather than overridden -- or its color has no bl_id in our
-colors table at all (see COLOR_NAME_ALIASES in the correction script).
+A gap (part_no, color) pair with a codes.xml code that still can't be
+filled means the blocking element_id already has a *verified*
+(source='bricklink') row elsewhere -- a genuine BrickLink-vs-BrickLink-
+catalog-download disagreement, left alone rather than overridden -- or its
+color has no bl_id in our colors table at all (see COLOR_NAME_ALIASES in
+the correction script).
 
 Usage:
     DATABASE_URL=... python scripts/fill_gap_parts_from_codes.py [--file PATH] [--dry-run]
@@ -138,16 +152,26 @@ def main():
     cur.execute("""
         SELECT bpc.part_no FROM brickstore_part_catalog bpc
         WHERE NOT EXISTS (SELECT 1 FROM bricklink_mappings bm WHERE bm.part_no = bpc.part_no)
+           OR EXISTS (
+               SELECT 1 FROM brickstore_part_colors bpcol
+               WHERE bpcol.part_no = bpc.part_no
+                 AND NOT EXISTS (
+                     SELECT 1 FROM bricklink_mappings bm2
+                     WHERE bm2.part_no = bpcol.part_no AND bm2.color_id = bpcol.color_id
+                 )
+           )
     """)
     gap_parts = {r[0] for r in cur.fetchall()}
     candidates = [p for p in gap_parts if p in elements_by_part]
-    print(f"{len(gap_parts)} part_no(s) currently have zero bricklink_mappings row, "
+    print(f"{len(gap_parts)} part_no(s) currently have zero mapping or a missing known color, "
           f"{len(candidates)} of those have a codes.xml element code")
 
     cur.execute("SELECT element_id FROM lego_elements")
     known_elements = {r[0] for r in cur.fetchall()}
     cur.execute("SELECT element_id, part_no FROM bricklink_mappings")
     existing_mapping_owner = dict(cur.fetchall())
+    cur.execute("SELECT part_no, color_id FROM bricklink_mappings WHERE part_no IS NOT NULL AND color_id IS NOT NULL")
+    covered_colors = set(cur.fetchall())
 
     now = datetime.now(timezone.utc)
     parts_filled = 0
@@ -155,6 +179,7 @@ def main():
     elements_inserted = 0
     color_unmatched = 0
     already_mapped_elsewhere = 0
+    already_color_covered = 0
     examples = []
 
     for part_no in candidates:
@@ -164,6 +189,12 @@ def main():
             bl_color_id = color_map.get(COLOR_NAME_ALIASES.get(color_name, color_name))
             if bl_color_id is None:
                 color_unmatched += 1
+                continue
+            if (part_no, bl_color_id) in covered_colors:
+                # This exact (part_no, color) already has a mapping under a
+                # different element_id -- not a gap, don't add a redundant
+                # second row for a color that's already covered.
+                already_color_covered += 1
                 continue
             if element_id in known_elements:
                 owner = existing_mapping_owner.get(element_id)
@@ -185,6 +216,7 @@ def main():
             elements_inserted += 1
             filled_this_part = True
             known_elements.add(element_id)
+            covered_colors.add((part_no, bl_color_id))
             if len(examples) < 10:
                 examples.append((element_id, part_no, bl_color_id))
 
@@ -207,7 +239,8 @@ def main():
     print(f"\nDone in {mins}m {secs}s. {len(candidates)} candidate part_no(s) checked: "
           f"{parts_filled} {verb} ({elements_inserted} element row(s) inserted), "
           f"{parts_still_blocked} still blocked "
-          f"({already_mapped_elsewhere} by an already-mapped element, {color_unmatched} by an unmatched color)")
+          f"({already_mapped_elsewhere} by an already-mapped element, {color_unmatched} by an unmatched color, "
+          f"{already_color_covered} color(s) already covered under a different element_id)")
     print("Sample fills:")
     for e in examples:
         print(" ", e)

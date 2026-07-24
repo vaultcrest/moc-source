@@ -62,6 +62,19 @@ unresolved rows stay retry-eligible (deprioritized behind never-attempted
 rows within their own is_printed tier), since Rebrickable's catalog keeps
 growing.
 
+Candidate selection widened 2026-07-24: previously a part_no with even ONE
+mapped color (from any source -- codes.xml, a partial import, etc.) was
+invisible to this script forever, even if brickstore_part_colors said it
+had other colors still unmapped. Now candidates include those partial-gap
+part_nos too. Deliberately does NOT retry part_nos this script itself
+already resolved (bl_catalog_gap_fixes.method='reverse_lookup' stays
+excluded via the outer batch/count query, unchanged) -- Rebrickable
+returns all of a part's colors in one resolve_one() call, so if it already
+gave us everything it has for a part_no, re-attempting won't find more and
+would just burn budget. The widening only surfaces genuinely new
+candidates (never attempted, or previously unresolved/matched_no_elements)
+that happen to already have a color mapped from elsewhere.
+
 method='matched_no_elements' (added 2026-07-22, real bug found + fixed):
 a reverse lookup can find a real rb_part_num whose elements are ALL already
 claimed by a different BL part_no (element_id is a hard 1:1 PK in
@@ -141,7 +154,27 @@ CANDIDATES_CTE = """
             (bpc.part_no ~ 'c[0-9]+$' OR bc.category_name ILIKE '%%baseplate%%') AS is_low_priority
         FROM brickstore_part_catalog bpc
         LEFT JOIN bl_categories bc ON bc.category_id = bpc.category_id
-        WHERE NOT EXISTS (SELECT 1 FROM bricklink_mappings bm WHERE bm.part_no = bpc.part_no)
+        WHERE (
+            -- No mapping at all, OR has some mapped color but is still
+            -- missing another known color (found 2026-07-24: a part_no
+            -- with even one mapped color was previously invisible here
+            -- forever, regardless of other still-missing known colors --
+            -- see fill_gap_parts_from_codes.py's docstring for the same
+            -- fix applied there). Note this deliberately does NOT reopen
+            -- part_nos this script itself already resolved (method=
+            -- 'reverse_lookup' stays excluded via the outer WHERE below,
+            -- unchanged) -- only widens which *new* candidates are seen,
+            -- so it can't cause budget-churning re-attempts of settled rows.
+            NOT EXISTS (SELECT 1 FROM bricklink_mappings bm WHERE bm.part_no = bpc.part_no)
+            OR EXISTS (
+                SELECT 1 FROM brickstore_part_colors bpcol
+                WHERE bpcol.part_no = bpc.part_no
+                  AND NOT EXISTS (
+                      SELECT 1 FROM bricklink_mappings bm2
+                      WHERE bm2.part_no = bpcol.part_no AND bm2.color_id = bpcol.color_id
+                  )
+            )
+        )
         AND (%(sticker_ids)s = '{}' OR bpc.category_id != ALL(%(sticker_ids)s))
     )
 """

@@ -68,8 +68,26 @@ GAP_SQL = """
     ORDER BY bpc.part_no
 """
 
+# Separate metric, added 2026-07-24: a part_no with SOME mapped color can
+# still be missing another known color (per brickstore_part_colors) and was
+# previously invisible to every gap-closing script -- see
+# fill_gap_parts_from_codes.py's and reverse_map_bl_catalog.py's docstrings
+# for the fix applied there. Reported separately from GAP_SQL above rather
+# than merged into one number, since the two have different remediation
+# paths (codes.xml / Rebrickable reverse-lookup vs the same for a part
+# that's otherwise untouched).
+PARTIAL_COLOR_GAP_SQL = """
+    SELECT bpcol.part_no, bpcol.color_id
+    FROM brickstore_part_colors bpcol
+    WHERE EXISTS (SELECT 1 FROM bricklink_mappings bm WHERE bm.part_no = bpcol.part_no)
+      AND NOT EXISTS (
+          SELECT 1 FROM bricklink_mappings bm2
+          WHERE bm2.part_no = bpcol.part_no AND bm2.color_id = bpcol.color_id
+      )
+"""
 
-def send_report(gap_count: int, sticker_excluded: int, total_parts: int) -> None:
+
+def send_report(gap_count: int, sticker_excluded: int, total_parts: int, partial_gap_parts: int, partial_gap_pairs: int) -> None:
     smtp_host     = os.environ.get("SMTP_HOST", "")
     smtp_port     = int(os.environ.get("SMTP_PORT", "587"))
     smtp_user     = os.environ.get("SMTP_USER", "")
@@ -84,6 +102,9 @@ def send_report(gap_count: int, sticker_excluded: int, total_parts: int) -> None
         f"Total real BrickLink parts known: {total_parts:,}\n"
         f"Sticker-category parts excluded : {sticker_excluded:,}\n"
         f"Parts we have no mapping for    : {gap_count:,}\n\n"
+        f"Separately -- parts with SOME mapped color but missing another known color:\n"
+        f"Part_nos affected               : {partial_gap_parts:,}\n"
+        f"Missing (part_no, color) pairs  : {partial_gap_pairs:,}\n\n"
         f"Full list: cache/bl_catalog_gaps.csv on the app server.\n"
     )
     msg = MIMEText(body)
@@ -119,6 +140,10 @@ def main():
     cur.execute(GAP_SQL, {"sticker_ids": sticker_ids})
     gaps = cur.fetchall()
 
+    cur.execute(PARTIAL_COLOR_GAP_SQL)
+    partial_gap_pairs = cur.fetchall()
+    partial_gap_parts = len({r[0] for r in partial_gap_pairs})
+
     cur.close()
     conn.close()
 
@@ -131,9 +156,11 @@ def main():
     print(f"\nTotal real BrickLink parts: {total_parts:,}")
     print(f"Sticker-category parts excluded: {sticker_excluded:,}")
     print(f"Parts with no bricklink_mappings entry: {len(gaps):,}")
+    print(f"Partially-mapped parts missing another known color: {partial_gap_parts:,} "
+          f"({len(partial_gap_pairs):,} missing (part_no, color) pairs)")
     print(f"Written to {CACHE_PATH}")
 
-    send_report(len(gaps), sticker_excluded, total_parts)
+    send_report(len(gaps), sticker_excluded, total_parts, partial_gap_parts, len(partial_gap_pairs))
 
 
 if __name__ == "__main__":
