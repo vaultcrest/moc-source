@@ -16,3 +16,5 @@ class Color(Base):
     color_type: Mapped[str | None] = mapped_column(Text)
     rebrickable_year_from: Mapped[int | None] = mapped_column(Integer)
     rebrickable_year_to: Mapped[int | None] = mapped_column(Integer)
+    bl_year_from: Mapped[int | None] = mapped_column(Integer)
+    bl_year_to: Mapped[int | None] = mapped_column(Integer)

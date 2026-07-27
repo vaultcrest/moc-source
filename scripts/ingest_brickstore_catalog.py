@@ -3,8 +3,12 @@
 public release (see scripts/_brickstore_release.py) into
 brickstore_part_catalog, brickstore_minifig_catalog, bl_part_catalog,
 brickstore_part_colors (per-part color availability, from
-part_color_codes.xml), and bricklink_alternates (alternate_no rows tagged
-source='brickstore_alternate_ids').
+part_color_codes.xml), bricklink_alternates (alternate_no rows tagged
+source='brickstore_alternate_ids'), and colors.bl_year_from/bl_year_to
+(from colors.xml's own COLORYEARFROM/COLORYEARTO, added 2026-07-26 --
+BrickLink's own year-introduced data, more authoritative than
+colors.rebrickable_year_from, which disagreed with it for a third of
+all colors).
 
 Replaces scripts/scrape_bl_mold_data.py's live-API role for
 name/item_type/category_id/alternate_no on bl_part_catalog -- all present in
@@ -34,7 +38,13 @@ from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
-from _brickstore_release import ensure_latest, iter_minifig_rows, iter_part_color_rows, iter_part_rows
+from _brickstore_release import (
+    ensure_latest,
+    iter_color_year_rows,
+    iter_minifig_rows,
+    iter_part_color_rows,
+    iter_part_rows,
+)
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -69,6 +79,13 @@ UPSERT_MINIFIG_CATALOG_SQL = """
         category_id = EXCLUDED.category_id,
         name = EXCLUDED.name,
         imported_at = EXCLUDED.imported_at
+"""
+
+# colors rows are pre-seeded (seed_colors.py) -- UPDATE only, no insert case.
+# bl_id here is BrickLink's own real numeric color id (colors.xml's <COLOR>),
+# so a plain join is correct -- no name-matching needed, unlike part_color_codes.xml.
+UPDATE_COLOR_YEARS_SQL = """
+    UPDATE colors SET bl_year_from = %s, bl_year_to = %s WHERE bl_id = %s
 """
 
 
@@ -150,6 +167,25 @@ def ingest_minifigs(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dic
     return {"minifigs": len(minifig_rows)}
 
 
+def ingest_color_years(cur, extract_dir: Path, dry_run: bool) -> dict:
+    """UPDATE-only backfill of colors.bl_year_from/bl_year_to from colors.xml's
+    own COLORYEARFROM/COLORYEARTO -- BrickLink's own year-introduced data,
+    found 2026-07-26 to disagree with Rebrickable-derived rebrickable_year_from
+    for 73 of 218 colors (by as much as 48 years). Never touches
+    rebrickable_year_from/_to -- that column documents its own provenance."""
+    rows = [(yf, yt, bl_id) for bl_id, yf, yt in iter_color_year_rows(extract_dir) if yf is not None]
+
+    if dry_run:
+        print(f"    [dry-run] would update bl_year_from/_to for {len(rows)} colors")
+        return {"color_years": len(rows)}
+
+    updated = 0
+    for yf, yt, bl_id in rows:
+        cur.execute(UPDATE_COLOR_YEARS_SQL, (yf, yt, bl_id))
+        updated += cur.rowcount
+    return {"color_years": updated}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -177,6 +213,7 @@ def main():
     part_stats = ingest_parts(cur, extract_dir, now, args.dry_run)
     color_stats = ingest_part_colors(cur, extract_dir, now, args.dry_run)
     minifig_stats = ingest_minifigs(cur, extract_dir, now, args.dry_run)
+    color_year_stats = ingest_color_years(cur, extract_dir, args.dry_run)
 
     if not args.dry_run:
         conn.commit()
@@ -190,6 +227,7 @@ def main():
     print(f"  Alternates  : {part_stats['alternates']}")
     print(f"  Part colors : {color_stats['part_colors']}")
     print(f"  Minifigs    : {minifig_stats['minifigs']}")
+    print(f"  Color years : {color_year_stats['color_years']}")
 
 
 if __name__ == "__main__":

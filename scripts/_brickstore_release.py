@@ -174,6 +174,21 @@ def _color_name_to_id(extract_dir: Path) -> dict[str, int]:
     return mapping
 
 
+def iter_color_year_rows(extract_dir: Path):
+    """Yields (bl_id, year_from, year_to) from colors.xml's own
+    COLORYEARFROM/COLORYEARTO fields -- BrickLink's own year-introduced data,
+    distinct from (and found 2026-07-26 to disagree with, for a third of all
+    colors) Rebrickable's colors.csv-derived rebrickable_year_from/_to."""
+    path = extract_dir / "colors.xml"
+    for item in ET.parse(path).getroot().findall("ITEM"):
+        bl_id = item.findtext("COLOR")
+        year_from = item.findtext("COLORYEARFROM")
+        year_to = item.findtext("COLORYEARTO")
+        if bl_id is None:
+            continue
+        yield int(bl_id), int(year_from) if year_from else None, int(year_to) if year_to else None
+
+
 def iter_part_color_rows(extract_dir: Path):
     """Yields (part_no, color_id) pairs from part_color_codes.xml, joined
     against colors.xml's COLORNAME -> COLOR (numeric id). Skips any color
