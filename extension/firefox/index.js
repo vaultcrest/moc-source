@@ -20,6 +20,22 @@ function parseStorePrice(str) {
   return isNaN(n) ? null : n;
 }
 
+// Picks a representative price row for a "(Not Applicable)" (any color)
+// wanted part from GET_PAB_PRICES_FOR_PART's full per-color result set --
+// mirrors background.js's fetchPabPrice()'s own channel preference (pab
+// over bap) for a single color, then picks the cheapest row within
+// whichever channel is present, since "any color" means the cheapest
+// available color is the honest representative price.
+function pickCheapestPabRow(rows) {
+  if (!rows || !rows.length) return null;
+  const cheapest = list => list.reduce((a, b) => (b.price_cents ?? Infinity) < (a.price_cents ?? Infinity) ? b : a);
+  const pab = rows.filter(r => r.channel === "pab");
+  if (pab.length) return cheapest(pab);
+  const bap = rows.filter(r => r.channel === "bap");
+  if (bap.length) return cheapest(bap);
+  return cheapest(rows);
+}
+
 // Rounds a dollar amount UP to the nearest cent -- used only for final
 // "what you'll pay" totals, never for per-item/per-category display.
 // The 1e-9 epsilon guards against float noise (e.g. 0.1+0.2=0.30000000000000004)
@@ -1193,8 +1209,20 @@ async function renderProjectDetail(id, content) {
   // buildGrandTotal (project-wide total) so they can never disagree about which
   // lots an allocation actually covers.
   function distributeLots(cart, partNo, colorId, allocQty) {
+    // colorId arrives pre-stringified from an allocation key split
+    // (`${partNo}_${colorId}`.split("_")), so a wildcard allocation's
+    // colorId -- real JS null, meaning "(Not Applicable)"/any color -- shows
+    // up here as the literal string "null". Match on partNo alone in that
+    // case, mirroring the same relaxation in the Auto Allocate click
+    // handler's own cart-lot scan -- otherwise a real cart lot (which always
+    // has one concrete, non-null color) can never match, and the allocated
+    // quantity silently vanishes from both buildBlSection's line-item table
+    // and buildGrandTotal's dollar total, which both share this function.
+    // Found 2026-07-28: recorded correctly in proj.allocations, just never
+    // rendered or totaled.
+    const isWildcard = colorId == null || colorId === "null";
     const matchingLots = (cart.parts ?? [])
-      .filter(cp => cp.partNo === partNo && String(cp.colorId) === String(colorId))
+      .filter(cp => cp.partNo === partNo && (isWildcard || String(cp.colorId) === String(colorId)))
       .map(cp => ({ cp, price: parseStorePrice(cp.storePrice) ?? Infinity }))
       .sort((a, b) => a.price - b.price);
     const result = [];
@@ -2639,10 +2667,19 @@ async function renderProjectDetail(id, content) {
 
       // Collect every individual lot across all BL store carts, sorted cheapest first.
       // This lets us split allocation across carts when one cart's cheapest lot runs out.
+      // poolPart.colorId === null means the original want was "(Not Applicable)"
+      // (any color accepted) -- match on partNo alone so a lot already sitting
+      // in a cart under ANY color still counts toward this want, instead of
+      // requiring an exact match against whatever color pabEntry happened to
+      // price it at for display. Found 2026-07-28: without this, a real BL
+      // cart lot in one color and this want's own PAB routing (a different,
+      // arbitrarily-priced color) were treated as two unrelated demands,
+      // risking a real double-buy.
       const allLots = [];
       for (const cart of blCartList) {
         for (const cp of (cart.parts ?? [])) {
-          if (cp.partNo !== poolPart.partNo || String(cp.colorId) !== String(poolPart.colorId)) continue;
+          if (cp.partNo !== poolPart.partNo) continue;
+          if (poolPart.colorId != null && String(cp.colorId) !== String(poolPart.colorId)) continue;
           const sp = parseStorePrice(cp.storePrice);
           if (sp == null) continue;
           allLots.push({ cartId: cart.id, qty: cp.qty ?? 1, price: sp });
@@ -2958,6 +2995,20 @@ async function renderProjectDetail(id, content) {
   showExcludedParts   = false;
 
   await Promise.allSettled(poolParts.map(async (p, i) => {
+    // colorId === null means the original want was "(Not Applicable)" (any
+    // color accepted) -- see collectWantedListParts() in content.js. There's
+    // no single (part, color) to price, so pull every in-stock color for
+    // this part_no and show the cheapest as a representative price. This is
+    // display/pricing only -- poolParts[i].colorId is deliberately left
+    // untouched (still null) so Auto Allocate still treats it as "any color"
+    // rather than locking onto whichever color happened to be cheapest here.
+    if (p.colorId == null) {
+      const rows = await chrome.runtime.sendMessage({
+        type: "GET_PAB_PRICES_FOR_PART", partNo: p.partNo,
+      });
+      poolParts[i].pabEntry = pickCheapestPabRow(rows);
+      return;
+    }
     poolParts[i].pabEntry = await chrome.runtime.sendMessage({
       type: "GET_PAB_PRICE", partNo: p.partNo, colorId: p.colorId,
     });
@@ -3840,6 +3891,18 @@ async function renderListDetail(listType, listId, content) {
   } else {
     await Promise.allSettled(currentDetail.parts.map(async (_, i) => {
       const p = currentDetail.parts[i];
+      // colorId === null means "(Not Applicable)" (any color accepted) --
+      // see collectWantedListParts() in content.js. Same wildcard branch as
+      // the project pool's own fetch (renderProjectDetail, ~2993-2999): pull
+      // every in-stock color and show the cheapest as a representative
+      // price, since there's no single (part, color) to look up.
+      if (p.colorId == null) {
+        const rows = await chrome.runtime.sendMessage({
+          type: "GET_PAB_PRICES_FOR_PART", partNo: p.partNo,
+        });
+        currentDetail.parts[i].pabEntry = pickCheapestPabRow(rows);
+        return;
+      }
       currentDetail.parts[i].pabEntry = await chrome.runtime.sendMessage({
         type: "GET_PAB_PRICE", partNo: p.partNo, colorId: p.colorId,
       });
@@ -4132,7 +4195,14 @@ function colorCell(p) {
     const swatch = hex ? `<span style="display:inline-block;width:12px;height:12px;border-radius:2px;background:#${esc(hex)};border:1px solid rgba(0,0,0,0.2);vertical-align:middle;margin-right:5px;flex-shrink:0"></span>` : "";
     return `<div style="display:flex;align-items:center">${swatch}<div><strong>${bl}</strong>${lego}</div></div>`;
   }
-  return `<span style="color:#888">${p.colorId}</span>`;
+  // Never print a raw colorId -- for a wildcard part (colorId === null,
+  // "(Not Applicable)") that renders as the literal text "null" via template
+  // interpolation, which is a real regression a user hit live 2026-07-28.
+  // Fall back to colorName (set by collectWantedListParts() for wildcard
+  // rows) before ever falling back to a bare numeric id.
+  if (p.colorName) return `<span style="color:#888">${esc(p.colorName)}</span>`;
+  if (p.colorId != null) return `<span style="color:#888">Color ${esc(String(p.colorId))}</span>`;
+  return `<span style="color:#adb5bd">—</span>`;
 }
 
 function pabCells(p) {

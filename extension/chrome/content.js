@@ -69,7 +69,6 @@ function collectWantedListParts() {
     if (!match) continue;
     const row = img.closest(".table-row");
     if (!row) continue;
-    const colorId = parseInt(match[1], 10);
     const partNo = match[2];
     const qtyCell = row.querySelector(".wl-col-quantity");
     const qtyText = qtyCell?.textContent || "";
@@ -80,13 +79,31 @@ function collectWantedListParts() {
     const qty = Math.max(0, want - have);
     const nameEl = row.querySelector(".wl-col-desc a");
     const name = nameEl?.textContent?.trim() || "";
+    // The thumbnail image URL always embeds SOME concrete color id, even for
+    // a "(Not Applicable)" (any color accepted) wanted row -- BrickLink still
+    // has to render a bitmap, and appears to fall back to the part's
+    // default/most-common catalog color rather than a blank placeholder.
+    // Trusting that id blindly silently turns "any color" into "specifically
+    // this one color" everywhere downstream (pool key, PAB price lookup,
+    // Auto Allocate's cart matching) -- found 2026-07-28 via a real project
+    // where this caused a double-buy risk (Auto Allocate routed the full
+    // want to PAB under the bogus color while a different color of the same
+    // part already sat in a BL store cart, unrecognized as satisfying the
+    // same want). Detect the row's own "(Not Applicable)" text and store a
+    // genuine wildcard (colorId: null) instead -- checked against the whole
+    // row's text rather than one specific sub-element/class, since that's
+    // resilient to BrickLink markup changes and the string is distinctive
+    // enough not to false-positive elsewhere in the row.
+    const isAnyColor = /\(Not Applicable\)/i.test(row.textContent || "");
+    const colorId = isAnyColor ? null : parseInt(match[1], 10);
+    const colorName = isAnyColor ? "(Not Applicable)" : undefined;
     // Max price: .wl-hover-editable inside .wl-col-price, shows "-" when not set
     const priceEditable = row.querySelector(".wl-col-price .wl-hover-editable");
     const maxPriceText = priceEditable?.textContent?.trim() || "";
     const maxPrice = maxPriceText && maxPriceText !== "-"
       ? parseFloat(maxPriceText.replace(/[^0-9.]/g, "")) || null
       : null;
-    parts.push({ partNo, colorId, want, have, qty, name, imageUrl: img.src, maxPrice });
+    parts.push({ partNo, colorId, colorName, want, have, qty, name, imageUrl: img.src, maxPrice });
   }
   return parts;
 }
@@ -218,7 +235,16 @@ function computeVerdict(pabEntry, storePrice) {
   const beatsAvg = avgPrice != null && storePrice < avgPrice;
   if (!beatsChannel && !beatsAvg) return null;
   const full = beatsChannel && (avgPrice == null || beatsAvg);
-  return { level: full ? "full" : "mixed", channelPrice, avgPrice };
+  // Deltas are only meaningful (and only shown) for a reference price this
+  // store price actually beat -- previously the caption just restated
+  // channelPrice/avgPrice verbatim, redundant with the badge above it and
+  // sometimes shown even when that particular reference wasn't beaten.
+  return {
+    level: full ? "full" : "mixed",
+    channelPrice, avgPrice,
+    channelDelta: beatsChannel ? channelPrice - storePrice : null,
+    avgDelta: beatsAvg ? avgPrice - storePrice : null,
+  };
 }
 
 function injectBadge(row, pabEntry, storePrice) {
@@ -285,9 +311,9 @@ function injectBadge(row, pabEntry, storePrice) {
     caption.style.cssText =
       `display:block;margin-top:2px;font-size:10.5px;font-weight:700;color:${verdict.level === "full" ? "#15803d" : "#b45309"};`;
     const parts = [];
-    if (verdict.channelPrice != null) parts.push(`${pabEntry.channel === "pab" ? "PAB" : "STD"} $${verdict.channelPrice.toFixed(2)}`);
-    if (verdict.avgPrice != null) parts.push(`BL avg $${verdict.avgPrice.toFixed(2)}`);
-    caption.textContent = `▼ below ${parts.join(" and ")}`;
+    if (verdict.channelDelta != null) parts.push(`$${verdict.channelDelta.toFixed(2)} below ${pabEntry.channel === "pab" ? "PAB" : "STD"}`);
+    if (verdict.avgDelta != null) parts.push(`$${verdict.avgDelta.toFixed(2)} below BL avg`);
+    caption.textContent = `▼ ${parts.join(" and ")}`;
     badge.insertAdjacentElement("afterend", caption);
   }
 
