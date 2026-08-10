@@ -20,6 +20,32 @@ function parseStorePrice(str) {
   return isNaN(n) ? null : n;
 }
 
+// ── Currency formatting ────────────────────────────────────────────────────
+// Covers the PAB regions MOC Source already supports (see the region picker
+// in popup.html); an unrecognized code falls back to "{CODE} " rather than
+// guessing a symbol. Currency identity is never converted here -- amounts
+// are only ever summed within a single known currency (see fmtMoney callers).
+const CURRENCY_SYMBOLS = {
+  USD: "$", CAD: "$", AUD: "$", NZD: "$", GBP: "£", EUR: "€",
+  SEK: "kr", NOK: "kr", DKK: "kr", PLN: "zł", CZK: "Kč", KRW: "원",
+};
+const SYMBOL_AFTER = new Set(["kr", "zł", "Kč", "원"]);
+
+// Formats a numeric amount with a currency code, e.g. fmtMoney(0.59, "SEK")
+// -> "0.59 kr". When currencyCode is unknown, shows the bare number with no
+// symbol at all instead of guessing "$" -- a wrong symbol reads as a
+// confident, specific claim ("this is USD") that may be flatly false, and a
+// missing symbol reads honestly as "incomplete data" (older saved carts
+// scraped before currency tracking existed, or values -- like BrickLink's
+// wanted-list MAXPRICE -- that never carry a currency at all). Plain text
+// only, no HTML -- some callers esc() this.
+function fmtMoney(amount, currencyCode) {
+  if (amount == null || isNaN(amount)) return "—";
+  if (!currencyCode) return amount.toFixed(2);
+  const sym = CURRENCY_SYMBOLS[currencyCode] || `${currencyCode} `;
+  return SYMBOL_AFTER.has(sym) ? `${amount.toFixed(2)} ${sym}` : `${sym}${amount.toFixed(2)}`;
+}
+
 // Picks a representative price row for a "(Not Applicable)" (any color)
 // wanted part from GET_PAB_PRICES_FOR_PART's full per-color result set --
 // mirrors background.js's fetchPabPrice()'s own channel preference (pab
@@ -77,7 +103,7 @@ function isOverPAB(p) {
 }
 
 function cartSavings(parts) {
-  let total = 0, count = 0;
+  let total = 0, count = 0, currency = null;
   for (const p of parts) {
     const store = parseStorePrice(p.storePrice);
     if (store == null || !p.pabEntry?.price_cents) continue;
@@ -85,9 +111,10 @@ function cartSavings(parts) {
     if (store > pab) {
       total += (store - pab) * (p.qty ?? 1);
       count++;
+      currency ??= p.pabEntry.currency_code;
     }
   }
-  return { total, count };
+  return { total, count, currency };
 }
 
 function buildBlXml(items) {
@@ -328,6 +355,7 @@ function summaryPanel(parts, cart) {
     bap: { lots: 0, pieces: 0, price: 0, hasPrice: true },
     bl:  { lots: 0, pieces: 0, price: 0, hasPrice: cart },
   };
+  let pabCurrency = null, blCurrency = null;
 
   for (const p of parts) {
     const qty = cart ? (p.qty ?? 1) : (p.want ?? p.qty ?? 1);
@@ -336,16 +364,19 @@ function summaryPanel(parts, cart) {
       cats.pab.lots++;
       cats.pab.pieces += qty;
       cats.pab.price += (p.pabEntry.price_cents / 100) * qty;
+      pabCurrency ??= p.pabEntry.currency_code;
     } else if (ch === "bap") {
       cats.bap.lots++;
       cats.bap.pieces += qty;
       cats.bap.price += (p.pabEntry.price_cents / 100) * qty;
+      pabCurrency ??= p.pabEntry.currency_code;
     } else {
       cats.bl.lots++;
       cats.bl.pieces += qty;
       if (cart) {
         const sp = effectivePrice(p);
         if (sp) cats.bl.price += sp * qty;
+        blCurrency ??= p.storeCurrency;
       } else if (p.maxPrice != null) {
         cats.bl.price += p.maxPrice * qty;
         cats.bl.hasPrice = true;
@@ -372,7 +403,7 @@ function summaryPanel(parts, cart) {
           const d = cats[k]; if (!d.lots) return "";
           const lbl = k === "pab" ? "PAB" : k === "bap" ? "STD" : "BrickLink";
           const pl  = k === "bl" ? "Price" : "Price";
-          const pr  = d.hasPrice ? `$${ceilToCents(d.price).toFixed(2)}` : "—";
+          const pr  = d.hasPrice ? fmtMoney(ceilToCents(d.price), k === "bl" ? blCurrency : pabCurrency) : "—";
           return `<div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid #f3f4f6">
             <span style="font-weight:600;width:150px;flex-shrink:0">${lbl}</span>
             <span style="color:#6c757d;font-size:14px">Lot</span><span style="min-width:40px">${d.lots}</span>
@@ -384,7 +415,7 @@ function summaryPanel(parts, cart) {
           <span style="font-weight:700;width:150px;flex-shrink:0">Total</span>
           <span style="color:#6c757d;font-size:14px">Lot</span><span style="min-width:40px;font-weight:600">${tot.lots}</span>
           <span style="color:#6c757d;font-size:14px">Pieces</span><span style="min-width:50px;font-weight:600">${tot.pieces}</span>
-          <span style="color:#6c757d;font-size:14px">Price</span><span style="font-weight:700">${totHasPrice ? `$${ceilToCents(tot.price).toFixed(2)}` : "—"}</span>
+          <span style="color:#6c757d;font-size:14px">Price</span><span style="font-weight:700">${totHasPrice ? fmtMoney(ceilToCents(tot.price), cats.bl.lots ? null : pabCurrency) : "—"}</span>
         </div>
         ${(() => {
           const os = currentDetail.list?.orderSummary;
@@ -428,8 +459,8 @@ function summaryPanel(parts, cart) {
       : ""}</div>`;
   }
 
-  function stats(d, priceLabel) {
-    const pr = d.hasPrice ? `$${d.price.toFixed(2)}` : "—";
+  function stats(d, priceLabel, currency) {
+    const pr = d.hasPrice ? fmtMoney(d.price, currency) : "—";
     return `<div style="flex:1;display:flex;align-items:center;gap:20px">
       <span style="color:#6c757d;font-size:14px">Lot</span><span style="min-width:36px">${d.lots}</span>
       <span style="color:#6c757d;font-size:14px">Pieces</span><span style="min-width:46px">${d.pieces}</span>
@@ -437,11 +468,11 @@ function summaryPanel(parts, cart) {
     </div>`;
   }
 
-  function row(label, d, priceLabel, wlCh, pabCh) {
+  function row(label, d, priceLabel, wlCh, pabCh, currency) {
     return `
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f3f4f6">
         <span style="font-weight:600;width:130px;flex-shrink:0">${label}</span>
-        ${stats(d, priceLabel)}
+        ${stats(d, priceLabel, currency)}
         ${blBtn(wlCh, d.lots > 0)}
         ${pabBtn(pabCh, "Transfer", d.lots > 0 && !!pabCh)}
       </div>`;
@@ -462,15 +493,15 @@ function summaryPanel(parts, cart) {
         <div style="width:${BL_W};flex-shrink:0;text-align:center;font-size:11px;color:#6c757d;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Transfer to BL</div>
         <div style="width:${PAB_W};flex-shrink:0;text-align:center;font-size:11px;color:#6c757d;font-weight:700;letter-spacing:.04em;text-transform:uppercase">Transfer to PAB</div>
       </div>
-      ${row("PAB", cats.pab, "Price", "pab", "pab")}
-      ${row("STD", cats.bap, "Price", "bap", "bap")}
-      ${row("BrickLink",      cats.bl,  blPriceLabel,  "bl",  null)}
+      ${row("PAB", cats.pab, "Price", "pab", "pab", pabCurrency)}
+      ${row("STD", cats.bap, "Price", "bap", "bap", pabCurrency)}
+      ${row("BrickLink",      cats.bl,  blPriceLabel,  "bl",  null, blCurrency)}
       <div style="display:flex;align-items:center;gap:10px;padding:8px 0 2px">
         <span style="font-weight:700;width:130px;flex-shrink:0">Total</span>
         <div style="flex:1;display:flex;align-items:center;gap:20px">
           <span style="color:#6c757d;font-size:14px">Lot</span><span style="min-width:36px;font-weight:600">${tot.lots}</span>
           <span style="color:#6c757d;font-size:14px">Pieces</span><span style="min-width:46px;font-weight:600">${tot.pieces}</span>
-          <span style="color:#6c757d;font-size:14px">Price</span><span style="font-weight:700">${totHasPrice ? `$${tot.price.toFixed(2)}` : "—"}</span>
+          <span style="color:#6c757d;font-size:14px">Price</span><span style="font-weight:700">${totHasPrice ? fmtMoney(tot.price, cats.bl.lots ? null : pabCurrency) : "—"}</span>
         </div>
         ${blBtn("all", tot.lots > 0)}
         ${pabBtn(totPabCh, "Transfer All", hasPab || hasBap)}
@@ -1037,6 +1068,11 @@ async function renderProjectDetail(id, content) {
     const allSelected = entries.every(e => selSet?.has(e.key));
     const showStore   = sectionType === "bl";
     const blCart      = showStore ? blCartList.find(c => c.id === sectionCartId) : null;
+    // One destination cart = one store = one native currency, so a header label is
+    // unambiguous here (unlike the pool table, which spans multiple stores and never
+    // shows this column at all -- showStore is only ever true for a single blCart).
+    const storeHdrCurrency = showStore ? blCart?.parts?.find(p => p.storeCurrency)?.storeCurrency : null;
+    const pabHdrCurrency   = poolParts.find(p => p.pabEntry?.currency_code)?.pabEntry.currency_code;
     const colHdr = `
       <div style="display:flex;align-items:center;gap:8px;padding:3px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
         <input type="checkbox" class="section-sel-all"
@@ -1046,8 +1082,8 @@ async function renderProjectDetail(id, content) {
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:54px;text-transform:uppercase;letter-spacing:.04em">Part</div>
         <div style="width:36px;flex-shrink:0"></div>
         <div style="flex:1;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em">Name</div>
-        ${showStore ? `<div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Store $</div>` : ""}
-        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">PAB $</div>
+        ${showStore ? `<div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Store${storeHdrCurrency ? ` (${storeHdrCurrency})` : " $"}</div>` : ""}
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">PAB${pabHdrCurrency ? ` (${pabHdrCurrency})` : " $"}</div>
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:46px;text-align:center;text-transform:uppercase;letter-spacing:.04em">Ch</div>
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:24px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Qty</div>
         <div style="width:26px;flex-shrink:0"></div>
@@ -1055,9 +1091,10 @@ async function renderProjectDetail(id, content) {
     const rows = entries.map(({ key, qty, cartPart: lotCartPart }) => {
       const part      = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
       const name      = part?.pabEntry?.bl_part_name || part?.name || key;
-      const color     = part?.pabEntry?.bl_color_name || part?.colorName || "";
-      const colorHex  = part?.pabEntry?.bl_color_hex;
-      const pabPrice  = part?.pabEntry?.price_formatted || "—";
+      const { name: color, hex: colorHex } = colorLabel(part);
+      // Bare number, no symbol -- PAB is one global region setting, and the
+      // colHdr above already states the currency once for the whole column.
+      const pabPrice  = part?.pabEntry?.price_cents != null ? (part.pabEntry.price_cents / 100).toFixed(2) : "—";
       const ch        = part?.pabEntry?.channel;
       const badge     = ch === "pab"
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
@@ -1075,8 +1112,11 @@ async function renderProjectDetail(id, content) {
       const pctBadge    = pct != null
         ? `<div style="font-size:10px;font-weight:700;color:${pct < 0 ? "#16a34a" : "#dc2626"}">${pct < 0 ? "▼" : "▲"}${Math.abs(pct).toFixed(0)}%</div>`
         : "";
+      // Bare number, no symbol -- showStore is only ever true for a single
+      // blCart (one store, one currency), and the colHdr above already
+      // states it once for the whole column.
       const storeCell = showStore
-        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${storeNum != null ? `$${storeNum.toFixed(2)}` : "—"}${pctBadge}</div>`
+        ? `<div style="font-size:12px;color:${storeColor};flex-shrink:0;width:52px;text-align:right">${storeNum != null ? storeNum.toFixed(2) : "—"}${pctBadge}</div>`
         : "";
       const rowBg     = pabCheaper ? "background:#fff5f5;" : "";
       const img = part?.imageUrl
@@ -1137,6 +1177,7 @@ async function renderProjectDetail(id, content) {
     };
     // Cost summary
     let legoParts = 0, legoBsParts = 0, legoStdParts = 0, legoPartsKnown = true;
+    let legoCurrency = null; // PAB is one global locale setting, so every allocated part shares the same currency
     for (const { key, qty } of allLegoAllocs) {
       const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
       if (part?.pabEntry?.price_cents) {
@@ -1144,6 +1185,7 @@ async function renderProjectDetail(id, content) {
         legoParts += cost;
         if (part.pabEntry.channel === "pab") legoBsParts += cost;
         else if (part.pabEntry.channel === "bap") legoStdParts += cost;
+        legoCurrency ??= part.pabEntry.currency_code;
       } else legoPartsKnown = false;
     }
     const svcFee   = (!ignoreLegoFees && legoPartsKnown && legoParts < 14 && allLegoAllocs.length > 0) ? 7 : 0;
@@ -1151,12 +1193,12 @@ async function renderProjectDetail(id, content) {
     const legoGrand = legoParts + svcFee + legShip;
     const legoSummary = allLegoAllocs.length === 0 ? "" : `
       <div style="display:flex;flex-wrap:wrap;align-items:center;gap:12px;padding:5px 14px;background:#f8f9fa;border-bottom:1px solid #e1e4e8;font-size:12px;color:#374151">
-        <span>Parts: <strong>${legoPartsKnown ? `$${ceilToCents(legoParts).toFixed(2)}` : `~$${ceilToCents(legoParts).toFixed(2)}`}</strong></span>
-        ${legoBsParts > 0 ? `<span style="color:#15803d">BS: <strong>$${ceilToCents(legoBsParts).toFixed(2)}</strong></span>` : ""}
-        ${legoStdParts > 0 ? `<span style="color:#ca8a04">STD: <strong>$${ceilToCents(legoStdParts).toFixed(2)}</strong></span>` : ""}
-        ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>$7.00</strong> <span style="color:#9ca3af;font-weight:400">(under $14 order)</span></span>` : ""}
-        ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : `$${legShip.toFixed(2)}`}</strong></span>` : ""}
-        ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? `$${ceilToCents(legoGrand).toFixed(2)}` : `~$${ceilToCents(legoGrand).toFixed(2)}`}</span>` : ""}
+        <span>Parts: <strong>${legoPartsKnown ? fmtMoney(ceilToCents(legoParts), legoCurrency) : `~${fmtMoney(ceilToCents(legoParts), legoCurrency)}`}</strong></span>
+        ${legoBsParts > 0 ? `<span style="color:#15803d">BS: <strong>${fmtMoney(ceilToCents(legoBsParts), legoCurrency)}</strong></span>` : ""}
+        ${legoStdParts > 0 ? `<span style="color:#ca8a04">STD: <strong>${fmtMoney(ceilToCents(legoStdParts), legoCurrency)}</strong></span>` : ""}
+        ${svcFee ? `<span style="color:#dc2626">Service fee: <strong>${fmtMoney(7, legoCurrency)}</strong> <span style="color:#9ca3af;font-weight:400">(under ${fmtMoney(14, legoCurrency)} order)</span></span>` : ""}
+        ${!ignoreLegoFees ? `<span>Shipping: <strong>${legShip === 0 ? "Free" : fmtMoney(legShip, legoCurrency)}</strong></span>` : ""}
+        ${(!ignoreLegoFees || svcFee) ? `<span style="margin-left:auto;font-weight:700">Total: ${legoPartsKnown ? fmtMoney(ceilToCents(legoGrand), legoCurrency) : `~${fmtMoney(ceilToCents(legoGrand), legoCurrency)}`}</span>` : ""}
       </div>`;
     const legoSortOpts = [
       ["name_color",  "Name+Color"],
@@ -1258,18 +1300,40 @@ async function renderProjectDetail(id, content) {
     ];
     // Cost summary
     let blTotal = 0, blTotalKnown = true;
-    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0;
+    let blTotalConverted = 0, blConvertedKnown = blAllocs.length > 0;
+    let blCurrency = null, blConvertedCurrency = null;
+    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0, pabCurrency = null;
     for (const { key, qty, cartPart } of blAllocs) {
       const part     = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
       const blPrice  = effectivePrice(cartPart);
+      blCurrency ??= cartPart?.storeCurrency;
       if (blPrice != null) blTotal += blPrice * qty;
       else blTotalKnown = false;
+      // storeConverted is BrickLink's own already-computed secondary-currency
+      // figure (see content.js's collectCartParts()) -- only trustworthy as a
+      // per-project (allocated-quantity) total when every allocated lot has
+      // one, so a single missing row degrades the whole converted total
+      // rather than silently understating it.
+      if (cartPart?.storeConverted) {
+        blTotalConverted += cartPart.storeConverted.amount * qty;
+        blConvertedCurrency ??= cartPart.storeConverted.currency;
+      } else {
+        blConvertedKnown = false;
+      }
       if (blPrice != null) {
         const pabCents = part?.pabEntry?.price_cents;
         // BL-only parts (no PAB price) are neutral — excluded from PAB comparison
         if (pabCents != null) {
+          pabCurrency ??= part.pabEntry.currency_code;
+          // Compare like-for-like currency when possible: BrickLink's own
+          // converted figure (already in the visitor's secondary currency,
+          // which is expected to match the PAB region) vs falling back to
+          // the raw native BL price when no conversion was scraped -- same
+          // best-effort assumption the app already made before currency
+          // tracking existed, just now explicit instead of accidental.
+          const blPriceForPab = cartPart?.storeConverted?.amount ?? blPrice;
           pabPartsTotal   += (pabCents / 100) * qty;
-          pabNetPartsOnly += (pabCents / 100 - blPrice) * qty;
+          pabNetPartsOnly += (pabCents / 100 - blPriceForPab) * qty;
           blPabTotal      += blPrice * qty;
         }
         pabNetLots++;
@@ -1285,13 +1349,17 @@ async function renderProjectDetail(id, content) {
     // vs-PAB: pure part-price delta only (no shipping, no LEGO fees — those belong in totals)
     const pabNetTotal  = pabNetPartsOnly;
     const shipKnown    = !shipIsTbd || (estBlShipping[cart.id] != null);
-    const blTotalStr   = blAllocs.length ? `${blTotalKnown ? "" : "~"}$${ceilToCents(blTotal).toFixed(2)}` : null;
-    const blGrandStr   = blTotalStr ? `${blTotalKnown && !shipIsTbd ? "" : "~"}$${ceilToCents(blTotal + effShip).toFixed(2)}` : null;
+    const blPartsNative    = blAllocs.length ? fmtMoney(ceilToCents(blTotal), blCurrency) : null;
+    // Shipping is only ever known in native currency (scraped/estimated), so the
+    // converted figure only ever covers Parts, never the shipping-inclusive grand total.
+    const blPartsConverted = blConvertedKnown && blConvertedCurrency ? fmtMoney(ceilToCents(blTotalConverted), blConvertedCurrency) : null;
+    const blTotalStr   = blPartsNative ? `${blTotalKnown ? "" : "~"}${blPartsNative}${blPartsConverted ? ` <span style="color:#9ca3af;font-weight:400">(≈ ${blPartsConverted})</span>` : ""}` : null;
+    const blGrandStr   = blPartsNative ? `${blTotalKnown && !shipIsTbd ? "" : "~"}${fmtMoney(ceilToCents(blTotal + effShip), blCurrency)}` : null;
     // Show PAB-comparable store subtotal when BL-only parts are present, so the savings
     // figure isn't confusingly close to the full cart total.
     const hasBLOnly    = blPabTotal < blTotal - 0.001;
     const pabNetStr    = pabNetLots > 0 && pabPartsTotal > 0 && pabNetTotal !== 0
-      ? `PAB Savings $${Math.abs(pabNetTotal).toFixed(2)}`
+      ? `PAB Savings ${fmtMoney(Math.abs(pabNetTotal), pabCurrency)}`
       : null;
     const pabNetColor  = pabNetTotal > 0 ? "#16a34a" : pabNetTotal < 0 ? "#dc2626" : "#6b7280";
     const blSummary    = blTotalStr ? `
@@ -1385,6 +1453,7 @@ async function renderProjectDetail(id, content) {
       }
     });
     const allScratchSelected = scratchEntries.every(e => selectedScratchKeys.has(e.key));
+    const pabHdrCurrency = poolParts.find(p => p.pabEntry?.currency_code)?.pabEntry.currency_code;
     const scratchColHdr = `
       <div style="display:flex;align-items:center;gap:8px;padding:3px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
         <input type="checkbox" class="section-sel-all"
@@ -1394,15 +1463,16 @@ async function renderProjectDetail(id, content) {
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:54px;text-transform:uppercase;letter-spacing:.04em">Part</div>
         <div style="width:36px;flex-shrink:0"></div>
         <div style="flex:1;font-size:10px;color:#9ca3af;text-transform:uppercase;letter-spacing:.04em">Name</div>
-        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">PAB $</div>
+        <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:52px;text-align:right;text-transform:uppercase;letter-spacing:.04em">PAB${pabHdrCurrency ? ` (${pabHdrCurrency})` : " $"}</div>
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:46px;text-align:center;text-transform:uppercase;letter-spacing:.04em">Ch</div>
         <div style="font-size:10px;color:#9ca3af;flex-shrink:0;width:24px;text-align:right;text-transform:uppercase;letter-spacing:.04em">Qty</div>
       </div>`;
     const rows = scratchEntries.map(({ key, qty, p }) => {
       const name     = p.pabEntry?.bl_part_name  || p.name      || "";
-      const color    = p.pabEntry?.bl_color_name || p.colorName || "";
-      const colorHex = p.pabEntry?.bl_color_hex;
-      const price    = p.pabEntry?.price_formatted || "—";
+      const { name: color, hex: colorHex } = colorLabel(p);
+      // Bare number, no symbol -- PAB is one global region setting, and the
+      // header above already states the currency once for the whole column.
+      const price    = p.pabEntry?.price_cents != null ? (p.pabEntry.price_cents / 100).toFixed(2) : "—";
       const ch       = p.pabEntry?.channel;
       const badge    = ch === "pab"
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
@@ -1652,10 +1722,19 @@ async function renderProjectDetail(id, content) {
 
   function buildGrandTotal() {
     let grand = 0, grandKnown = true;
+    // grandConverted: parts-only (no shipping -- we never have a converted shipping
+    // figure) sum of every BL cart's home-currency-equivalent total (via BrickLink's
+    // own scraped conversion, see content.js's collectCartParts()) plus the LEGO/PAB
+    // total (already in the home/PAB currency, one global locale setting). Only ever
+    // shown when real converted data exists for every included cart -- see
+    // grandConvertedKnown -- so it never silently understates by dropping a cart with
+    // no conversion available.
+    let grandConverted = 0, grandConvertedKnown = true, homeCurrency = null;
     // pabPartsTotal: what those BL-allocated parts would cost on LEGO direct (PAB-available only)
     // blAllPartsTotal: BL store cost of all allocated parts (PAB + BL-only); blPabTotal: PAB-comparable only
-    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0, blAllPartsTotal = 0;
+    let pabPartsTotal = 0, pabNetPartsOnly = 0, pabNetLots = 0, blPabTotal = 0, blAllPartsTotal = 0, pabCurrency = null;
     const cartRows = [];
+    let hasBlCartRows = false;
 
     for (const cart of blCartList) {
       const blAllocs = [];
@@ -1668,17 +1747,24 @@ async function renderProjectDetail(id, content) {
         }
       }
       if (!blAllocs.length) continue;
+      hasBlCartRows = true;
       let total = 0, totalKnown = true;
+      let totalConverted = 0, totalConvertedKnown = true, cartCurrency = null;
       for (const { key, qty, cartPart } of blAllocs) {
         const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
         const pr   = effectivePrice(cartPart);
+        cartCurrency ??= cartPart?.storeCurrency;
+        if (cartPart?.storeConverted) totalConverted += cartPart.storeConverted.amount * qty;
+        else totalConvertedKnown = false;
         if (pr != null) {
           total += pr * qty;
           blAllPartsTotal += pr * qty;
           const pabCents = part?.pabEntry?.price_cents;
           if (pabCents != null) {
+            pabCurrency ??= part.pabEntry.currency_code;
+            const prForPab = cartPart?.storeConverted?.amount ?? pr;
             pabPartsTotal   += (pabCents / 100) * qty;
-            pabNetPartsOnly += (pabCents / 100 - pr) * qty;
+            pabNetPartsOnly += (pabCents / 100 - prForPab) * qty;
             blPabTotal      += pr * qty;
           }
           pabNetLots++;
@@ -1693,25 +1779,29 @@ async function renderProjectDetail(id, content) {
       const effS   = isTbd ? (estBlShipping[cart.id] ?? 0) : (sNum ?? 0);
       const cartGrand = total + effS;
       grand += cartGrand;
+      if (totalConvertedKnown) grandConverted += totalConverted; else grandConvertedKnown = false;
       if (!totalKnown || (isTbd && !(estBlShipping[cart.id] > 0))) grandKnown = false;
-      cartRows.push(`<span style="font-size:12px;color:#374151">${esc(cart.name)}: <strong>${totalKnown ? "" : "~"}$${ceilToCents(cartGrand).toFixed(2)}</strong>${isTbd && !(estBlShipping[cart.id] > 0) ? `<span style="color:#9ca3af;font-size:11px"> (ship TBD)</span>` : ""}</span>`);
+      cartRows.push(`<span style="font-size:12px;color:#374151">${esc(cart.name)}: <strong>${totalKnown ? "" : "~"}${fmtMoney(ceilToCents(cartGrand), cartCurrency)}</strong>${isTbd && !(estBlShipping[cart.id] > 0) ? `<span style="color:#9ca3af;font-size:11px"> (ship TBD)</span>` : ""}</span>`);
     }
 
     // LEGO allocations contribute to grand total but are already priced at PAB — no vs-PAB delta
     const legoAllocs = Object.entries(currentAllocs).filter(([, a]) => (a.legoQty ?? 0) > 0).map(([key, a]) => ({ key, qty: a.legoQty }));
     if (legoAllocs.length > 0) {
-      let legoParts = 0, legoPartsKnown = true;
+      let legoParts = 0, legoPartsKnown = true, legoCurrency = null;
       for (const { key, qty } of legoAllocs) {
         const part = poolParts.find(p => `${p.partNo}_${p.colorId}` === key);
-        if (part?.pabEntry?.price_cents) legoParts += (part.pabEntry.price_cents / 100) * qty;
-        else legoPartsKnown = false;
+        if (part?.pabEntry?.price_cents) {
+          legoParts += (part.pabEntry.price_cents / 100) * qty;
+          legoCurrency ??= part.pabEntry.currency_code;
+        } else legoPartsKnown = false;
       }
       const svcFee  = (!ignoreLegoFees && legoPartsKnown && legoParts < 14) ? 7 : 0;
       const legShip = ignoreLegoFees ? 0 : legoParts >= 35 ? 0 : legoParts <= 25 ? 4.95 : 6.95;
       const legoGrand = legoParts + svcFee + legShip;
       grand += legoGrand;
+      if (legoPartsKnown) { grandConverted += legoGrand; homeCurrency ??= legoCurrency; } else grandConvertedKnown = false;
       if (!legoPartsKnown) grandKnown = false;
-      cartRows.push(`<span style="font-size:12px;color:#374151">LEGO: <strong>${legoPartsKnown ? "" : "~"}$${ceilToCents(legoGrand).toFixed(2)}</strong></span>`);
+      cartRows.push(`<span style="font-size:12px;color:#374151">LEGO: <strong>${legoPartsKnown ? "" : "~"}${fmtMoney(ceilToCents(legoGrand), legoCurrency)}</strong></span>`);
     }
 
     if (!cartRows.length) return "";
@@ -1722,14 +1812,25 @@ async function renderProjectDetail(id, content) {
     const pabNetTotal   = pabNetPartsOnly;
     const hasBLOnly     = blPabTotal < blAllPartsTotal - 0.001;
     const pabSavedStr   = pabNetLots > 0 && pabPartsTotal > 0 && pabNetTotal !== 0
-      ? `PAB Savings $${Math.abs(pabNetTotal).toFixed(2)}`
+      ? `PAB Savings ${fmtMoney(Math.abs(pabNetTotal), pabCurrency)}`
       : null;
     const pabSavedColor = pabNetTotal > 0 ? "#16a34a" : pabNetTotal < 0 ? "#dc2626" : "#6b7280";
+    // Only surfaced when at least one BL cart actually had a real scraped conversion
+    // (no PAB allocations at all still counts as "known" -- nothing to convert then).
+    const convertedStr  = grandConvertedKnown && homeCurrency
+      ? `<span style="font-size:11px;color:#6b7280">(≈ ${fmtMoney(ceilToCents(grandConverted), homeCurrency)} parts, excl. shipping)</span>`
+      : "";
+    // The headline figure sums each cart's own native currency together with the
+    // PAB/home total -- only ever truly single-currency when there are no BL carts
+    // at all (pure PAB order); otherwise it's the same "add raw numbers, assume one
+    // currency" shorthand this app has always used, now made accurate by the
+    // convertedStr line below rather than by guessing a symbol for a mixed sum.
+    const grandCurrency = hasBlCartRows ? null : homeCurrency;
     return `<div style="display:flex;flex-wrap:wrap;align-items:center;gap:16px;padding:10px 16px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:6px">
       <span style="font-size:13px;font-weight:700;color:#0369a1">Grand Total</span>
       ${cartRows.join("")}
       ${pabSavedStr ? `<span style="font-size:12px;color:${pabSavedColor};font-weight:600">${esc(pabSavedStr)}</span>` : ""}
-      <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1">${grandKnown ? "" : "~"}$${ceilToCents(grand).toFixed(2)}</span>
+      <span style="margin-left:auto;font-size:14px;font-weight:700;color:#0369a1;text-align:right">${grandKnown ? "" : "~"}${fmtMoney(ceilToCents(grand), grandCurrency)}<br>${convertedStr}</span>
     </div>`;
   }
 
@@ -2055,7 +2156,11 @@ async function renderProjectDetail(id, content) {
     const newParts = poolParts.filter(p => !currentAllocs[`${p.partNo}_${p.colorId}`]?.excluded).map(p => ({
       partNo:    p.partNo,
       colorId:   p.colorId,
-      colorName: p.pabEntry?.bl_color_name || p.colorName || "",
+      // A wildcard part's colorName must stay "(Not Applicable)", not
+      // whichever color happened to be cheapest on PAB (pabEntry.bl_color_name
+      // is a pricing reference only) -- that's a display concern, not a data
+      // concern, and this value gets persisted back into the wanted list.
+      colorName: p.colorId == null ? (p.colorName || "(Not Applicable)") : (p.pabEntry?.bl_color_name || p.colorName || ""),
       name:      p.pabEntry?.bl_part_name  || p.name      || "",
       want:      p.wantedQty,
       have:      0,
@@ -2176,7 +2281,9 @@ async function renderProjectDetail(id, content) {
         return {
           partNo:    p.partNo,
           colorId:   p.colorId,
-          colorName: p.pabEntry?.bl_color_name || p.colorName || "",
+          // See showPoolSave()'s identical fix above -- a wildcard's colorName
+          // must stay "(Not Applicable)", not the cheapest-PAB reference color.
+          colorName: p.colorId == null ? (p.colorName || "(Not Applicable)") : (p.pabEntry?.bl_color_name || p.colorName || ""),
           name:      p.pabEntry?.bl_part_name  || p.name      || "",
           want:      p.wantedQty,
           have:      0,
@@ -2326,15 +2433,18 @@ async function renderProjectDetail(id, content) {
 
     // Build price maps for EVERY project BL store (cartId → Map(key → price))
     const allPriceMaps = new Map();
+    const cartCurrencies = new Map(); // cartId → storeCurrency (one store = one currency)
     for (const c of blCartList) {
       allPriceMaps.set(c.id, new Map(
         (c.parts ?? []).flatMap(p => {
           const price = parseStorePrice(p.storePrice);
+          if (price != null) cartCurrencies.set(c.id, cartCurrencies.get(c.id) ?? p.storeCurrency);
           return price != null ? [[`${p.partNo}_${p.colorId}`, price]] : [];
         })
       ));
     }
     const thisStoreMap = allPriceMaps.get(cart.id) ?? new Map();
+    const thisCurrency = cartCurrencies.get(cart.id) ?? null;
 
     function poolQty(part) { return part.wantedQty ?? 1; }
 
@@ -2361,7 +2471,7 @@ async function renderProjectDetail(id, content) {
         if (cid === cart.id) continue;
         const price = m.get(key);
         if (price != null && (bestOther == null || price < bestOther.price)) {
-          bestOther = { price, cartName: blCartList.find(c => c.id === cid)?.name || "" };
+          bestOther = { price, cartName: blCartList.find(c => c.id === cid)?.name || "", currency: cartCurrencies.get(cid) ?? null };
         }
       }
 
@@ -2406,14 +2516,18 @@ async function renderProjectDetail(id, content) {
       const key     = `${r.part.partNo}_${r.part.colorId}`;
       const ch      = r.part.pabEntry?.channel || "bl";
       const name    = r.part.pabEntry?.bl_part_name || r.part.name || r.part.partNo;
-      const color   = r.part.pabEntry?.bl_color_name || r.part.colorName || "";
+      const { name: color } = colorLabel(r.part);
       const qty     = poolQty(r.part);
       const isHere  = section === "here";
-      const thisPriceStr  = `$${r.thisPrice.toFixed(2)}`;
-      const otherStr      = isHere ? `$${r.bestOther.price.toFixed(2)}` : "—";
-      const pabStr        = r.pabCents != null ? `$${(r.pabCents / 100).toFixed(2)}` : "—";
+      const thisPriceStr  = fmtMoney(r.thisPrice, thisCurrency);
+      const otherStr      = isHere ? fmtMoney(r.bestOther.price, r.bestOther.currency) : "—";
+      const pabStr        = r.pabCents != null ? fmtMoney(r.pabCents / 100, r.part.pabEntry?.currency_code) : "—";
       const subNote       = isHere && r.bestOther.cartName ? ` · vs ${esc(r.bestOther.cartName)}` : "";
       const saving        = isHere ? (r.bestOther.price - r.thisPrice) : (r.thisPrice - r.pabCents / 100);
+      // "here" savings are this-store-native minus another store's native price (possibly a
+      // different currency); "pab" savings are this-store-native minus PAB/home currency.
+      // Both are best-effort, labeled in whichever side the number is anchored to (this store).
+      const savingCurrency = isHere ? thisCurrency : (r.part.pabEntry?.currency_code ?? thisCurrency);
       return `
         <div style="display:grid;grid-template-columns:${COLS};gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:12px">
           <input type="checkbox" class="scan-row-chk" data-section="${section}" data-ch="${ch}" data-key="${esc(key)}" style="margin:0;cursor:pointer">
@@ -2425,8 +2539,8 @@ async function renderProjectDetail(id, content) {
           <div style="text-align:right;color:${isHere ? "#16a34a" : "#374151"}">${thisPriceStr}</div>
           <div style="text-align:right;color:#374151">${otherStr}</div>
           <div style="text-align:right;color:${!isHere ? "#16a34a" : "#374151"}">${pabStr}</div>
-          <div style="text-align:right;color:#374151">$${saving.toFixed(2)}</div>
-          <div style="text-align:right;font-weight:600;color:#16a34a">$${(saving * qty).toFixed(2)}</div>
+          <div style="text-align:right;color:#374151">${fmtMoney(saving, savingCurrency)}</div>
+          <div style="text-align:right;font-weight:600;color:#16a34a">${fmtMoney(saving * qty, savingCurrency)}</div>
         </div>`;
     }
 
@@ -2453,7 +2567,7 @@ async function renderProjectDetail(id, content) {
     const sectionHtml = (title, color, rows, section, total, actionLabel, actionDisabled) =>
       rows.length === 0 ? "" : `
         <div style="margin-bottom:14px">
-          <div style="font-size:11px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.05em">${title} (${rows.length} lot${rows.length !== 1 ? "s" : ""} · save $${total.toFixed(2)})</div>
+          <div style="font-size:11px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.05em">${title} (${rows.length} lot${rows.length !== 1 ? "s" : ""} · save ${fmtMoney(total, thisCurrency)})</div>
           ${filterBtns(section, actionLabel, actionDisabled)}
           ${colHeader}${rows.map(r => fmtRow(r, section)).join("")}
         </div>`;
@@ -2466,9 +2580,9 @@ async function renderProjectDetail(id, content) {
            ${sectionHtml("PAB cheaper than this store — move to Pick-A-Brick cart", "#2563eb", pabCheaper, "pab", pabSavings, "→ Pick-A-Brick Cart", legoCart ? "" : "disabled")}
          </div>
          <div style="margin-top:10px;padding:10px 0;border-top:1px solid #f3f4f6;display:flex;gap:20px;font-size:12px;color:#374151">
-           ${cheaperHere.length ? `<span>Consolidation savings: <strong style="color:#16a34a">$${hereSavings.toFixed(2)}</strong></span>` : ""}
-           ${pabCheaper.length  ? `<span>PAB savings: <strong style="color:#2563eb">$${pabSavings.toFixed(2)}</strong></span>` : ""}
-           <span style="margin-left:auto;font-weight:700">Total opportunity: $${(hereSavings + pabSavings).toFixed(2)}</span>
+           ${cheaperHere.length ? `<span>Consolidation savings: <strong style="color:#16a34a">${fmtMoney(hereSavings, thisCurrency)}</strong></span>` : ""}
+           ${pabCheaper.length  ? `<span>PAB savings: <strong style="color:#2563eb">${fmtMoney(pabSavings, thisCurrency)}</strong></span>` : ""}
+           <span style="margin-left:auto;font-weight:700">Total opportunity: ${fmtMoney(hereSavings + pabSavings, thisCurrency)}</span>
          </div>`;
 
     modal.innerHTML = `
@@ -3132,6 +3246,7 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
   const unallocPieces  = unallocParts.reduce((s, p) => s + remQty(p), 0);
   const allocedPieces  = totalPiecesAll - unallocPieces;
 
+  const pabHdrCurrency = activeParts.find(p => p.pabEntry?.currency_code)?.pabEntry.currency_code;
   const pabParts = unallocParts.filter(p => p.pabEntry?.channel === "pab");
   const stdParts = unallocParts.filter(p => p.pabEntry?.channel === "bap");
   const blParts  = unallocParts.filter(p => !p.pabEntry?.channel);
@@ -3162,9 +3277,10 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
   function buildRow(p, dimmed) {
     const key   = `${p.partNo}_${p.colorId}`;
     const name     = p.pabEntry?.bl_part_name  || p.name      || "";
-    const color    = p.pabEntry?.bl_color_name || p.colorName || "";
-    const colorHex = p.pabEntry?.bl_color_hex;
-    const price    = p.pabEntry?.price_formatted || "—";
+    const { name: color, hex: colorHex } = colorLabel(p);
+    // Bare number, no symbol -- PAB is one global region setting, and the
+    // header above already states the currency once for the whole column.
+    const price    = p.pabEntry?.price_cents != null ? (p.pabEntry.price_cents / 100).toFixed(2) : "—";
     const ch       = p.pabEntry?.channel;
     const badge    = ch === "pab"
       ? `<span style="padding:1px 6px;border-radius:3px;font-size:11px;font-weight:700;background:#dcfce7;color:#16a34a">PAB</span>`
@@ -3196,8 +3312,7 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
   function buildExcludedRow(p) {
     const key      = `${p.partNo}_${p.colorId}`;
     const name     = p.pabEntry?.bl_part_name  || p.name      || "";
-    const color    = p.pabEntry?.bl_color_name || p.colorName || "";
-    const colorHex = p.pabEntry?.bl_color_hex;
+    const { name: color, hex: colorHex } = colorLabel(p);
     return `<tr style="opacity:0.5">
       <td></td>
       <td style="padding:4px 8px;font-size:12px;font-family:monospace;color:#9ca3af">${esc(p.partNo || "")}</td>
@@ -3271,7 +3386,7 @@ function renderProjectPool(content, parts, allocations, legoCart, blCartList, on
               <thead><tr>
                 <th style="width:32px;padding:4px 8px"><input type="checkbox" id="pool-select-all" ${allSelected ? "checked" : ""} style="cursor:pointer"></th>
                 <th>Part</th><th>Image</th><th>Name</th><th>Color</th>
-                <th style="text-align:right;white-space:nowrap">Wanted / Assigned</th><th>PAB Price</th><th>Channel</th>
+                <th style="text-align:right;white-space:nowrap">Wanted / Assigned</th><th>PAB Price${pabHdrCurrency ? ` (${pabHdrCurrency})` : ""}</th><th>Channel</th>
                 <th style="width:30px"></th>
               </tr></thead>
               <tbody>${mainRows}${allocedRows}${excludedRows}</tbody>
@@ -3361,12 +3476,17 @@ async function renderProjectSetup(id, content) {
       </label>`;
   }
 
-  const wlRowsHtml = wantedLists.length
-    ? wantedLists.map(l => checkRow("checkbox", "wl-pool", l.id, wlChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
+  // Sorted alphabetically by name -- same convention as the Lists page's own
+  // "name" sort (applyListSort() in renderLists()).
+  const sortedWantedLists = [...wantedLists].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+  const sortedCarts       = [...carts].sort((a, b) => (a.name ?? "").localeCompare(b.name ?? ""));
+
+  const wlRowsHtml = sortedWantedLists.length
+    ? sortedWantedLists.map(l => checkRow("checkbox", "wl-pool", l.id, wlChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
     : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No wanted lists imported yet.</div>`;
 
-  const blRowsHtml = carts.length
-    ? carts.map(l => checkRow("checkbox", "bl-cart", l.id, blChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
+  const blRowsHtml = sortedCarts.length
+    ? sortedCarts.map(l => checkRow("checkbox", "bl-cart", l.id, blChecked.has(l.id), l.name, `${(l.partsCount ?? 0).toLocaleString()} parts`)).join("")
     : `<div style="color:#9ca3af;font-size:12px;padding:8px 0">No BL store carts imported yet.</div>`;
 
   const lgRoleOptions = sel => [
@@ -3777,6 +3897,7 @@ function footerCardsHtml() {
         <a href="https://api.moc-source.com" target="_blank">Website</a>
         <a href="https://api.moc-source.com/guide" target="_blank">Guide</a>
         <a href="https://www.patreon.com/c/MocSource" target="_blank">Patreon</a>
+        <a href="https://buymeacoffee.com/mocsource" target="_blank">Buy Me a Coffee</a>
         <a href="https://www.paypal.com/ncp/payment/SAACTUBPTPBSS" target="_blank">PayPal</a>
       </div>
     </div>
@@ -4026,11 +4147,19 @@ function renderDetailView(content) {
       : ["all", "pab", ...(showStd ? ["std"] : []), "na"];
   const colCount = legocart ? 9 : cart ? 10 : 11;
 
+  // A single cart/wanted list is always one store (one native currency) and one
+  // PAB region (one global setting), so a header label is unambiguous here --
+  // unlike the pool table, which can mix multiple stores' currencies in one view.
+  const headerCartCurrency = cart ? (list.parts ?? []).find(p => p.storeCurrency)?.storeCurrency : null;
+  const headerPabCurrency  = (list.parts ?? []).find(p => p.pabEntry?.currency_code)?.pabEntry.currency_code;
+  const storePriceLabel = `Store Price${headerCartCurrency ? ` (${headerCartCurrency})` : ""}`;
+  const pabPriceLabel   = `PAB Price${headerPabCurrency ? ` (${headerPabCurrency})` : ""}`;
+
   const headers = legocart
-    ? `<th><input type="checkbox" id="select-all-check" style="cursor:pointer"></th><th>Part</th><th>Image</th><th>Name</th><th>Color</th><th>Qty</th><th>PAB Price</th><th>Channel</th><th></th>`
+    ? `<th><input type="checkbox" id="select-all-check" style="cursor:pointer"></th><th>Part</th><th>Image</th><th>Name</th><th>Color</th><th>Qty</th><th>${pabPriceLabel}</th><th>Channel</th><th></th>`
     : cart
-      ? `<th><input type="checkbox" id="select-all-check" style="cursor:pointer"></th><th>Part</th><th>Image</th><th>Name</th><th>Color</th><th>Qty</th><th>Store Price</th><th>PAB Price</th><th>Channel</th><th></th>`
-      : `<th><input type="checkbox" id="select-all-check" style="cursor:pointer"></th><th>Part</th><th>Image</th><th>Name</th><th>Color</th><th>Want / Have</th><th>Need</th><th>Max $</th><th>PAB Price</th><th>Channel</th><th></th>`;
+      ? `<th><input type="checkbox" id="select-all-check" style="cursor:pointer"></th><th>Part</th><th>Image</th><th>Name</th><th>Color</th><th>Qty</th><th>${storePriceLabel}</th><th>${pabPriceLabel}</th><th>Channel</th><th></th>`
+      : `<th><input type="checkbox" id="select-all-check" style="cursor:pointer"></th><th>Part</th><th>Image</th><th>Name</th><th>Color</th><th>Want / Have</th><th>Need</th><th>Max $</th><th>${pabPriceLabel}</th><th>Channel</th><th></th>`;
 
   const sortOptDefs = legocart ? [
     ["partid",       "Part"],
@@ -4122,7 +4251,7 @@ function renderDetailView(content) {
 
   const savings = cart ? cartSavings(currentDetail.parts) : null;
   const savingsBanner = savings?.count > 0
-    ? `<div style="font-size:16px;color:#dc2626;margin-top:4px">${savings.count} part${savings.count !== 1 ? "s" : ""} are cheaper on PAB — switch to save ~$${savings.total.toFixed(2)}</div>`
+    ? `<div style="font-size:16px;color:#dc2626;margin-top:4px">${savings.count} part${savings.count !== 1 ? "s" : ""} are cheaper on PAB — switch to save ~${fmtMoney(savings.total, savings.currency)}</div>`
     : "";
 
   const refreshBtn = cart && list.storeUrl
@@ -4187,7 +4316,36 @@ function renderDetailView(content) {
   attachDetailListeners(content);
 }
 
+// Plain-text color label for display. For a "(Not Applicable)" wanted item
+// (colorId === null -- see collectWantedListParts() in content.js), the
+// pool/detail views fetch every in-stock PAB color for the part and keep the
+// cheapest as pabEntry, purely as a representative price
+// (pickCheapestPabRow()) -- poolPart.colorId is deliberately left null so
+// Auto Allocate still treats it as "any color" (see the wildcard-color fix,
+// v0.4.19). But every color-display site here checked pabEntry.bl_color_name
+// *before* colorId/colorName, so that reference color silently displayed as
+// if it were the part's real, locked color -- confusingly identical to the
+// original "(Not Applicable)" corruption bug this was supposed to have
+// fixed, confirmed live 2026-08-10 (Sean's "Totoro" project: 14 unrelated
+// wildcard parts each showing a different, seemingly random specific color).
+// Now shows "Any" plus a "(ref: X)" note instead, and no swatch for a
+// wildcard -- a swatch strongly implies a real, specific color.
+function colorLabel(p) {
+  if (p?.colorId == null) {
+    const ref = p?.pabEntry?.bl_color_name;
+    return { name: ref ? `Any (ref: ${ref})` : "Any", hex: null };
+  }
+  return {
+    name: p?.pabEntry?.bl_color_name || p?.colorName || (p?.colorId != null ? `Color ${p.colorId}` : ""),
+    hex: p?.pabEntry?.bl_color_hex,
+  };
+}
+
 function colorCell(p) {
+  if (p.colorId == null) {
+    const ref = p.pabEntry?.bl_color_name;
+    return `<span style="font-style:italic;color:#6b7280">Any</span>${ref ? ` <span style="color:#9ca3af;font-size:11px">(ref: ${esc(ref)})</span>` : ""}`;
+  }
   if (p.pabEntry && p.pabEntry.bl_color_name) {
     const bl = esc(p.pabEntry.bl_color_name);
     const lego = p.pabEntry.lego_color_name ? `<div style="color:#adb5bd;font-size:11px">[${esc(p.pabEntry.lego_color_name)}]</div>` : "";
@@ -4205,6 +4363,10 @@ function colorCell(p) {
   return `<span style="color:#adb5bd">—</span>`;
 }
 
+// Bare number, no currency symbol -- all 3 callers (buildLegoCartRow,
+// buildWantedRow, buildCartRow) render into a table whose "PAB Price" header
+// already states the currency (PAB is one global region setting, so it's
+// always the same for the whole table), making a per-row symbol redundant.
 function pabCells(p) {
   if (p.pabEntry === null)          return ['<span style="color:#adb5bd">…</span>', '<span style="color:#adb5bd;font-size:11px">…</span>'];
   if (!p.pabEntry)                  return ["—", '<span style="color:#adb5bd;font-size:11px">N/A</span>'];
@@ -4212,7 +4374,8 @@ function pabCells(p) {
   const badge = p.pabEntry.channel === "pab"
     ? '<span style="background:#dcfce7;color:#16a34a;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:700">PAB</span>'
     : '<span style="background:#fef9c3;color:#ca8a04;padding:2px 7px;border-radius:3px;font-size:11px;font-weight:700">STD</span>';
-  return [p.pabEntry.price_formatted, badge];
+  const price = p.pabEntry.price_cents != null ? (p.pabEntry.price_cents / 100).toFixed(2) : "—";
+  return [price, badge];
 }
 
 function buildLegoCartRow(p, idx) {
@@ -4256,7 +4419,10 @@ function buildWantedRow(p, idx) {
   const need = Math.max(0, (p.want ?? 1) - (p.have ?? 0));
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
-  const maxPriceStr = p.maxPrice != null ? `$${p.maxPrice.toFixed(2)}` : `<span style="color:#adb5bd">—</span>`;
+  // p.maxPrice comes from BrickLink's wanted-list MAXPRICE field, which
+  // carries no currency of its own (interpreted by BL in the user's account
+  // currency) -- no data to key off, so this always shows as a bare number.
+  const maxPriceStr = p.maxPrice != null ? fmtMoney(p.maxPrice, null) : `<span style="color:#adb5bd">—</span>`;
 
   return `
     <tr data-idx="${idx}">
@@ -4311,7 +4477,7 @@ function buildCartRow(p, idx) {
       <td style="max-width:160px">${displayName}</td>
       <td>${colorCell(p)}</td>
       <td><strong>${p.qty ?? 1}</strong></td>
-      <td>${storeNum != null ? `$${storeNum.toFixed(2)}${pctBadge}` : `<span style="color:#adb5bd">—</span>`}</td>
+      <td>${storeNum != null ? `${storeNum.toFixed(2)}${pctBadge}` : `<span style="color:#adb5bd">—</span>`}</td>
       <td>${pabPrice}</td>
       <td>${channelBadge}</td>
       <td>${flagBtn}</td>
@@ -4325,7 +4491,7 @@ function showTransferWarning(skippedParts, isMove) {
 
     const rows = skippedParts.map(p => {
       const name  = p.pabEntry?.bl_part_name || esc(p.name || p.partNo || "Unknown");
-      const color = p.pabEntry?.bl_color_name || p.colorName || (p.colorId ? `Color ${p.colorId}` : "");
+      const { name: color } = colorLabel(p);
       return `<div style="padding:5px 0;border-bottom:1px solid #f3f4f6;font-size:13px">${name}${color ? ` <span style="color:#9ca3af;font-size:11px">[${esc(color)}]</span>` : ""}</div>`;
     }).join("");
 

@@ -38,6 +38,36 @@ function getCartName() {
   return `Cart — ${new Date().toLocaleDateString()}`;
 }
 
+// Parses a currency code + numeric amount out of BrickLink's own price text,
+// e.g. "EUR 0.0384" or "(~SEK 0.4203)" -> { currency: "SEK", amount: 0.4203 }.
+// Used for both the per-row .native-price/.salePrice pair and the cart-level
+// subtotal line -- BrickLink already computes the secondary-currency
+// conversion when the visitor's account has a display currency set, so this
+// just reads what's already on the page rather than converting ourselves.
+function parseCurrencyAmount(str) {
+  if (!str) return null;
+  const m = str.match(/([A-Z]{3})\s*([\d,]+\.?\d*)/);
+  if (!m) return null;
+  const amount = parseFloat(m[2].replace(/,/g, ""));
+  return isNaN(amount) ? null : { currency: m[1], amount };
+}
+
+// Scrapes the store cart page's own "Subtotal (N items): EUR 0.52 (~SEK 5.74)"
+// line -- prefers BrickLink's pre-computed subtotal over summing our own
+// rounded per-row values, to avoid compounding rounding drift. Returns
+// { native: {currency,amount}, converted: {currency,amount}|null } or null
+// if the subtotal heading isn't found (e.g. not on a cart page).
+function getCartSubtotal() {
+  const heading = [...document.querySelectorAll("h3.tight")].find(h => /Subtotal/i.test(h.textContent));
+  if (!heading) return null;
+  const spans = [...heading.querySelectorAll("span")];
+  const nativeSpan = spans.find(s => s.classList.contains("success")) || spans[0];
+  const convertedSpan = spans.find(s => s !== nativeSpan);
+  const native = nativeSpan ? parseCurrencyAmount(nativeSpan.textContent.trim()) : null;
+  const converted = convertedSpan ? parseCurrencyAmount(convertedSpan.textContent.trim()) : null;
+  return native ? { native, converted } : null;
+}
+
 function getOrderSummary() {
   const summary = {};
   const labels = { "Item Total": "itemTotal", "Shipping & Handling": "shipping", "Order Total": "orderTotal" };
@@ -142,11 +172,20 @@ function collectCartParts() {
     const qty = Math.max(1, parseInt(qtyEl?.value || qtyEl?.textContent?.trim() || "1", 10) || 1);
     const priceCell = article.querySelector("div.price-col");
     let storePrice = null;
+    let storeCurrency = null;
+    let storeConverted = null;
     let priceTiers = null;
     if (priceCell) {
       const nativePrice = priceCell.querySelector(".native-price");
       if (nativePrice) {
         storePrice = nativePrice.textContent.trim();
+        storeCurrency = parseCurrencyAmount(storePrice)?.currency ?? null;
+        // .salePrice here is BrickLink's secondary-currency conversion of the
+        // native price (e.g. "(~SEK 0.4203)"), not to be confused with the
+        // plain, class-less <p> that holds a struck-through pre-discount
+        // price -- confirmed via live DOM inspection, 2026-08-09.
+        const converted = priceCell.querySelector(".pricing-box .salePrice");
+        if (converted) storeConverted = parseCurrencyAmount(converted.textContent.trim());
         priceTiers = parsePriceTiers(priceCell);
       } else {
         // Fallback for any price-col shape without a .native-price element
@@ -171,7 +210,7 @@ function collectCartParts() {
         if (/^new$/i.test(t)) { condition = "N"; break; }
       }
     }
-    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice, priceTiers, condition });
+    parts.push({ partNo, colorId, qty, name: "", imageUrl: img.src, storePrice, storeCurrency, storeConverted, priceTiers, condition });
   }
   return parts;
 }
@@ -565,6 +604,7 @@ function injectCartImportButton() {
       partsCount: parts.length,
       importedAt: Date.now(),
       orderSummary: getOrderSummary(),
+      subtotal: getCartSubtotal(),
       parts,
     };
     if (existingIdx !== -1) {
