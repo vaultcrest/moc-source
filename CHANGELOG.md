@@ -2,6 +2,28 @@
 
 All notable changes to MOC Source are documented here.
 
+## [Backend] — 2026-08-18
+
+### Studio palette generation from DB, BL-category ordering
+- Added `scripts/generate_studio_palettes.py` — generates Stud.io palette files (`~+{name}`/`14`/`-1` header, repeating `0`/`1`/`2` triples, matching `brick_palettes_generator`'s own format exactly) directly from this DB's `lego_element_prices`/`bricklink_mappings`/`studio_resolutions`/`colors`, instead of re-scraping LEGO/BrickLink/Rebrickable fresh. Two locales — `en-us` (NA) and `de-de` (EU), the same representative locales the nightly OOS tracker already uses — 5 buckets each (Bestseller/Standard/Out of Stock/All/All In Stock) derived from `channel`+`in_stock`. DUPLO excluded by name, matching the original tool. Output: `output/studio_palettes/<locale>/Pick a Brick <Bucket>`.
+- Added `colors.ldraw_id`/`ldraw_name` (migration `d5e6f7a8`) — Studio palette files store the LDraw color id, not BrickLink's, and this mapping only existed in `brick_palettes_generator/data/color_database.json` before now. Backfilled 174/174 via new `scripts/backfill_ldraw_colors.py`, one-time, no API calls.
+- Ordering: the first pass wrote entries in unordered Postgres row order. Compared directly against the real Stud.io/BDP reference palette files Sean has (`brick_palettes_generator/data/studio_palettes/BDP Series 8-11`, `BrickLink Common Palette`) to find the convention to follow — found their order is not alphabetical or numeric (e.g. one part_file recurred 17 times across `BDP Series 8` with colors in no numeric sequence), just a coarse category-batching pattern (long consecutive runs of the same part family, e.g. minifig-torso prints) that isn't mechanically derivable from our data. Per Sean's direction, output is now ordered by `bl_part_catalog.category_id`, then `part_file`, then color — verified fully contiguous by category and by part, both at the SQL level and in the regenerated files.
+- Separately used those same reference files (3,108 distinct BL part_nos across the 5 files) as a content cross-check for `studio_resolutions` — 183 previously-unresolved parts backfilled, 0 gaps remain.
+- Found live during verification: 6 `studio_resolutions` rows (`98393`, `11402`, `85489`, `36451`, `92355`, `49595`) are `resolved=true` with a NULL `part_file`, producing a blank `0 ` line in generated palettes. Confirmed with Sean: these are multipack/sprue parent parts (a container of several sub-parts has no single geometry file), not a data bug — noted against the multipack backlog (README What's Next #11) rather than "fixed."
+
+### Studio-resolution staleness pass + DUPLO discovery
+- Of 817 PAB-active parts showing as missing a Studio `.dat` file, 80 actually have one in the current `StudioPartDefinition2.txt` — Sean hand-verified all 80 live in Studio via a generated BrickLink wanted-list XML import (real per-part PAB colors, not defaulted to black). `studio_resolutions` resolved count 3,427 → 3,507. Five of the 80 are DUPLO parts (`2302`, `3011`, `31110`, `6474`, `98223`) — `2302` loads but doesn't render normally with regular color palettes, a real Studio quirk worth remembering, not a resolution error.
+- Ran a full DUPLO sweep (5,345 parts, not just PAB-active) cross-referencing `StudioPartDefinition2.txt` — found 82 candidates with real Studio entries; review wanted-list XML generated for Sean. Verification of these 82 is still pending (README What's Next #12).
+
+### Mold succession data foundation (backend only)
+- Added `mold_succession_groups`/`mold_succession_members` (migration `c4d5e6f7`) and `scripts/compute_mold_succession.py` — union-find transitive closure over `bricklink_alternates` + `brickstore_mold_relationship_members` (`similar_mold` only). 21,941 edges → 14,921 groups / 32,822 members; `is_current` per group picked by highest non-null `last_used_year`, ties broken by lowest part_no. Deliberately scoped to just this precomputation, per Sean: "the first is getting just the progression done" — the suggestion/UI feature (README What's Next #3) is not started.
+
+### BrickStore set inventories ingested
+- Added `brickstore_set_catalog`/`brickstore_set_inventory_items` (migration `b3c4d5e6`) and `scripts/ingest_brickstore_set_inventories.py` — BrickStore's `items/S.xml`/`S/*.xml` were already part of the weekly release download but never ingested. 21,668 sets / 21,015 with inventory data / 1,386,686 item rows.
+
+### scrape_pab.py: fixed stale channel data for non-en-us locales
+- Real bug found while investigating why `de-de` showed almost no "Standard"/`bap` items: the sibling-locale channel DB cache was applied to every locale != `en-us` regardless of scrape mode, so full-mode runs for non-US locales never re-verified `deliveryChannel` against LEGO's live API, letting stale values (e.g. `bap` for an element LEGO had since reclassified `pab`) persist indefinitely. Confirmed live for `de-de`: 8/8 spot-checked elements stored as `bap` all actually returned `pab`. Fixed the caching condition, deployed, and re-ran a full `de-de` scrape to confirm (17,324 price rows upserted, 0 `bap`+`in_stock=true` rows remain afterward).
+
 ## [0.4.20] — 2026-08-10
 
 ### Extension
