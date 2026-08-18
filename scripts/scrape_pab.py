@@ -250,8 +250,15 @@ def fetch_locale(locale: str, conn=None, use_sibling_cache: bool = False,
     actually_unknown = new_sibling_ids
 
     # OOS mode uses a DB channel cache so only newly-seen siblings need a LEGO
-    # re-query. Full mode skips the cache so channel data is always fresh.
-    if conn and new_sibling_ids and (locale != "en-us" or use_sibling_cache):
+    # re-query. Full mode skips the cache so channel data is always fresh --
+    # bug fixed 2026-08-18: this used to also cache for any locale != "en-us"
+    # regardless of use_sibling_cache, so full-mode runs for every non-US
+    # locale silently kept reusing whatever channel was last cached instead
+    # of re-verifying against LEGO, letting stale deliveryChannel values
+    # (e.g. "bap" for elements LEGO had since reclassified "pab") persist
+    # indefinitely. Confirmed live for de-de: 8/8 spot-checked elements
+    # stored as "bap" all actually returned "pab" from LEGO's API.
+    if conn and new_sibling_ids and use_sibling_cache:
         try:
             with conn.cursor() as cur:
                 cur.execute("""
