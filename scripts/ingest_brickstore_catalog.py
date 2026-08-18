@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Ingests BrickLink's bulk Parts/Minifigure catalog from the BrickStore
+"""Ingests BrickLink's bulk Parts/Minifigure/Set catalog from the BrickStore
 public release (see scripts/_brickstore_release.py) into
-brickstore_part_catalog, brickstore_minifig_catalog, bl_part_catalog,
-brickstore_part_colors (per-part color availability, from
+brickstore_part_catalog, brickstore_minifig_catalog, brickstore_set_catalog,
+bl_part_catalog, brickstore_part_colors (per-part color availability, from
 part_color_codes.xml), bricklink_alternates (alternate_no rows tagged
 source='brickstore_alternate_ids'), and colors.bl_year_from/bl_year_to
 (from colors.xml's own COLORYEARFROM/COLORYEARTO, added 2026-07-26 --
@@ -44,6 +44,7 @@ from _brickstore_release import (
     iter_minifig_rows,
     iter_part_color_rows,
     iter_part_rows,
+    iter_set_rows,
 )
 from dotenv import load_dotenv
 
@@ -78,6 +79,16 @@ UPSERT_MINIFIG_CATALOG_SQL = """
     ON CONFLICT (minifig_no) DO UPDATE SET
         category_id = EXCLUDED.category_id,
         name = EXCLUDED.name,
+        imported_at = EXCLUDED.imported_at
+"""
+
+UPSERT_SET_CATALOG_SQL = """
+    INSERT INTO brickstore_set_catalog (set_num, category_id, name, year, imported_at)
+    VALUES %s
+    ON CONFLICT (set_num) DO UPDATE SET
+        category_id = EXCLUDED.category_id,
+        name = EXCLUDED.name,
+        year = EXCLUDED.year,
         imported_at = EXCLUDED.imported_at
 """
 
@@ -167,6 +178,23 @@ def ingest_minifigs(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dic
     return {"minifigs": len(minifig_rows)}
 
 
+def ingest_sets(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
+    set_rows = []
+    for row in iter_set_rows(extract_dir):
+        if not row["set_num"]:
+            continue
+        category_id = int(row["category_id"]) if row["category_id"] else None
+        year = int(row["year"]) if row["year"] and row["year"].isdigit() else None
+        set_rows.append((row["set_num"], category_id, row["name"], year, now))
+
+    if dry_run:
+        print(f"    [dry-run] would upsert {len(set_rows)} brickstore_set_catalog rows")
+        return {"sets": len(set_rows)}
+
+    psycopg2.extras.execute_values(cur, UPSERT_SET_CATALOG_SQL, set_rows, page_size=1000)
+    return {"sets": len(set_rows)}
+
+
 def ingest_color_years(cur, extract_dir: Path, dry_run: bool) -> dict:
     """UPDATE-only backfill of colors.bl_year_from/bl_year_to from colors.xml's
     own COLORYEARFROM/COLORYEARTO -- BrickLink's own year-introduced data,
@@ -213,6 +241,7 @@ def main():
     part_stats = ingest_parts(cur, extract_dir, now, args.dry_run)
     color_stats = ingest_part_colors(cur, extract_dir, now, args.dry_run)
     minifig_stats = ingest_minifigs(cur, extract_dir, now, args.dry_run)
+    set_stats = ingest_sets(cur, extract_dir, now, args.dry_run)
     color_year_stats = ingest_color_years(cur, extract_dir, args.dry_run)
 
     if not args.dry_run:
@@ -227,6 +256,7 @@ def main():
     print(f"  Alternates  : {part_stats['alternates']}")
     print(f"  Part colors : {color_stats['part_colors']}")
     print(f"  Minifigs    : {minifig_stats['minifigs']}")
+    print(f"  Sets        : {set_stats['sets']}")
     print(f"  Color years : {color_year_stats['color_years']}")
 
 

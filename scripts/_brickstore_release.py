@@ -163,6 +163,33 @@ def iter_assembly_inventory_files(extract_dir: Path):
         yield path.stem, _parse_inventory_xml(path)
 
 
+def iter_set_rows(extract_dir: Path):
+    """Yields dicts from items/S.xml: set_num, category_id, name, year."""
+    path = extract_dir / "items" / "S.xml"
+    for _, elem in ET.iterparse(path, events=("end",)):
+        if elem.tag != "ITEM":
+            continue
+        item_type = elem.findtext("ITEMTYPE")
+        if item_type == "S":
+            yield {
+                "set_num": elem.findtext("ITEMID"),
+                "category_id": elem.findtext("CATEGORY") or None,
+                "name": elem.findtext("ITEMNAME"),
+                "year": elem.findtext("ITEMYEAR") or None,
+            }
+        elem.clear()
+
+
+def iter_set_inventory_files(extract_dir: Path):
+    """Yields (set_num, [item dicts]) for every S/<set_num>.xml file (a set's
+    full part/minifig inventory, same ITEM shape as the P/ and M/ files)."""
+    s_dir = extract_dir / "S"
+    if not s_dir.is_dir():
+        return
+    for path in s_dir.glob("*.xml"):
+        yield path.stem, _parse_inventory_xml(path)
+
+
 def _color_name_to_id(extract_dir: Path) -> dict[str, int]:
     path = extract_dir / "colors.xml"
     mapping = {}
