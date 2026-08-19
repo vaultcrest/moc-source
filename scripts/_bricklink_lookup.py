@@ -12,6 +12,12 @@ BLClient bundles the four BrickLink OAuth1 credentials once and exposes:
                                  (no, name, quantity); used for fig_num <->
                                  minifig_no mapping (2026-07-23, see
                                  scripts/map_rebrickable_minifigs.py)
+  fetch_minifig_parts(no)    -- a MINIFIG's own PART-typed subset entries
+                                 (part_no, color_id, quantity, etc.), native
+                                 BL numbering, no Rebrickable translation
+                                 (2026-08-18, see scripts/scrape_bl_minifig_data.py)
+  fetch_minifig_price_guide(no, new_or_used) -- sold Price Guide for one
+                                 minifig, no color_id (2026-08-18, same script)
 
 Retries on network errors / 429 / 5xx (3 attempts, exponential backoff),
 mirroring the retry contract already established in scrape_bl_mold_data.py:
@@ -190,6 +196,66 @@ class BLClient:
                     "quantity": entry.get("quantity", 0),
                 })
         return True, minifigs
+
+    def fetch_minifig_parts(self, minifig_no: str) -> tuple[bool, list[dict] | None]:
+        """Fetch a MINIFIG's own part-level inventory (GET
+        /items/MINIFIG/{no}/subsets) -- confirmed live 2026-08-18 that
+        BrickLink returns real PART-typed entries directly here, with
+        native BL part_no/color_id, no Rebrickable numbering translation
+        needed (unlike map_rebrickable_minifigs.py's set-crawl approach).
+        Separate method from fetch_subsets() (SET-specific, MINIFIG-
+        filtered, used by that other script) since the item type and the
+        entry shape wanted are both different -- match_no groups the
+        entries the way BrickStore's own inventory XML does (see
+        brickstore_minifig_inventory_items.match_id). A 404 means BL has
+        no subset breakdown for this minifig (not an error)."""
+        url = f"{BL_API_BASE}/items/MINIFIG/{urllib.parse.quote(minifig_no, safe='')}/subsets"
+        attempted, resp = self._get(url, "minifig subsets", minifig_no)
+        if not attempted:
+            return False, None
+        if resp.status_code == 404:
+            return True, []
+        if resp.status_code != 200:
+            print(f"  BL minifig subsets unexpected status for {minifig_no}: HTTP {resp.status_code}",
+                  file=sys.stderr)
+            return True, []
+
+        parts = []
+        for group in resp.json().get("data") or []:
+            match_no = group.get("match_no", 0)
+            for entry in group.get("entries") or []:
+                item = entry.get("item") or {}
+                if item.get("type") != "PART":
+                    continue
+                parts.append({
+                    "part_no": item.get("no"),
+                    "color_id": entry.get("color_id"),
+                    "quantity": entry.get("quantity", 0),
+                    "extra_quantity": entry.get("extra_quantity", 0),
+                    "is_alternate": bool(entry.get("is_alternate", False)),
+                    "is_counterpart": bool(entry.get("is_counterpart", False)),
+                    "match_no": match_no,
+                })
+        return True, parts
+
+    def fetch_minifig_price_guide(self, minifig_no: str, new_or_used: str) -> tuple[bool, dict | None]:
+        """Fetch BrickLink's Price Guide (sold, worldwide) for one minifig.
+        Same shape/semantics as fetch_price_guide() but no color_id param
+        -- minifigs aren't color-variant catalog items on BrickLink.
+        new_or_used is 'N' or 'U'. A 404 means BL has no sold data for
+        this minifig at all (not an error)."""
+        url = (f"{BL_API_BASE}/items/MINIFIG/{urllib.parse.quote(minifig_no, safe='')}/price"
+               f"?guide_type=sold&new_or_used={new_or_used}")
+        attempted, resp = self._get(url, "minifig price guide", f"{minifig_no}/{new_or_used}")
+        if not attempted:
+            return False, None
+        if resp.status_code == 404:
+            return True, None
+        if resp.status_code != 200:
+            print(f"  BL minifig price guide unexpected status for {minifig_no}/{new_or_used}: "
+                  f"HTTP {resp.status_code}", file=sys.stderr)
+            return True, None
+        return True, resp.json().get("data") or None
 
     def fetch_colors(self) -> tuple[bool, list[dict] | None]:
         """Fetch BrickLink's full colors catalog: list of {color_id, color_name,
