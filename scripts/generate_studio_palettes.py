@@ -54,12 +54,26 @@ only buckets category/subcategory, all same-family parts share one value,
 no finer ordering signal). Investigation ongoing -- see
 project_studio_resolutions memory for where this stands.
 
+Publishing (added 2026-08-20): after writing each locale's 5 bucket files,
+also zips them (flat -- no locale-prefixed paths inside the zip, so a user
+can extract straight into Stud.io's Buckets\\Folders\\ directory) into
+`static/studio_palettes/<locale>.zip`, and writes a sibling
+`manifest.json` (`generated_at` UTC timestamp + per-locale/bucket entry
+counts) for the `/studio-palettes` website page to read. Both are served
+automatically by the existing `/static` mount (`mocsource/main.py`) --
+no new route needed. Driven by a new 4-hour systemd timer
+(moc-source-infra) since the underlying query is cheap (current DB state
+only, no scraping) -- see README.
+
 Usage:
     DATABASE_URL=... python scripts/generate_studio_palettes.py
-    DATABASE_URL=... python scripts/generate_studio_palettes.py --output-dir /path/to/output
+    DATABASE_URL=... python scripts/generate_studio_palettes.py --output-dir /path/to/output --publish-dir /path/to/static/studio_palettes
 """
 import argparse
+import json
 import os
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 import psycopg2
@@ -73,6 +87,7 @@ DB_URL = _raw_url.replace("postgresql+asyncpg://", "postgresql://").replace("pos
 LOCALES = ["en-us", "de-de"]
 
 DEFAULT_OUTPUT_DIR = Path(__file__).resolve().parent.parent / "output" / "studio_palettes"
+DEFAULT_PUBLISH_DIR = Path(__file__).resolve().parent.parent / "static" / "studio_palettes"
 
 QUERY = """
     SELECT
@@ -124,10 +139,15 @@ def build_palette_text(rows, name):
 def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
+    parser.add_argument("--publish-dir", type=Path, default=DEFAULT_PUBLISH_DIR)
+    parser.add_argument("--no-publish", action="store_true",
+                         help="skip zipping/manifest -- write the raw bucket files only")
     args = parser.parse_args()
 
     conn = psycopg2.connect(DB_URL)
     cur = conn.cursor()
+
+    manifest = {"generated_at": datetime.now(timezone.utc).isoformat(), "locales": {}}
 
     for locale in LOCALES:
         cur.execute(QUERY, (locale,))
@@ -146,17 +166,37 @@ def main():
         locale_dir.mkdir(parents=True, exist_ok=True)
 
         print(f"\n[{locale}] {len(all_rows)} resolved PAB row(s) total")
+        bucket_counts = {}
+        written_paths = []
         for bucket_name, rows in buckets.items():
             palette_name = "Pick a Brick " + bucket_name.replace("_", " ").title()
             text, entry_count = build_palette_text(rows, palette_name)
             fallback_count = sum(1 for r in rows if r["color_fallback"])
             out_path = locale_dir / palette_name
             out_path.write_text(text, encoding="utf-8")
+            written_paths.append(out_path)
+            bucket_counts[bucket_name] = entry_count
             print(f"  {palette_name}: {entry_count} unique part/color entries "
                   f"({fallback_count} color(s) fell back to raw BL id, no LDraw mapping) -> {out_path}")
 
+        manifest["locales"][locale] = {"total_resolved": len(all_rows), "buckets": bucket_counts}
+
+        if not args.no_publish:
+            args.publish_dir.mkdir(parents=True, exist_ok=True)
+            zip_path = args.publish_dir / f"{locale}.zip"
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for p in written_paths:
+                    zf.write(p, arcname=p.name)  # flat -- extracts straight into Buckets\Folders\
+            print(f"  -> published {zip_path}")
+
     cur.close()
     conn.close()
+
+    if not args.no_publish:
+        args.publish_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = args.publish_dir / "manifest.json"
+        manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+        print(f"\nWrote {manifest_path}")
 
 
 if __name__ == "__main__":

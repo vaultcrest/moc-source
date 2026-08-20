@@ -10,6 +10,12 @@
 0 bl_73587p06.dat
 1 Antenna Small Base with Tan Lever  and #40;4592 / 4593 and #41;
 2 19
+0 3857.dat
+1 Baseplate 16 x 32
+2 72
+0 95354.dat
+1 Boat, Anchor - Two Top Holes
+2 0
 0 20033c02.dat
 1 Boat, Hull Giant Bow 40 x 20 x 7 with Light Bluish Gray Top  and #40;18913 / 18912 and #41;
 2 272
@@ -19,6 +25,9 @@
 0 bl_78611.dat
 1 Boat, Rubber Raft 12 x 6 x 2
 2 272
+0 4790b.dat
+1 Boat, Ship's Wheel with Slots in Pin
+2 70
 0 99780.dat
 1 Bracket 1 x 2 - 1 x 2 Inverted
 2 28
@@ -67,6 +76,9 @@
 0 14716.dat
 1 Brick 1 x 1 x 3
 2 323
+0 6111.dat
+1 Brick 1 x 10
+2 0
 0 3004.dat
 1 Brick 1 x 2
 2 71
@@ -100,6 +112,9 @@
 0 2454.dat
 1 Brick 1 x 2 x 5
 2 362
+0 3009.dat
+1 Brick 1 x 6
+2 484
 0 3008.dat
 1 Brick 1 x 8
 2 378
@@ -175,6 +190,9 @@
 0 80543.dat
 1 Arch 1 x 4 x 3
 2 484
+0 92950.dat
+1 Arch 1 x 6 Raised Arch
+2 71
 0 16577.dat
 1 Arch 1 x 8 x 2 Raised
 2 15
@@ -220,9 +238,15 @@
 0 32952.dat
 1 Brick, Modified 1 x 1 x 1 2/3 with Studs on Side
 2 191
+0 34816.dat
+1 Brick, Modified 1 x 2 with Bar Handle on End - Bar Flush with Edge
+2 15
 0 4216.dat
 1 Brick, Modified 1 x 2 with Channel
 2 0
+0 95820.dat
+1 Brick, Modified 1 x 2 with Open O Clip Thick  and #40;Vertical Grip and #41;
+2 1
 0 44865.dat
 1 Brick, Modified 1 x 2 with Pin and Bottom Stud Holder
 2 19
@@ -319,6 +343,9 @@
 0 30151b.dat
 1 Brick, Round 2 x 2 x 1 2/3 Dome Top
 2 47
+0 7037.dat
+1 Brick, Round 2 x 2 x 2/3 Half Circle Extended with 2 Studs and Curved Top
+2 28
 0 bl_5057.dat
 1 Brick, Round 3 x 3 D. 45 degrees Elbow with Axle Holes
 2 25
@@ -417,6 +444,9 @@
 2 72
 0 85941.dat
 1 Cylinder Half 2 x 4 x 5 with 1 x 2 Cutout
+2 15
+0 85941.dat
+1 Cylinder Half 2 x 4 x 5 with 1 x 2 Cutout
 2 43
 0 85941.dat
 1 Cylinder Half 2 x 4 x 5 with 1 x 2 Cutout
@@ -438,7 +468,13 @@
 2 46
 0 30562.dat
 1 Cylinder Quarter 4 x 4 x 6
+2 43
+0 30562.dat
+1 Cylinder Quarter 4 x 4 x 6
 2 47
+0 49736.dat
+1 Cylinder Tube, Straight
+2 35
 0 49736.dat
 1 Cylinder Tube, Straight
 2 484
@@ -463,6 +499,9 @@
 0 98381.dat
 1 Minifigure, Headgear Cap, Butcher / Food Service
 2 70
+0 90386.dat
+1 Minifigure, Headgear Hat, Beret
+2 0
 0 20695pb01.dat
 1 Minifigure, Headgear Head Cover, Pumpkin Jack O' Lantern with Molded Green Stem Pattern
 2 25
@@ -505,6 +544,9 @@
 0 35692.dat
 1 Minifigure, Utensil Balloon Animal, Dog
 2 33
+0 30304.dat
+1 Minifigure, Utensil Binoculars Space
+2 15
 0 95344.dat
 1 Minifigure, Utensil Bucket 1 x 1 x 1 Handle / Scooter Stand
 2 297
@@ -547,9 +589,15 @@
 0 30228.dat
 1 Minifigure, Utensil Tool Motor Hammer / Jackhammer
 2 72
+0 98375.dat
+1 Minifigure, Utensil Toy Winder Key
+2 179
 0 13793.dat
 1 Minifigure, Utensil Welding Gun
 2 72
+0 bl_80437.dat
+1 Minifigure, Weapon Arrow
+2 14
 0 20105.dat
 1 Minifigure, Weapon Crossbow with Mini Blaster / Shooter
 2 0
@@ -582,6 +630,9 @@
 2 0
 0 64727.dat
 1 Minifigure, Weapon Sword, Spike Flexible 3.5L with Bar End
+2 71
+0 64727.dat
+1 Minifigure, Weapon Sword, Spike Flexible 3.5L with Bar End
 2 272
 0 88704.dat
 1 Minifigure, Weapon Whip Bent Flexible
@@ -598,9 +649,15 @@
 0 37779c01.dat
 1 Arm Large with Pin, Left with Light Nougat Hand
 2 84
+0 38628p02.dat
+1 Arm Large with Pin, Left with White Hand
+2 4
 0 37783c01.dat
 1 Arm Large with Pin, Right with Light Nougat Hand
 2 84
+0 38630p02.dat
+1 Arm Large with Pin, Right with White Hand
+2 4
 0 76116.dat
 1 Arm Mechanical, Exo-Force / Bionicle, Thick Support
 2 14
@@ -613,6 +670,9 @@
 0 10126.dat
 1 Hand Giant, Right
 2 379
+0 23769.dat
+1 Leg Skeleton Tall
+2 0
 0 11610.dat
 1 Cone 1 x 1 Inverted with Bar
 2 0
@@ -652,6 +712,9 @@
 0 3942c.dat
 1 Cone 2 x 2 x 2 - Open Stud
 2 297
+0 3942c.dat
+1 Cone 2 x 2 x 2 - Open Stud
+2 320
 0 29096.dat
 1 Cone Half 10 x 5 x 6
 2 43
@@ -669,6 +732,9 @@
 2 212
 0 2429c01.dat
 1 Hinge Plate 1 x 4 Swivel  and #40;2429 / 2430 and #41;
+2 0
+0 5904.dat
+1 Plant Flower Round with 2 Layers  and #40;Peony Rose and #41; with Open Stud and Small Pin Hole
 2 0
 0 5904.dat
 1 Plant Flower Round with 2 Layers  and #40;Peony Rose and #41; with Open Stud and Small Pin Hole
@@ -735,6 +801,9 @@
 2 15
 0 3024.dat
 1 Plate 1 x 1
+2 19
+0 3024.dat
+1 Plate 1 x 1
 2 34
 0 3024.dat
 1 Plate 1 x 1
@@ -747,10 +816,16 @@
 2 78
 0 3460.dat
 1 Plate 1 x 8
+2 0
+0 3460.dat
+1 Plate 1 x 8
 2 320
 0 91405.dat
 1 Plate 16 x 16
 2 27
+0 91405.dat
+1 Plate 16 x 16
+2 72
 0 91405.dat
 1 Plate 16 x 16
 2 378
@@ -769,6 +844,9 @@
 0 3030.dat
 1 Plate 4 x 10
 2 19
+0 3035.dat
+1 Plate 4 x 8
+2 272
 0 3033.dat
 1 Plate 6 x 10
 2 0
@@ -787,6 +865,9 @@
 0 4081b.dat
 1 Plate, Modified 1 x 1 with Light Attachment - Thick Ring
 2 27
+0 60897.dat
+1 Plate, Modified 1 x 1 with Open O Clip Thick  and #40;Vertical Grip and #41;
+2 85
 0 49668.dat
 1 Plate, Modified 1 x 1 with Tooth Horizontal
 2 4
@@ -805,6 +886,9 @@
 0 27261.dat
 1 Plate, Modified 1 x 2 with 3 Claws / Rock Fingers
 2 10
+0 88072.dat
+1 Plate, Modified 1 x 2 with Bar Arm Up  and #40;Horizontal Arm 5mm and #41;
+2 4
 0 60478.dat
 1 Plate, Modified 1 x 2 with Bar Handle on End
 2 27
@@ -829,6 +913,9 @@
 0 11458.dat
 1 Plate, Modified 1 x 2 with Pin Hole on Top
 2 321
+0 14419.dat
+1 Plate, Modified 1 x 2 with Tow Ball and Small Tow Ball Socket on Ends
+2 72
 0 4590.dat
 1 Plate, Modified 1 x 4 Offset
 2 15
@@ -841,6 +928,9 @@
 0 87580.dat
 1 Plate, Modified 2 x 2 with Groove and 1 Stud in Center (Jumper)
 2 47
+0 87580.dat
+1 Plate, Modified 2 x 2 with Groove and 1 Stud in Center (Jumper)
+2 72
 0 87580.dat
 1 Plate, Modified 2 x 2 with Groove and 1 Stud in Center (Jumper)
 2 322
@@ -966,13 +1056,22 @@
 2 80
 0 54200.dat
 1 Slope 30 1 x 1 x 2/3
+2 5
+0 54200.dat
+1 Slope 30 1 x 1 x 2/3
 2 82
+0 85984.dat
+1 Slope 30 1 x 2 x 2/3
+2 0
 0 4286.dat
 1 Slope 33 3 x 1
 2 323
 0 3297.dat
 1 Slope 33 3 x 4
 2 14
+0 58181.dat
+1 Slope 33 3 x 6 without Inner Walls
+2 47
 0 22388.dat
 1 Slope 45 1 x 1 x 2/3 Quadruple Convex Pyramid
 2 35
@@ -1033,9 +1132,15 @@
 0 3660b.dat
 1 Slope, Inverted 45 2 x 2 with Flat Bottom Pin
 2 72
+0 2341.dat
+1 Slope, Inverted 45 3 x 1 Double
+2 72
 0 4871.dat
 1 Slope, Inverted 45 4 x 2 Double with 2 x 2 Cutout
 2 19
+0 32474.dat
+1 Technic Ball Joint
+2 80
 0 2853b.dat
 1 Technic Engine Crankshaft
 2 14
@@ -1069,6 +1174,9 @@
 0 3070b.dat
 1 Tile 1 x 1
 2 57
+0 3069b.dat
+1 Tile 1 x 2
+2 15
 0 3069b.dat
 1 Tile 1 x 2
 2 40
@@ -1131,6 +1239,9 @@
 2 47
 0 22385.dat
 1 Tile, Modified 2 x 3 Pentagonal
+2 57
+0 22385.dat
+1 Tile, Modified 2 x 3 Pentagonal
 2 378
 0 30350b.dat
 1 Tile, Modified 2 x 3 with 2 Open O Clips
@@ -1180,6 +1291,9 @@
 0 bl_5093.dat
 1 Slope Curved 2 x 2 with Stud Notch Right
 2 321
+0 bl_89680.dat
+1 Wedge 16 x 4 Triple Curved without Reinforcements
+2 72
 0 bl_89680.dat
 1 Wedge 16 x 4 Triple Curved without Reinforcements
 2 378
@@ -1255,6 +1369,12 @@
 0 43710.dat
 1 Wedge 4 x 2 Triple Left
 2 0
+0 64225.dat
+1 Wedge 4 x 3 Triple Curved No Studs
+2 320
+0 64867.dat
+1 Wedge 4 x 4 Fractured Polygon Top
+2 57
 0 13349.dat
 1 Wedge 4 x 4 Triple Inverted with Connections between 4 Studs
 2 72
@@ -1312,8 +1432,14 @@
 0 86652.dat
 1 Wheel 43.2mm D. x 18mm - Flush Axle Stem
 2 71
+0 56908.dat
+1 Wheel 43.2mm D. x 26mm Technic Racing Small, 6 Pin Holes
+2 0
 0 15038.dat
 1 Wheel 56mm D. x 34mm Technic Racing Medium, 6 Pin Holes
+2 0
+0 88517.dat
+1 Wheel 75mm D. x 17mm Motorcycle
 2 0
 0 49295c01.dat
 1 Wheel 88 x 14 Technic with Axle Hole and 28 Pin Holes with Molded Medium Azure Hard Rubber Tire Pattern
@@ -1348,6 +1474,9 @@
 0 30374.dat
 1 Bar   4L  and #40;Lightsaber Blade / Wand and #41;
 2 47
+0 2714b.dat
+1 Bar   8L with Stop Rings and Pin  and #40;Technic, Figure Accessory Ski Pole and #41; - Flat End
+2 0
 0 42445.dat
 1 Bar  12L with 1 x 2 Plate End Solid Studs and 1 x 1 Round Plate End
 2 0
@@ -1360,6 +1489,12 @@
 0 23444.dat
 1 Bar 1 x 6 x 3 with 4 Studs
 2 297
+0 30359b.dat
+1 Bar 1 x 8 with Brick 1 x 2 Curved Top End (Axle Holder Inside Small End)
+2 72
+0 23443.dat
+1 Bar Holder with Handle
+2 73
 0 58176.dat
 1 Bar with Light Cover  and #40;Bulb and #41; / Bionicle Barraki Eye
 2 0
@@ -1369,6 +1504,9 @@
 0 58176.dat
 1 Bar with Light Cover  and #40;Bulb and #41; / Bionicle Barraki Eye
 2 36
+0 4518c.dat
+1 Vehicle, Forklift Wide 1 x 2 Hinge Plate Locking Dual 2 Fingers with Rubber Belt Holder
+2 0
 0 80326.dat
 1 Flag 2 x 2 Square with Flared Edge
 2 28
@@ -1474,21 +1612,33 @@
 0 90981.dat
 1 Spider Web Flat with Hollow Stud, Bar Ends, and Bar
 2 72
+0 57539p02.dat
+1 Hose, Flexible Ribbed with 8mm Ends 19L / 15.2cm with Molded Lime Center Pattern
+2 47
 0 2584.dat
 1 String Reel 2 x 2 Holder
 2 0
 0 4175.dat
 1 Ladder 1 1/2 x 2 x 2
 2 28
+0 15118.dat
+1 Ladder 16 x 2 1/2 with 15 Rungs
+2 15
 0 4865a.dat
 1 Panel 1 x 2 x 1
 2 71
+0 4865b.dat
+1 Panel 1 x 2 x 1 [Rounded Corners]
+2 40
 0 4865b.dat
 1 Panel 1 x 2 x 1 with Rounded Corners
 2 43
 0 4865b.dat
 1 Panel 1 x 2 x 1 with Rounded Corners
 2 47
+0 4865b.dat
+1 Panel 1 x 2 x 1 with Rounded Corners
+2 322
 0 23969.dat
 1 Panel 1 x 2 x 1 with Rounded Corners and 2 Sides
 2 26
@@ -1528,6 +1678,9 @@
 0 15207.dat
 1 Panel 1 x 4 x 1
 2 15
+0 15207.dat
+1 Panel 1 x 4 x 1
+2 25
 0 15207.dat
 1 Panel 1 x 4 x 1
 2 40
@@ -1597,6 +1750,9 @@
 0 30248.dat
 1 Helicopter Sled Rails 12 x 6
 2 72
+0 4870.dat
+1 Plate, Modified 2 x 2 Thin with Dual Wheels Holder - Split Pins
+2 71
 0 15210.dat
 1 Road Sign 2 x 2 Square with Open O Clip
 2 4
@@ -1654,6 +1810,9 @@
 0 91176.dat
 1 Support 2 x 2 x 13 with 5 Pin Holes
 2 191
+0 1749.dat
+1 Support 2 x 4 x 13 Semicircle with 5 Pin Holes
+2 0
 0 92402.dat
 1 Tire 30.4 x 14 Offset Tread - Band Around Center of Tread
 2 0
@@ -1728,7 +1887,13 @@
 2 47
 0 92583.dat
 1 Windscreen 3 x 6 x 2
+2 43
+0 92583.dat
+1 Windscreen 3 x 6 x 2
 2 47
+0 18990.dat
+1 Windscreen 4 x 4 x 1 2/3 Canopy Dome Half Sphere with Bar Handle
+2 43
 0 18990.dat
 1 Windscreen 4 x 4 x 1 2/3 Canopy Dome Half Sphere with Bar Handle
 2 47
@@ -1747,6 +1912,9 @@
 0 18972.dat
 1 Windscreen 5 x 4 x 1 2/3
 2 40
+0 92474.dat
+1 Windscreen 6 x 2 x 2 with Bar Handle
+2 47
 0 3384.dat
 1 Windscreen 6 x 4 x 1 1/3 Canopy Sloped Sides
 2 100040
@@ -1891,6 +2059,9 @@
 0 1748.dat
 1 Tile, Round 1 x 2 Half
 2 71
+0 1748.dat
+1 Tile, Round 1 x 2 Half
+2 322
 0 1126.dat
 1 Tile, Round 1 x 2 Oval
 2 19
@@ -1924,6 +2095,9 @@
 0 54869.dat
 1 Electric, Light Brick 2 x 3 x 1 1/3 with Trans-Red Top and Red LED Light
 2 72
+0 64414.dat
+1 Train Buffer Beam with Sealed Magnets and Plow
+2 0
 0 39886.dat
 1 Train Motor 9V Decorative Side with Open Hub Points  and #40;fits RC Train Motor and #41; - Smooth Ends
 2 0
@@ -1932,6 +2106,9 @@
 2 72
 0 53401.dat
 1 Train, Track Plastic (RC Trains) Straight
+2 72
+0 53404.dat
+1 Train, Track Plastic (RC Trains) Switch Point Right
 2 72
 0 53834.dat
 1 Train, Track Plastic Ramp 8 x 12
@@ -1954,6 +2131,15 @@
 0 bl_42509pb08.dat
 1 Glass for Window 1 x 6 x 6 Flat Front with Black and Silver Fire Logo Badge with Red Flames Pattern
 2 47
+0 53586.dat
+1 Technic, Axle Connector Perpendicular 2 x 5 Bent
+2 179
+0 32013.dat
+1 Technic, Axle and Pin Connector Angled #1
+2 1
+0 32034.dat
+1 Technic, Axle and Pin Connector Angled #2 - 180 degrees
+2 25
 0 32034.dat
 1 Technic, Axle and Pin Connector Angled #2 - 180 degrees
 2 27
@@ -1968,10 +2154,25 @@
 2 288
 0 32015.dat
 1 Technic, Axle and Pin Connector Angled #5 - 112.5 degrees
+2 4
+0 32015.dat
+1 Technic, Axle and Pin Connector Angled #5 - 112.5 degrees
 2 10
+0 32015.dat
+1 Technic, Axle and Pin Connector Angled #5 - 112.5 degrees
+2 27
 0 6536.dat
 1 Technic, Axle and Pin Connector Perpendicular
 2 25
+0 42003.dat
+1 Technic, Axle and Pin Connector Perpendicular 3L with 2 Pin Holes
+2 27
+0 32184.dat
+1 Technic, Axle and Pin Connector Perpendicular 3L with Center Pin Hole
+2 15
+0 32291.dat
+1 Technic, Axle and Pin Connector Perpendicular Double
+2 4
 0 32291.dat
 1 Technic, Axle and Pin Connector Perpendicular Double
 2 72
@@ -2014,6 +2215,9 @@
 0 65803.dat
 1 Technic, Brick 16 x 16 x 1 1/3 with Holes
 2 78
+0 32531.dat
+1 Technic, Brick 4 x 6 Open Center
+2 0
 0 32532.dat
 1 Technic, Brick 6 x 8 Open Center
 2 0
@@ -2025,7 +2229,13 @@
 2 72
 0 48171.dat
 1 Technic, Brick Modified 2 x 2 with Pin Hole and Rotation Joint Ball Half Vertical
+2 0
+0 48171.dat
+1 Technic, Brick Modified 2 x 2 with Pin Hole and Rotation Joint Ball Half Vertical
 2 19
+0 48169.dat
+1 Technic, Brick Modified 2 x 2 with Pin Hole and Rotation Joint Socket
+2 72
 0 94925.dat
 1 Technic, Gear 16 Tooth - Axle Hole with Closed Sides
 2 0
@@ -2047,6 +2257,12 @@
 0 60483.dat
 1 Technic, Liftarm Thick 1 x 2 - Axle Hole
 2 27
+0 6632.dat
+1 Technic, Liftarm Thin 1 x 3 - Axle Holes
+2 1
+0 6632.dat
+1 Technic, Liftarm Thin 1 x 3 - Axle Holes
+2 25
 0 32449.dat
 1 Technic, Liftarm Thin 1 x 4 - Axle Holes
 2 322
@@ -2062,6 +2278,9 @@
 0 32009.dat
 1 Technic, Liftarm, Modified Bent Thick 1 x 11.5 Double
 2 1
+0 32348.dat
+1 Technic, Liftarm, Modified Bent Thick 1 x 7  and #40;4 - 4 and #41;
+2 14
 0 32348.dat
 1 Technic, Liftarm, Modified Bent Thick 1 x 7  and #40;4 - 4 and #41;
 2 71
@@ -2107,6 +2326,9 @@
 0 14149.dat
 1 Technic, Link Tread Attachment, Double, Rubber
 2 321
+0 61184.dat
+1 Technic, Pin 1/2 with 2L Bar Extension  and #40;Flick Missile and #41;
+2 4
 0 32054.dat
 1 Technic, Pin 3L with Friction Ridges and Stop Bush
 2 297
@@ -2221,18 +2443,30 @@
 0 15429.dat
 1 Cat Tail
 2 15
+0 15429.dat
+1 Cat Tail
+2 70
 0 64847.dat
 1 Cattle Horn, Short
 2 26
 0 40378.dat
 1 Dinosaur Tail / Neck Middle Section with Bar Hole and Technic Pin
 2 3
+0 40378.dat
+1 Dinosaur Tail / Neck Middle Section with Bar Hole and Technic Pin
+2 15
 0 40379.dat
 1 Dinosaur Tail End Section / Horn
 2 3
 0 40379.dat
 1 Dinosaur Tail End Section / Horn
 2 191
+0 89522.dat
+1 Horn, Unicorn / Spiral
+2 25
+0 14518.dat
+1 Shark Body with Debossed Gills
+2 71
 0 4527.dat
 1 Technic Panel Curved 3 x 13 x 2 Tapered, Left
 2 0
@@ -2278,6 +2512,9 @@
 0 2442.dat
 1 Technic, Panel Curved 5 x 3 x 2 Corner Quarter Ellipse, Right
 2 2
+0 2387.dat
+1 Technic, Panel Fairing # 7 Very Small Smooth Short, Side A
+2 0
 0 2387.dat
 1 Technic, Panel Fairing # 7 Very Small Smooth Short, Side A
 2 100167
@@ -2500,6 +2737,9 @@
 0 79756.dat
 1 Slope, Curved 1 x 4 x 2/3 Double
 2 191
+0 85970.dat
+1 Slope, Curved 10 x 1
+2 4
 0 6091.dat
 1 Slope, Curved 2 x 1 x 1 1/3 with Recessed Stud
 2 28
@@ -2536,6 +2776,9 @@
 0 67810.dat
 1 Slope, Curved 2 x 2 x 1 1/3 Corner Round with Recessed Stud
 2 14
+0 32803.dat
+1 Slope, Curved 2 x 2 x 2/3 Inverted
+2 71
 0 47457.dat
 1 Slope, Curved 2 x 2 x 2/3 with 2 Studs and Curved Sides
 2 484
@@ -2554,6 +2797,9 @@
 0 76797.dat
 1 Slope, Curved 3 x 3 Corner Round
 2 28
+0 1762.dat
+1 Slope, Curved 33 2 x 2 Double / Inverted
+2 15
 0 61678.dat
 1 Slope, Curved 4 x 1
 2 0
@@ -2595,6 +2841,9 @@
 2 326
 0 65734.dat
 1 Slope, Curved 4 x 1 x 2 2/3 with Stud
+2 0
+0 65734.dat
+1 Slope, Curved 4 x 1 x 2 2/3 with Stud
 2 43
 0 65734.dat
 1 Slope, Curved 4 x 1 x 2 2/3 with Stud
@@ -2611,6 +2860,9 @@
 0 42023.dat
 1 Slope, Curved 6 x 1 Inverted
 2 14
+0 42022.dat
+1 Slope, Curved 6 x 1 with 2 Studs
+2 43
 0 87552p01.dat
 1 Panel 1 x 2 x 2 [Side Supports / Hollow Studs] with White Corner Left print
 2 47
@@ -2658,6 +2910,9 @@
 2 272
 0 1686.dat
 1 Large Figure Armor, Round, Smooth with Bar Handle - Free Ends
+2 4
+0 1686.dat
+1 Large Figure Armor, Round, Smooth with Bar Handle - Free Ends
 2 29
 0 1686.dat
 1 Large Figure Armor, Round, Smooth with Bar Handle - Free Ends
@@ -2698,6 +2953,15 @@
 0 24299.dat
 1 Wedge, Plate 2 x 2  Left
 2 320
+0 24299.dat
+1 Wedge, Plate 2 x 2  Left
+2 100167
+0 24307.dat
+1 Wedge, Plate 2 x 2  Right
+2 100167
+0 48183.dat
+1 Wedge, Plate 3 x 4 with Stud Notches
+2 15
 0 41770.dat
 1 Wedge, Plate 4 x 2 Left
 2 330
@@ -2725,6 +2989,9 @@
 0 3544.dat
 1 Wedge, Plate 8 x 3 Left
 2 191
+0 50304.dat
+1 Wedge, Plate 8 x 3 Pentagonal Right
+2 4
 0 15706.dat
 1 Wedge, Plate A-Shape with 2 Rows of 4 Studs
 2 4
@@ -2806,6 +3073,9 @@
 0 bl_38798.dat
 1 Hair Short and Bushy
 2 19
+0 32602.dat
+1 Hair Wavy and Windblown to One Side
+2 297
 0 38800.dat
 1 Minifigure, Hair Bowl Cut Parted in Center
 2 0
@@ -2872,6 +3142,9 @@
 0 88283.dat
 1 Minifigure, Hair Mid-Length Tousled with Center Part
 2 308
+0 bl_76772.dat
+1 Minifigure, Hair Mid-Length, All Swept to Right Side, Hole on Top - Hard Plastic
+2 320
 0 15500.dat
 1 Minifigure, Hair Short Combed Sideways Part Right
 2 70
@@ -2938,6 +3211,9 @@
 0 70694.dat
 1 Projectile Arrow, Solid Shaft with  Round End with 4 Notches
 2 43
+0 bl_77258.dat
+1 Projectile Launcher Part, Rapid Shooter Trigger Large
+2 71
 0 15400.dat
 1 Projectile Launcher, 1 x 4 Spring Shooter with Light Bluish Gray Top
 2 72
@@ -2947,6 +3223,9 @@
 0 73304.dat
 1 Power Burst, Minifigure Pedestal 5 x 5 x 2/3
 2 43
+0 73304.dat
+1 Power Burst, Minifigure Pedestal 5 x 5 x 2/3
+2 57
 0 85959.dat
 1 Wave / Flame Rounded Large [Plain]
 2 57

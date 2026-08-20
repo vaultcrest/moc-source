@@ -24,3 +24,7 @@ extension/readme_guide/*.png
 
 # Generated report output, not config data
 cache/bl_catalog_gaps.csv
+
+# Published Stud.io palette zips/manifest -- regenerated every 4 hours on the
+# server (mocsource-publish-studio-palettes.timer), not meant to be diffed in git
+static/studio_palettes/

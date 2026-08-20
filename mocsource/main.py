@@ -58,3 +58,8 @@ async def privacy():
 @app.get("/guide", include_in_schema=False)
 async def guide():
     return FileResponse(STATIC_DIR / "guide.html")
+
+
+@app.get("/studio-palettes", include_in_schema=False)
+async def studio_palettes():
+    return FileResponse(STATIC_DIR / "studio-palettes.html")
