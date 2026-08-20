@@ -88,6 +88,39 @@
       font-size: 0.9em;
     }
 
+    .path-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 8px 0 4px;
+    }
+    .path-code {
+      display: block;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.1);
+      padding: 8px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      color: var(--white);
+      user-select: all;
+      cursor: text;
+    }
+    .btn-copy {
+      flex-shrink: 0;
+      background: rgba(255,255,255,0.08);
+      border: 1px solid rgba(255,255,255,0.15);
+      color: var(--white);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 8px 14px;
+      border-radius: 6px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-copy:hover { background: rgba(255,255,255,0.16); }
+    .btn-copy.copied { background: var(--green-bright); border-color: var(--green-bright); color: var(--green-dark); }
+
     /* ── Download cards ── */
     .locale-grid {
       display: grid;
@@ -157,7 +190,13 @@
     <ol>
       <li>Download the zip for your region below.</li>
       <li>Extract the 5 files it contains.</li>
-      <li>Copy them into <code>%LOCALAPPDATA%\Stud.io\Buckets\Folders</code>.</li>
+      <li>
+        Copy them into this folder:
+        <div class="path-row">
+          <code id="palette-path" class="path-code">%LOCALAPPDATA%\Stud.io\Buckets\Folders</code>
+          <button type="button" class="btn-copy" id="copy-path-btn" aria-label="Copy folder path">Copy</button>
+        </div>
+      </li>
       <li>Restart Stud.io — the palettes appear in the palette picker as <em>Pick a Brick Bestseller</em>, <em>Standard</em>, <em>Out of Stock</em>, <em>All</em>, and <em>All In Stock</em>.</li>
     </ol>
     <p>Each palette lists real Pick a Brick part/color combinations, with LDraw part files and colors resolved via MOC Source's own catalog data.</p>
@@ -199,6 +238,20 @@
   </footer>
 
   <script>
+    const copyBtn = document.getElementById('copy-path-btn');
+    copyBtn.addEventListener('click', () => {
+      const text = document.getElementById('palette-path').textContent;
+      navigator.clipboard.writeText(text).then(() => {
+        const original = copyBtn.textContent;
+        copyBtn.textContent = 'Copied!';
+        copyBtn.classList.add('copied');
+        setTimeout(() => {
+          copyBtn.textContent = original;
+          copyBtn.classList.remove('copied');
+        }, 1500);
+      });
+    });
+
     fetch('/static/studio_palettes/manifest.json')
       .then(r => r.json())
       .then(data => {
