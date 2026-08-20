@@ -24,4 +24,3 @@ extension/readme_guide/*.png
 
 # Generated report output, not config data
 cache/bl_catalog_gaps.csv
-output/

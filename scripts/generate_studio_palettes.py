@@ -37,11 +37,22 @@ Only parts with a resolved studio_resolutions row are included (matches
 the original's `if not entry["studio"]["resolved"]: continue`) -- no
 Studio geometry, no palette entry.
 
-Entry order: grouped by BL category_id, then part_file, then color --
-matches the coarse category-batching pattern seen in the real BDP/
-BrickLink-Common-Palette reference files (data/studio_palettes/ in
-brick_palettes_generator), which are not sorted alphabetically/numerically
-but do run same-category parts in long consecutive blocks.
+Entry order: grouped by BL category_id, then alphabetically by
+display_name within each category (COLLATE "C" -- Postgres's default
+locale collation weighs a digit as greater than a space, so e.g.
+"Technic, Brick 1 x 10..." sorted before "1 x 1..." even though "1 x 1"
+is a true string prefix and should sort first; forcing byte-order
+comparison fixes this real bug, confirmed 2026-08-19 without breaking the
+already-matched "Brick 1x1/1x2/1x3/1x4" sequence), then color. Confirmed
+live this matches Stud.io's own "BL Categories" browser panel.
+bl_part_catalog.catalog_sequence (P.xml row order) and
+BLCatalogIndex/BLCatalogSubIndex (from brick_palettes_generator's
+StudioPartDefinition2.txt) were both tried and rejected the same day --
+neither reproduces this panel order (catalog_sequence disagrees on which
+part comes first within a size family; the BLCatalogIndex/SubIndex pair
+only buckets category/subcategory, all same-family parts share one value,
+no finer ordering signal). Investigation ongoing -- see
+project_studio_resolutions memory for where this stands.
 
 Usage:
     DATABASE_URL=... python scripts/generate_studio_palettes.py
@@ -72,7 +83,8 @@ QUERY = """
         bm.color_id,
         COALESCE(c.ldraw_id, bm.color_id) AS ldraw_color_id,
         (c.ldraw_id IS NULL) AS color_fallback,
-        bpc.category_id
+        bpc.category_id,
+        bpc.catalog_sequence
     FROM lego_element_prices lep
     JOIN bricklink_mappings bm ON bm.element_id = lep.element_id
     JOIN studio_resolutions sr ON sr.part_no = bm.part_no AND sr.resolved = true
@@ -80,7 +92,9 @@ QUERY = """
     LEFT JOIN lego_elements le ON le.element_id = lep.element_id
     LEFT JOIN colors c ON c.bl_id = bm.color_id
     WHERE lep.locale = %s AND bm.part_no IS NOT NULL
-    ORDER BY bpc.category_id NULLS LAST, sr.part_file, ldraw_color_id
+    ORDER BY bpc.category_id NULLS LAST,
+             COALESCE(bm.part_name, bpc.name, le.lego_name, sr.part_file) COLLATE "C",
+             ldraw_color_id
 """
 
 

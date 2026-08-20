@@ -19,6 +19,14 @@ succession tie-break signal, never the primary last_used_year signal, which
 comes from Rebrickable) -- not populated here; existing values are left
 untouched, not nulled out.
 
+bl_part_catalog.catalog_sequence (2026-08-19) -- each part's 0-based row
+position in items/P.xml. Confirmed live that this matches the ordering used
+in real BrickLink-distributed Studio palette files far better than any
+derived sort (alphabetical/part_no/category all failed to reproduce it) --
+presumably BrickLink's own internal catalog order, not otherwise exposed.
+Not guaranteed stable release-to-release, refreshed every run like every
+other column here.
+
 bricklink_alternates.source distinguishes this script's rows
 ('brickstore_alternate_ids', derived from each part's own ALTITEMIDS field)
 from scripts/ingest_brickstore_mold_relationships.py's rows
@@ -64,12 +72,13 @@ UPSERT_PART_CATALOG_SQL = """
 """
 
 UPSERT_BL_PART_CATALOG_SQL = """
-    INSERT INTO bl_part_catalog (part_no, name, item_type, category_id, looked_up_at)
+    INSERT INTO bl_part_catalog (part_no, name, item_type, category_id, catalog_sequence, looked_up_at)
     VALUES %s
     ON CONFLICT (part_no) DO UPDATE SET
         name = EXCLUDED.name,
         item_type = EXCLUDED.item_type,
         category_id = EXCLUDED.category_id,
+        catalog_sequence = EXCLUDED.catalog_sequence,
         looked_up_at = EXCLUDED.looked_up_at
 """
 
@@ -111,7 +120,7 @@ def ingest_parts(cur, extract_dir: Path, now: datetime, dry_run: bool) -> dict:
             continue
         category_id = int(row["category_id"]) if row["category_id"] else None
         part_rows.append((part_no, category_id, row["name"], row["alternate_item_ids"], now))
-        bl_catalog_rows.append((part_no, row["name"], "PART", category_id, now))
+        bl_catalog_rows.append((part_no, row["name"], "PART", category_id, row["catalog_sequence"], now))
 
         if row["alternate_item_ids"]:
             alts = {a.strip() for a in row["alternate_item_ids"].split(",") if a.strip() and a.strip() != part_no}

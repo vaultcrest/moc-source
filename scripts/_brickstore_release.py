@@ -95,8 +95,18 @@ def ensure_latest(data_dir: Path = DEFAULT_DATA_DIR, force: bool = False) -> Pat
 
 
 def iter_part_rows(extract_dir: Path):
-    """Yields dicts from items/P.xml: part_no, category_id, name, alternate_item_ids (raw comma-separated)."""
+    """Yields dicts from items/P.xml: part_no, category_id, name, alternate_item_ids
+    (raw comma-separated), catalog_sequence (this part's 0-based position among
+    ITEMTYPE=P entries in the file -- confirmed live 2026-08-19 that this raw
+    file order matches real BrickLink-distributed Studio palette files
+    (e.g. 2028 Wave 1 Palette) far better than any derived sort (alphabetical,
+    part_no, category+name all failed to reproduce it) -- it's presumably
+    BrickLink's own internal catalog row order, not otherwise exposed via the
+    live API. Not guaranteed stable release-to-release (BrickLink could
+    reorder their own export), so this is refreshed every ingest, same as
+    every other column here."""
     path = extract_dir / "items" / "P.xml"
+    seq = 0
     for _, elem in ET.iterparse(path, events=("end",)):
         if elem.tag != "ITEM":
             continue
@@ -107,7 +117,9 @@ def iter_part_rows(extract_dir: Path):
                 "category_id": elem.findtext("CATEGORY") or None,
                 "name": elem.findtext("ITEMNAME"),
                 "alternate_item_ids": elem.findtext("ALTITEMIDS") or None,
+                "catalog_sequence": seq,
             }
+            seq += 1
         elem.clear()
 
 
