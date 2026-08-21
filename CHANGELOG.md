@@ -2,6 +2,14 @@
 
 All notable changes to MOC Source are documented here.
 
+## [Ops] — 2026-08-20
+
+### `app.home.arpa` network outage — root cause confirmed, no code change needed
+- Investigated why no report email arrived for the `scrape_bl_minifig_data.py` run scheduled 03:00 EDT 2026-08-20 (flagged by Sean). Journal logs confirm a full outbound-network outage on the server at that time: DNS resolution for `api.bricklink.com` failed (`NameResolutionError`), and the report-email send itself failed with `[Errno 101] Network is unreachable` — so the run correctly produced zero progress (0 processed, 5 consecutive transient failures, aborted early) and correctly couldn't email about it, rather than silently succeeding without notifying.
+- This is the same outage window noted informally the previous evening (`app.home.arpa` briefly unreachable via SSH/ping around 00:25 EDT while gateway/DNS/Proxmox all stayed up) — now confirmed to have also broken live outbound API calls and SMTP, not just interactive access.
+- The run immediately before the outage (finished 02:23:58 EDT) completed and emailed normally — 1,666 minifigs processed, bringing cumulative progress to 5,002/19,147 scanned, 17,388 rows in `minifig_inventory_items`. No runs happened between the failed 03:00 attempt and end-of-day; the job is a once-daily 03:00 oneshot timer with no same-day auto-retry.
+- Network confirmed healthy again same evening (DNS resolves cleanly, live HTTPS request to `api.bricklink.com` succeeds) — no code or infra change made, since this was a transient external outage, not a bug in the script or its retry logic (the 5-consecutive-failure abort behaved exactly as designed).
+
 ## [Backend] — 2026-08-19/20
 
 ### New Stud.io reference files investigated, real `.dat` selection-rule bug fixed
