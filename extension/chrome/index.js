@@ -1,4 +1,4 @@
-// ─── Country list (shared with popup.js) ─────────────────────────────────────
+// ─── Country list (populates the Settings page's country dropdown) ───────────
 
 const BL_COUNTRIES = ["Afghanistan","Albania","Algeria","Andorra","Angola","Anguilla","Antigua and Barbuda","Argentina","Armenia","Aruba","Australia","Austria","Azerbaijan","Bahamas","Bahrain","Bangladesh","Barbados","Belgium","Belize","Benin","Bermuda","Bhutan","Bolivia","Bosnia and Herzegovina","Botswana","Brazil","British Indian Ocean Territory","Brunei","Bulgaria","Burkina Faso","Burundi","Cambodia","Cameroon","Canada","Cape Verde","Caribbean Netherlands","Cayman Islands","Central African Republic","Chad","Chile","Colombia","Comoros","Congo","Congo (DRC)","Cook Islands","Costa Rica","Cote D'Ivoire","Croatia","Curacao","Cyprus","Czech Republic","Denmark","Djibouti","Dominica","Dominican Republic","East Timor","Ecuador","Egypt","El Salvador","Equatorial Guinea","Eritrea","Estonia","Ethiopia","Falkland Islands (Islas Malvinas)","Faroe Islands","Fiji","Finland","France","French Polynesia","Gabon","Gambia","Georgia","Germany","Ghana","Gibraltar","Greece","Greenland","Grenada","Guatemala","Guinea","Guinea-Bissau","Guyana","Haiti","Honduras","Hong Kong SAR China","Hungary","Iceland","India","Indonesia","Iraq","Ireland","Israel","Italy","Jamaica","Japan","Jordan","Kazakhstan","Kenya","Kiribati","Kuwait","Kyrgyzstan","Laos","Latvia","Lebanon","Lesotho","Liberia","Libya","Liechtenstein","Lithuania","Luxembourg","Macau","Macedonia","Madagascar","Malawi","Malaysia","Maldives","Mali","Malta","Marshall Islands","Mauritania","Mauritius","Mayotte","Mexico","Micronesia","Moldova","Monaco","Mongolia","Montenegro","Montserrat","Morocco","Mozambique","Myanmar","Namibia","Nauru","Nepal","Netherlands","New Caledonia","New Zealand","Nicaragua","Niger","Niue","Norfolk Island","Norway","Oman","Pakistan","Palau","Panama","Papua new Guinea","Paraguay","Peru","Philippines","Pitcairn Islands","Poland","Portugal","Qatar","Romania","Rwanda","Samoa","San Marino","Sao Tome and Principe","Saudi Arabia","Senegal","Serbia","Seychelles","Sierra Leone","Singapore","Sint Maarten","Slovakia","Slovenia","Solomon Islands","Somalia","South Africa","South Georgia","South Korea","Spain","Sri Lanka","St. Helena","St. Kitts and Nevis","St. Lucia","St. Pierre and Miquelon","St. Vincent and the Grenadines","Sudan","Suriname","Svalbard and Jan Mayen","Swaziland","Sweden","Switzerland","Taiwan Region","Tajikistan","Tanzania","Thailand","Togo","Tonga","Trinidad and Tobago","Tunisia","Turkey","Turkmenistan","Turks and Caicos Islands","Tuvalu","Uganda","Ukraine","United Arab Emirates","United Kingdom","Uruguay","USA","Uzbekistan","Vanuatu","Vatican City State","Venezuela","Vietnam","Virgin Islands (British)","Wallis and Futuna","Yemen","Zambia","Zimbabwe"];
 
@@ -21,8 +21,8 @@ function parseStorePrice(str) {
 }
 
 // ── Currency formatting ────────────────────────────────────────────────────
-// Covers the PAB regions MOC Source already supports (see the region picker
-// in popup.html); an unrecognized code falls back to "{CODE} " rather than
+// Covers the PAB regions MOC Source already supports (see renderSettings()'s
+// pabRegion select); an unrecognized code falls back to "{CODE} " rather than
 // guessing a symbol. Currency identity is never converted here -- amounts
 // are only ever summed within a single known currency (see fmtMoney callers).
 const CURRENCY_SYMBOLS = {
@@ -88,16 +88,30 @@ function effectivePrice(cartPart) {
   return tierPriceFor(cartPart?.priceTiers, cartPart?.qty ?? 0) ?? parseStorePrice(cartPart?.storePrice);
 }
 
+// Prefers BrickLink's own already-computed secondary-currency figure
+// (storeConverted, scraped by content.js from the "(~DKK X.XX)" text next
+// to the native price) over the raw native-currency price, whenever the
+// purpose is comparing against PAB or another store's converted price.
+// Falls back to the native price when no conversion was scraped -- same
+// best-effort assumption this codebase already made in a couple of spots
+// before currency-mismatch handling existed, now made the shared default
+// instead of an easily-missed inline fallback.
+function priceForPabCompare(cartPart) {
+  return cartPart?.storeConverted?.amount ?? effectivePrice(cartPart);
+}
+
 // Percent the store price is above (+) or below (-) the PAB price, or null if
 // either price is unknown. Computed fresh at render time from real numbers --
 // never scraped/stored, unlike the leaked BrickLink text this replaces.
+// Callers should pass a currency-comparable storeNum (see priceForPabCompare)
+// when the store's native currency may not match pabNum's.
 function pctVsPab(storeNum, pabNum) {
   if (storeNum == null || pabNum == null || pabNum <= 0) return null;
   return ((storeNum - pabNum) / pabNum) * 100;
 }
 
 function isOverPAB(p) {
-  const store = parseStorePrice(p.storePrice);
+  const store = p.storeConverted?.amount ?? parseStorePrice(p.storePrice);
   if (store == null || !p.pabEntry?.price_cents) return false;
   return store >= p.pabEntry.price_cents / 100;
 }
@@ -105,7 +119,7 @@ function isOverPAB(p) {
 function cartSavings(parts) {
   let total = 0, count = 0, currency = null;
   for (const p of parts) {
-    const store = parseStorePrice(p.storePrice);
+    const store = p.storeConverted?.amount ?? parseStorePrice(p.storePrice);
     if (store == null || !p.pabEntry?.price_cents) continue;
     const pab = p.pabEntry.price_cents / 100;
     if (store > pab) {
@@ -419,7 +433,7 @@ function summaryPanel(parts, cart) {
         </div>
         ${(() => {
           const os = currentDetail.list?.orderSummary;
-          if (!os || (!os.shipping && !os.orderTotal)) return "";
+          if (!os || (!os.shipping?.native && !os.orderTotal?.native)) return "";
           const row = (label, val, bold) =>
             `<div style="display:flex;align-items:center;gap:24px;padding:8px 0;border-bottom:1px solid #f3f4f6">
                <span style="${bold ? "font-weight:700" : "font-weight:600"};width:150px;flex-shrink:0">${label}</span>
@@ -428,16 +442,21 @@ function summaryPanel(parts, cart) {
                <span style="color:#6c757d;font-size:14px">Price</span>
                <span style="${bold ? "font-weight:700" : "font-weight:500"}">${val ?? "—"}</span>
              </div>`;
-          const fmt = v => v ? v.replace(/^US\s+/, "") : v;
+          // Prefer BrickLink's own converted figure (getOrderSummary() in
+          // content.js), same pattern as the STORE column/Total line elsewhere.
+          const fmt = v => v?.converted
+            ? `${fmtMoney(ceilToCents(v.converted.amount), v.converted.currency)}${v.taxPending ? " + Tax" : ""}`
+            : v?.native ? esc(v.native.raw) : null;
+          const fmtItem = fmt(os.itemTotal);
           const fmtShip = fmt(os.shipping);
           const fmtOrd  = fmt(os.orderTotal);
-          const shipTbd = !fmtShip || fmtShip === fmtOrd;
+          const shipTbd = os.shipping?.native == null || os.shipping.native.amount === 0;
           return `
-            ${os.itemTotal  ? row("BrickLink Item Total", fmt(os.itemTotal)) : ""}
+            ${fmtItem ? row("BrickLink Item Total", fmtItem) : ""}
             ${shipTbd
               ? row("Shipping & Handling", '<span style="color:#9ca3af">TBD</span>')
               : row("Shipping & Handling", fmtShip)}
-            ${os.orderTotal ? row("Order Total", fmtOrd, true) : ""}`;
+            ${fmtOrd ? row("Order Total", fmtOrd, true) : ""}`;
         })()}
       </div>`;
   }
@@ -1068,10 +1087,13 @@ async function renderProjectDetail(id, content) {
     const allSelected = entries.every(e => selSet?.has(e.key));
     const showStore   = sectionType === "bl";
     const blCart      = showStore ? blCartList.find(c => c.id === sectionCartId) : null;
-    // One destination cart = one store = one native currency, so a header label is
-    // unambiguous here (unlike the pool table, which spans multiple stores and never
-    // shows this column at all -- showStore is only ever true for a single blCart).
-    const storeHdrCurrency = showStore ? blCart?.parts?.find(p => p.storeCurrency)?.storeCurrency : null;
+    // One destination cart = one store, so a header label is unambiguous here
+    // (unlike the pool table, which spans multiple stores and never shows this
+    // column at all -- showStore is only ever true for a single blCart).
+    // Prefers the converted currency (see priceForPabCompare) so the header
+    // matches what the row cells below actually display.
+    const storeHdrPart     = showStore ? blCart?.parts?.find(p => p.storeConverted?.currency ?? p.storeCurrency) : null;
+    const storeHdrCurrency = storeHdrPart ? (storeHdrPart.storeConverted?.currency ?? storeHdrPart.storeCurrency) : null;
     const pabHdrCurrency   = poolParts.find(p => p.pabEntry?.currency_code)?.pabEntry.currency_code;
     const colHdr = `
       <div style="display:flex;align-items:center;gap:8px;padding:3px 12px;border-bottom:1px solid #e1e4e8;background:#fafbfc">
@@ -1104,7 +1126,10 @@ async function renderProjectDetail(id, content) {
         ? `<span style="padding:1px 5px;border-radius:3px;font-size:10px;font-weight:700;background:#f3f4f6;color:#6c757d">BL</span>`
         : `<span style="color:#9ca3af">—</span>`;
       const cartPart  = lotCartPart ?? blCart?.parts?.find(cp => cp.partNo === part?.partNo && String(cp.colorId) === String(part?.colorId));
-      const storeNum  = effectivePrice(cartPart);
+      // Prefers BrickLink's own converted figure (see priceForPabCompare) for
+      // both display and comparison -- when a conversion was scraped, showing
+      // the native price here would silently disagree with the header label.
+      const storeNum  = priceForPabCompare(cartPart);
       const pabNum    = part?.pabEntry?.price_cents ? part.pabEntry.price_cents / 100 : null;
       const pabCheaper = showStore && storeNum != null && pabNum != null && pabNum < storeNum;
       const storeColor = pabCheaper ? "#dc2626" : "#374151";
@@ -1339,22 +1364,44 @@ async function renderProjectDetail(id, content) {
         pabNetLots++;
       }
     }
-    const rawShip      = cart.orderSummary?.shipping?.replace(/^US\s+/, "");
-    const rawOrderTot  = cart.orderSummary?.orderTotal?.replace(/^US\s+/, "");
-    const shipNum      = parseStorePrice(rawShip);
-    // TBD: not captured, is $0, or BL DOM bled the order total into the shipping field
-    const shipIsTbd    = shipNum == null || shipNum === 0 || rawShip === rawOrderTot;
+    const shipping     = cart.orderSummary?.shipping;
+    const orderTotal   = cart.orderSummary?.orderTotal;
+    const shipNum      = shipping?.native?.amount ?? null;
+    // TBD: user hasn't been to checkout for this store yet (orderSummary still
+    // empty), or shipping is genuinely $0. Row-scoped scraping in
+    // getOrderSummary() (content.js) matches each label to its own DOM row, so
+    // the old "order total bled into shipping" bleed guard no longer applies.
+    const shipIsTbd    = shipNum == null || shipNum === 0;
     const estShipVal   = estBlShipping[cart.id] ?? "";
-    const effShip      = shipIsTbd ? (estBlShipping[cart.id] ?? 0) : (shipNum ?? 0);
+    const effShip      = shipIsTbd ? (estBlShipping[cart.id] ?? 0) : shipNum;
     // vs-PAB: pure part-price delta only (no shipping, no LEGO fees — those belong in totals)
     const pabNetTotal  = pabNetPartsOnly;
     const shipKnown    = !shipIsTbd || (estBlShipping[cart.id] != null);
     const blPartsNative    = blAllocs.length ? fmtMoney(ceilToCents(blTotal), blCurrency) : null;
-    // Shipping is only ever known in native currency (scraped/estimated), so the
-    // converted figure only ever covers Parts, never the shipping-inclusive grand total.
-    const blPartsConverted = blConvertedKnown && blConvertedCurrency ? fmtMoney(ceilToCents(blTotalConverted), blConvertedCurrency) : null;
-    const blTotalStr   = blPartsNative ? `${blTotalKnown ? "" : "~"}${blPartsNative}${blPartsConverted ? ` <span style="color:#9ca3af;font-weight:400">(≈ ${blPartsConverted})</span>` : ""}` : null;
-    const blGrandStr   = blPartsNative ? `${blTotalKnown && !shipIsTbd ? "" : "~"}${fmtMoney(ceilToCents(blTotal + effShip), blCurrency)}` : null;
+    // Prefer the already-scraped converted figure (same pattern as the STORE
+    // column) now that display is single-currency everywhere else on this page.
+    const blPartsDisplay = (blConvertedKnown && blConvertedCurrency)
+      ? fmtMoney(ceilToCents(blTotalConverted), blConvertedCurrency)
+      : blPartsNative;
+    const blTotalStr   = blPartsDisplay ? `${blTotalKnown ? "" : "~"}${blPartsDisplay}` : null;
+    // Prefer BrickLink's own converted, tax-caveat-included Order Total (scraped
+    // from the checkout page's Order Summary box -- see content.js's
+    // getOrderSummary()). Some stores (e.g. minimum-lot-average not met) never
+    // reach a real checkout summary, so orderTotal stays empty even though every
+    // part's own storeConverted is known -- in that case, derive an implied
+    // native->converted rate from the already-trustworthy Parts total and apply
+    // it to shipping too, rather than falling all the way back to native. This
+    // is the one place this file computes its own currency math instead of only
+    // reading BrickLink's, and only kicks in when every allocated part already
+    // has a real scraped conversion (blConvertedKnown) to derive the rate from.
+    const impliedRate  = (blConvertedKnown && blConvertedCurrency && blTotal > 0) ? blTotalConverted / blTotal : null;
+    const blGrandStr   = blPartsNative
+      ? (orderTotal?.converted
+          ? `${fmtMoney(ceilToCents(orderTotal.converted.amount), orderTotal.converted.currency)}${orderTotal.taxPending ? " + Tax" : ""}`
+          : impliedRate != null
+            ? `~${fmtMoney(ceilToCents(blTotalConverted + effShip * impliedRate), blConvertedCurrency)}`
+            : `${blTotalKnown && !shipIsTbd ? "" : "~"}${fmtMoney(ceilToCents(blTotal + effShip), blCurrency)}`)
+      : null;
     // Show PAB-comparable store subtotal when BL-only parts are present, so the savings
     // figure isn't confusingly close to the full cart total.
     const hasBLOnly    = blPabTotal < blTotal - 0.001;
@@ -1367,7 +1414,7 @@ async function renderProjectDetail(id, content) {
         <span>Parts: <strong>${blTotalStr}</strong></span>
         ${shipIsTbd
           ? `<label style="display:flex;align-items:center;gap:4px;color:#6c757d">Est. ship: <input type="number" class="bl-est-ship" data-cart-id="${esc(cart.id)}" min="0" step="0.01" value="${estShipVal}" placeholder="0.00" style="width:68px;padding:1px 5px;border:1px solid #d1d5db;border-radius:3px;font-size:12px;color:#374151"></label>`
-          : `<span>Shipping: <strong>${rawShip}</strong></span>`}
+          : `<span>Shipping: <strong>${esc(shipping.native.raw)}</strong></span>`}
         ${pabNetStr ? `<span style="color:${pabNetColor};font-weight:600">${esc(pabNetStr)}</span>` : ""}
         ${blGrandStr ? `<span style="margin-left:auto;font-weight:700">Total: ${blGrandStr}</span>` : ""}
       </div>` : "";
@@ -1772,11 +1819,12 @@ async function renderProjectDetail(id, content) {
           totalKnown = false;
         }
       }
-      const rawS   = cart.orderSummary?.shipping?.replace(/^US\s+/, "");
-      const rawO   = cart.orderSummary?.orderTotal?.replace(/^US\s+/, "");
-      const sNum   = parseStorePrice(rawS);
-      const isTbd  = sNum == null || sNum === 0 || rawS === rawO;
-      const effS   = isTbd ? (estBlShipping[cart.id] ?? 0) : (sNum ?? 0);
+      // Row-scoped scraping in getOrderSummary() (content.js) matches each label
+      // to its own DOM row, so the old "order total bled into shipping" bleed
+      // guard no longer applies.
+      const sNum   = cart.orderSummary?.shipping?.native?.amount ?? null;
+      const isTbd  = sNum == null || sNum === 0;
+      const effS   = isTbd ? (estBlShipping[cart.id] ?? 0) : sNum;
       const cartGrand = total + effS;
       grand += cartGrand;
       if (totalConvertedKnown) grandConverted += totalConverted; else grandConvertedKnown = false;
@@ -2437,8 +2485,17 @@ async function renderProjectDetail(id, content) {
     for (const c of blCartList) {
       allPriceMaps.set(c.id, new Map(
         (c.parts ?? []).flatMap(p => {
-          const price = parseStorePrice(p.storePrice);
-          if (price != null) cartCurrencies.set(c.id, cartCurrencies.get(c.id) ?? p.storeCurrency);
+          // Prefer BrickLink's own converted figure so cross-store/cross-PAB
+          // comparisons below are apples-to-apples even when stores price
+          // natively in different currencies -- every store's storeConverted
+          // targets the same viewer-account currency, so this fixes both the
+          // "cheaper at another store" and "PAB cheaper" comparisons at once.
+          // The currency label is paired with the same fallback so a shown
+          // number always matches its label: when no conversion was scraped,
+          // BrickLink didn't need to show one, meaning the native currency
+          // already IS the viewer's account currency.
+          const price = p.storeConverted?.amount ?? parseStorePrice(p.storePrice);
+          if (price != null) cartCurrencies.set(c.id, cartCurrencies.get(c.id) ?? (p.storeConverted?.currency ?? p.storeCurrency));
           return price != null ? [[`${p.partNo}_${p.colorId}`, price]] : [];
         })
       ));
@@ -2524,9 +2581,10 @@ async function renderProjectDetail(id, content) {
       const pabStr        = r.pabCents != null ? fmtMoney(r.pabCents / 100, r.part.pabEntry?.currency_code) : "—";
       const subNote       = isHere && r.bestOther.cartName ? ` · vs ${esc(r.bestOther.cartName)}` : "";
       const saving        = isHere ? (r.bestOther.price - r.thisPrice) : (r.thisPrice - r.pabCents / 100);
-      // "here" savings are this-store-native minus another store's native price (possibly a
-      // different currency); "pab" savings are this-store-native minus PAB/home currency.
-      // Both are best-effort, labeled in whichever side the number is anchored to (this store).
+      // thisPrice/bestOther.price are already currency-aligned (both prefer
+      // BrickLink's own converted figure over native, see allPriceMaps above),
+      // so this subtraction is apples-to-apples even across different-currency
+      // stores, not just a same-store-native best effort like before.
       const savingCurrency = isHere ? thisCurrency : (r.part.pabEntry?.currency_code ?? thisCurrency);
       return `
         <div style="display:grid;grid-template-columns:${COLS};gap:6px;align-items:center;padding:4px 0;border-bottom:1px solid #f3f4f6;font-size:12px">
@@ -3737,6 +3795,13 @@ async function renderSettings(content) {
       <div class="field">
         <label for="pabRegion">Show prices for</label>
         <select id="pabRegion">
+          <!-- Currency-first shortcut -- the country-based groups below already
+               include several EUR-priced locales (Germany, France, Netherlands,
+               etc.), just not labeled by currency. This reuses de-de's locale
+               (this codebase's existing default/representative EUR locale, see
+               generate_studio_palettes.py's OOS_LOCALES) so a user who just
+               wants EUR pricing doesn't have to pick a specific EU country. -->
+          <option value="de-de">EUR (Eurozone)</option>
           <optgroup label="North America">
             <option value="en-us">United States</option>
             <option value="en-ca">Canada</option>
@@ -4150,7 +4215,10 @@ function renderDetailView(content) {
   // A single cart/wanted list is always one store (one native currency) and one
   // PAB region (one global setting), so a header label is unambiguous here --
   // unlike the pool table, which can mix multiple stores' currencies in one view.
-  const headerCartCurrency = cart ? (list.parts ?? []).find(p => p.storeCurrency)?.storeCurrency : null;
+  // Prefers the converted currency (see priceForPabCompare) so the header
+  // matches what buildCartRow's cells actually display.
+  const headerCartPart     = cart ? (list.parts ?? []).find(p => p.storeConverted?.currency ?? p.storeCurrency) : null;
+  const headerCartCurrency = headerCartPart ? (headerCartPart.storeConverted?.currency ?? headerCartPart.storeCurrency) : null;
   const headerPabCurrency  = (list.parts ?? []).find(p => p.pabEntry?.currency_code)?.pabEntry.currency_code;
   const storePriceLabel = `Store Price${headerCartCurrency ? ` (${headerCartCurrency})` : ""}`;
   const pabPriceLabel   = `PAB Price${headerPabCurrency ? ` (${headerPabCurrency})` : ""}`;
@@ -4454,7 +4522,9 @@ function buildCartRow(p, idx) {
   const [pabPrice, channelBadge] = pabCells(p);
   const displayName = p.pabEntry?.bl_part_name || p.name || "";
   const flagged = p.flagged;
-  const storeNum = effectivePrice(p);
+  // Prefers BrickLink's own converted figure (see priceForPabCompare) for
+  // both display and comparison -- matches the header label built above.
+  const storeNum = priceForPabCompare(p);
   const pabNum = p.pabEntry?.price_cents ? p.pabEntry.price_cents / 100 : null;
   const overPAB = storeNum != null && pabNum != null && storeNum > pabNum;
   const rowStyle = overPAB ? ' style="background:#fff5f5"' : '';

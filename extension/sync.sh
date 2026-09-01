@@ -5,7 +5,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 shared=(background.js content.js content-lego.js content-lego-spy.js content_main.js
-        index.html index.js popup.html popup.js icon16.png icon48.png icon128.png)
+        index.html index.js icon16.png icon48.png icon128.png)
 
 for f in "${shared[@]}"; do
   cp "master/$f" "chrome/$f"

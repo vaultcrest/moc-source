@@ -68,26 +68,39 @@ function getCartSubtotal() {
   return native ? { native, converted } : null;
 }
 
+// Scrapes BrickLink's checkout-page "Order summary" box (div.store-cart-summary
+// > p.l-flex.l-split rows for Item Total / Shipping & Handling / Sales Tax /
+// Order Total). Each money line pairs a native amount with BrickLink's own
+// converted secondary figure, same native+converted split as getCartSubtotal()
+// -- reads what BrickLink already computed rather than converting ourselves.
+// Only present on the checkout page (reached via "Check Out" from the cart),
+// not the cart page itself, so this returns {} until that page has been
+// visited at least once for a given store. "Sales Tax" is often the literal
+// text "TBD" (no currency), which parses to native: null, converted: null --
+// expected, not an error. "Order Total" may append " + Tax" when tax is still
+// pending; taxPending flags that so callers can render the caveat.
 function getOrderSummary() {
   const summary = {};
-  const labels = { "Item Total": "itemTotal", "Shipping & Handling": "shipping", "Order Total": "orderTotal" };
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode: n => {
-      const t = n.textContent.trim();
-      return Object.keys(labels).some(k => t.startsWith(k)) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
-    }
-  });
-  let node;
-  while ((node = walker.nextNode())) {
-    const t = node.textContent.trim();
-    const key = Object.keys(labels).find(k => t.startsWith(k));
+  const labels = {
+    "Item Total": "itemTotal",
+    "Shipping & Handling": "shipping",
+    "Sales Tax": "salesTax",
+    "Order Total": "orderTotal",
+  };
+  for (const row of document.querySelectorAll(".store-cart-summary p.l-flex.l-split")) {
+    const label = row.querySelector("strong")?.textContent?.trim();
+    const key = label && labels[label];
     if (!key) continue;
-    let el = node.parentElement;
-    for (let i = 0; i < 2 && el; i++) {
-      const m = el.textContent.match(/(?:US )?\$([\d,]+\.?\d*)/);
-      if (m) { summary[labels[key]] = `$${m[1]}`; break; }
-      el = el.parentElement;
-    }
+    const valueEl = row.querySelector("span.text.right");
+    if (!valueEl) continue;
+    const nativeText = valueEl.querySelector("strong")?.textContent?.trim() || "";
+    const convertedText = [...valueEl.querySelectorAll("span")].map(s => s.textContent.trim()).join(" ");
+    const native = parseCurrencyAmount(nativeText);
+    summary[key] = {
+      native: native ? { ...native, raw: nativeText } : null,
+      converted: parseCurrencyAmount(convertedText),
+      taxPending: /\+\s*Tax/i.test(nativeText),
+    };
   }
   return summary;
 }
