@@ -2,6 +2,16 @@
 
 All notable changes to MOC Source are documented here.
 
+## [0.4.21] — 2026-09-01
+
+### Extension
+- Fixed: BrickLink store-vs-PAB price comparisons (▲/▼ percentage, "cheaper" highlighting, "PAB Savings" totals) did plain arithmetic on raw native-currency numbers with no currency check, producing nonsense results whenever a tracked store priced in a different currency than the configured PAB region (e.g. a EUR store compared against a DKK PAB price). Now prefers BrickLink's own already-computed secondary-currency conversion (`storeConverted`, scraped from the "(~DKK X.XX)" text BrickLink renders next to a store's native price) for every comparison, falling back to the native price only when no conversion was scraped. Applies consistently across the pool/project row renderer, the single-cart detail view, and the best-price-finder modal.
+- Changed: the STORE column (and its header) now displays in the same converted currency as the comparison basis above, instead of mixing native currencies across rows within one project.
+- Changed: a cart's "Parts:" summary line now shows a single converted total instead of a native-primary "€X (≈ Y kr)" pair, matching the STORE column's currency.
+- Added: EUR (Eurozone) as an explicit, country-agnostic option in the PAB price region picker (Settings page), alongside the existing per-country list.
+- Fixed: BrickLink checkout-page shipping/order-total scraping (`getOrderSummary()`) hardcoded a USD-only `$` regex, so it silently returned nothing for any non-USD-displaying account — shipping was effectively never captured. Rewritten to parse currency-agnostically and capture BrickLink's own converted secondary figure per line, same as the per-part price scraping. A cart's "Total:" line now prefers this real converted, tax-caveat-aware Order Total; when a store hasn't been checked out yet (or BrickLink blocks checkout, e.g. a minimum-lot-average requirement not met) but every allocated part still has a scraped conversion, Total derives an implied conversion rate from the Parts total and applies it to shipping too, rather than falling back to a native-currency figure.
+- Removed: `popup.html`/`popup.js` — confirmed dead code (no `default_popup` in either manifest; the toolbar icon has always opened the full `index.html` dashboard instead), duplicating the real Settings UI already in `index.js`.
+
 ## [Ops] — 2026-08-20
 
 ### `app.home.arpa` network outage — root cause confirmed, no code change needed
